@@ -1,0 +1,6 @@
+{
+  "template_model": {
+    "hyperparameters": {},
+    "notes": "Replace template_model with a concrete model name when implementing a model."
+  }
+}

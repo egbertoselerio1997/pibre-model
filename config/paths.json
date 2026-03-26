@@ -1,0 +1,16 @@
+{
+  "root_dir": ".",
+  "config_dir": "config",
+  "src_dir": "src",
+  "results_dir": "results",
+  "data_dir": "data",
+  "tests_dir": "tests",
+  "docs_dir": "docs",
+  "main_notebook": "main.ipynb",
+  "src_utils_dir": "src/utils",
+  "src_models_dir": "src/models",
+  "simulation_models_dir": "src/models/simulation",
+  "ml_models_dir": "src/models/ml",
+  "simulation_data_pattern": "data/{simulation_name}/data_{date_time}.csv",
+  "simulation_metadata_pattern": "data/{simulation_name}/metadata_{date_time}.json"
+}
