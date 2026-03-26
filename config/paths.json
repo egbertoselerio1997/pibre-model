@@ -7,6 +7,7 @@
   "tests_dir": "tests",
   "docs_dir": "docs",
   "docs_ml_dir": "docs/ml",
+  "docs_simulation_dir": "docs/simulation",
   "main_notebook": "main.ipynb",
   "src_utils_dir": "src/utils",
   "src_models_dir": "src/models",

@@ -161,17 +161,28 @@ The orchestration of simulation-driven dataset generation and the machine learni
 
 Functions, helpers, modules, and related code in src are imported and used there.
 
-## 16. Machine Learning Documentation Requirement
+## 16. Model Documentation Requirement
 
-Each machine learning model must have a corresponding Markdown document inside docs/ml.
+Both machine learning models and simulation models must have corresponding Markdown documentation files under docs.
 
-The documentation filename should correspond to the machine learning model filename whenever practical. For example, src/models/ml/model_name.py should be documented by docs/ml/model_name.md.
+Machine learning model documentation must live in docs/ml.
 
-Each documentation file must thoroughly document the model as if the intended reader is an academic who is not a programmer and does not have access to the codebase.
+Simulation model documentation must live in docs/simulation.
 
-The writing must be comprehensive, technically rigorous, and readable without reference to implementation files.
+Documentation filenames should correspond to model filenames whenever practical.
 
-At minimum, each model document must include:
+Examples:
+
+- src/models/ml/model_name.py should be documented by docs/ml/model_name.md
+- src/models/simulation/simulation_name.py should be documented by docs/simulation/simulation_name.md
+
+Each documentation file must be written as if the intended reader is an academic who is not a programmer and does not have access to the codebase.
+
+The writing must be comprehensive, technically rigorous, and understandable without referring to source code.
+
+### 16.1 Machine Learning Documentation
+
+Each machine learning model document must thoroughly explain:
 
 - the model background
 - the rigorous mathematical definition of the model
@@ -200,6 +211,36 @@ The documentation must explain the exact implementation adopted in the repositor
 
 If a visualization is omitted, the document should still explain the process or architecture clearly in prose.
 
+### 16.2 Simulation Documentation
+
+Each simulation model document must thoroughly explain:
+
+- the simulation model background
+- its rigorous mathematical definition
+- its exact implementation used in this repository
+- the structure, architecture, orchestration, or adopted approach when relevant
+- the standard name of the adopted approach when such a standard name exists
+- citations for sources used for the adopted approach
+- diagrams or other visualizations whenever they materially improve explanation of process flow, architecture, orchestration, or another concept
+
+Mermaid diagrams may be used whenever they help communicate process flow, architecture, orchestration, or another relevant concept.
+
+Each simulation documentation file must follow the same standard structure unless a specific simulation requires an additional section:
+
+1. Title and simulation summary
+2. Background and system or process context
+3. Mathematical definition and governing relations
+4. Inputs, outputs, state variables, and assumptions
+5. Implementation used in this repository
+6. Architecture, orchestration, or adopted approach details and standard name, when relevant
+7. Dataset-generation or execution workflow
+8. Limitations and expected failure modes
+9. References
+
+The documentation must explain the exact simulation implementation adopted in the repository, not only the generic conceptual or mathematical model.
+
+If a visualization is omitted, the document should still explain the flow, orchestration, or structure clearly in prose.
+
 ## CLI Command Log
 
 Document command strategy outcomes here.
@@ -209,6 +250,7 @@ Document command strategy outcomes here.
 - Case: repository inspection on Windows. Strategy: use PowerShell-oriented workspace inspection and file reads before editing. Result: effective for confirming the repo was still a blank scaffold and identifying empty root files.
 - Case: bootstrap scaffold validation on Windows. Strategy: use PowerShell Get-ChildItem -Name to confirm the root layout, then run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for verifying the required folders, config contracts, and utility-module scaffold with minimal tests.
 - Case: rule revision validation for ML documentation requirements. Strategy: update the policy, scaffold docs/ml, and rerun uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for confirming that the new documentation contract remained consistent with the repository scaffold.
+- Case: rule revision validation for simulation documentation requirements. Strategy: extend the shared model-documentation policy, scaffold docs/simulation, and rerun uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for confirming that the simulation documentation contract remained consistent with the repository scaffold.
 
 ### Ineffective
 
