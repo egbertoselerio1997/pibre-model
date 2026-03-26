@@ -4,87 +4,189 @@
     "notes": "Replace template_model with a concrete model name when implementing a model."
   },
   "asm1_simulation": {
+    "schema_version": "3.0",
     "hyperparameters": {
-      "n_samples": 10000,
-      "seed": 42
+      "n_samples": 250,
+      "seed": 42,
+      "max_sample_attempts": 25
     },
-    "composites": [
-      "Total_COD",
-      "Total_N",
-      "O2",
-      "NO3",
+    "state_columns": [
+      "S_S",
+      "S_I",
+      "S_NH4_N",
+      "S_NO3_N",
+      "S_PO4_P",
+      "S_O2",
+      "S_Alkalinity",
+      "X_I",
+      "X_S",
+      "X_H",
+      "X_AUT"
+    ],
+    "measured_output_columns": [
+      "COD",
+      "TSS",
+      "VSS",
+      "TN",
+      "TP",
+      "NH4_N",
+      "NO3_N",
+      "PO4_P",
+      "DO",
       "Alkalinity"
     ],
     "operational_columns": [
       "HRT",
       "Aeration"
     ],
-    "influent_ranges": {
-      "Total_COD": [
-        300.0,
-        600.0
+    "influent_state_ranges": {
+      "S_S": [
+        80.0,
+        260.0
       ],
-      "Total_N": [
-        30.0,
-        60.0
+      "S_I": [
+        20.0,
+        90.0
       ],
-      "O2": [
-        5.0,
-        15.0
+      "S_NH4_N": [
+        18.0,
+        55.0
       ],
-      "NO3": [
+      "S_NO3_N": [
         0.0,
-        5.0
+        3.0
       ],
-      "Alkalinity": [
-        100.0,
-        200.0
+      "S_PO4_P": [
+        2.0,
+        12.0
+      ],
+      "S_O2": [
+        0.0,
+        0.5
+      ],
+      "S_Alkalinity": [
+        80.0,
+        260.0
+      ],
+      "X_I": [
+        20.0,
+        120.0
+      ],
+      "X_S": [
+        80.0,
+        260.0
+      ],
+      "X_H": [
+        5.0,
+        40.0
+      ],
+      "X_AUT": [
+        0.5,
+        6.0
       ]
     },
     "operational_ranges": {
       "HRT": [
-        0.5,
-        2.0
+        12.0,
+        72.0
       ],
       "Aeration": [
-        0.5,
-        2.0
+        1.0,
+        2.5
       ]
     },
-    "stoichiometry": {
-      "yields": {
-        "Y_H": 0.67,
-        "Y_A": 0.24,
-        "f_P": 0.08,
-        "i_XB": 0.086,
-        "i_XP": 0.06
+    "solver": {
+      "lower_bound": 1e-08,
+      "initial_guess_floor": 1e-06,
+      "initial_heterotroph_to_xs_ratio": 0.75,
+      "initial_autotroph_to_nh4_ratio": 0.1,
+      "initial_soluble_substrate_fraction": 0.2,
+      "initial_slow_substrate_fraction": 0.1,
+      "multistart_heterotroph_to_xs_ratio": 1.25,
+      "multistart_autotroph_to_nh4_ratio": 0.5,
+      "multistart_soluble_substrate_fraction": 0.05,
+      "multistart_slow_substrate_fraction": 0.05,
+      "dynamic_relaxation_days": 20.0,
+      "dynamic_absolute_tolerance": 1e-08,
+      "dynamic_relative_tolerance": 1e-06,
+      "dynamic_max_step": 0.25,
+      "residual_tolerance": 1e-09,
+      "variable_tolerance": 1e-09,
+      "gradient_tolerance": 1e-09,
+      "acceptance_residual_max": 5.0,
+      "max_nfev": 400
+    },
+    "kinetics": {
+      "heterotroph_max_growth_rate": 6.0,
+      "autotroph_max_growth_rate": 0.8,
+      "hydrolysis_rate": 3.0,
+      "heterotroph_decay_rate": 0.62,
+      "autotroph_decay_rate": 0.17,
+      "readily_biodegradable_half_saturation": 20.0,
+      "heterotroph_oxygen_half_saturation": 0.2,
+      "autotroph_oxygen_half_saturation": 0.4,
+      "heterotroph_nitrate_half_saturation": 0.5,
+      "autotroph_ammonium_half_saturation": 1.0,
+      "hydrolysis_half_saturation": 0.1,
+      "anoxic_growth_factor": 0.8,
+      "anoxic_hydrolysis_factor": 0.4
+    },
+    "aeration_model": {
+      "do_saturation": 8.5,
+      "kla_base": 8.0,
+      "kla_per_aeration": 25.0
+    },
+    "stoichiometric_factors": {
+      "heterotroph_yield": 0.67,
+      "autotroph_yield": 0.24,
+      "anoxic_nitrate_factor": 2.86,
+      "oxygen_per_nh4_nitrified": 4.57,
+      "alkalinity_per_nh4_nitrified": 7.14,
+      "alkalinity_recovery_per_nox_denitrified": 3.57,
+      "heterotroph_decay_to_inert_fraction": 0.2,
+      "autotroph_decay_to_inert_fraction": 0.2,
+      "nitrogen_content_x_i": 0.03,
+      "nitrogen_content_x_s": 0.04,
+      "nitrogen_content_x_h": 0.086,
+      "nitrogen_content_x_aut": 0.086,
+      "phosphorus_content_x_i": 0.005,
+      "phosphorus_content_x_s": 0.007,
+      "phosphorus_content_x_h": 0.02,
+      "phosphorus_content_x_aut": 0.02
+    },
+    "observation_model": {
+      "state_tss_factors": {
+        "X_I": 0.75,
+        "X_S": 0.75,
+        "X_H": 0.9,
+        "X_AUT": 0.9
       },
-      "constants": {
-        "anoxic_nitrate_factor": 2.86,
-        "oxygen_nitrification_factor": 4.57,
-        "nitrogen_atomic_mass_factor": 14.0,
-        "alkalinity_ammonification_factor": 7.0
+      "state_vss_factors": {
+        "X_I": 0.55,
+        "X_S": 0.7,
+        "X_H": 0.85,
+        "X_AUT": 0.82
+      },
+      "particulate_nitrogen_factors": {
+        "X_I": 0.03,
+        "X_S": 0.04,
+        "X_H": 0.086,
+        "X_AUT": 0.086
+      },
+      "particulate_phosphorus_factors": {
+        "X_I": 0.005,
+        "X_S": 0.007,
+        "X_H": 0.02,
+        "X_AUT": 0.02
       }
     },
-    "extent_rules": [
-      {
-        "name": "Aerobic growth",
-        "influent_component": "Total_COD",
-        "min_fraction": 0.1,
-        "max_fraction": 0.4
-      },
-      {
-        "name": "Anoxic growth",
-        "influent_component": "Total_COD",
-        "min_fraction": 0.0,
-        "max_fraction": 0.1
-      },
-      {
-        "name": "Nitrification",
-        "influent_component": "Total_N",
-        "min_fraction": 0.1,
-        "max_fraction": 0.8
-      }
+    "processes": [
+      "Hydrolysis",
+      "Aerobic heterotrophic growth",
+      "Anoxic heterotrophic growth",
+      "Autotrophic growth and nitrification",
+      "Heterotrophic decay",
+      "Autotrophic decay"
     ]
   }
 }

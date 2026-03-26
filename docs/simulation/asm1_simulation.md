@@ -2,156 +2,172 @@
 
 ## 1. Title and simulation summary
 
-The ASM1 simulation is an ASM1-inspired continuous stirred-tank reactor dataset generator written for rapid machine-learning experimentation. It does not solve the full activated-sludge differential equation system over time. Instead, it maps sampled influent and operating conditions into synthetic effluent compositions by combining a stoichiometric reaction representation with randomly sampled reaction extents.
+The asm1_simulation module is now implemented as a mechanistic steady-state activated-sludge CSTR solver for a single completely mixed aerobic reactor. The model no longer maps sampled laboratory analytes directly to effluent through surrogate removal factors. Instead, it samples mechanistic influent state variables, solves the nonlinear steady-state reactor balances, and then maps the solved reactor outlet state to a smaller panel of directly interpretable analytes.
 
-The resulting dataset is intended to support regression workflows in which the predictors are operating conditions plus influent composites, and the responses are effluent composites.
+The generated dataset is intended for simulation-driven studies where the predictors are operating conditions plus influent state variables, and the responses are the steady-state reactor outlet states together with selected analyte summaries such as COD, NH4-N, NO3-N, TP, TSS, and dissolved oxygen.
 
 ## 2. Background and system or process context
 
-Activated Sludge Model No. 1, usually abbreviated ASM1, is a standard biokinetic framework for biological wastewater treatment. It represents the interactions among soluble substrates, biomass populations, oxygen, nitrogen species, and particulate components. In full form, ASM1 is a dynamic process model with state evolution governed by coupled mass-balance and reaction-rate equations.
+Activated-sludge process models are based on species balances over soluble and particulate state variables rather than directly over routine laboratory analytes. A realistic CSTR simulation therefore starts from internal process states, not from composite measurements such as BOD5 or pH alone.
 
-The implementation used in this repository adopts the stoichiometric structure of ASM1 as an organizing principle, but compresses the detailed state space into a smaller set of composite variables:
-
-- total chemical oxygen demand
-- total nitrogen
-- dissolved oxygen
-- nitrate
-- alkalinity
-
-This reduced representation is appropriate when the goal is to create a consistent synthetic dataset for machine-learning model development rather than to emulate a full plant simulator.
+The implementation in this repository follows that principle. It treats the reactor as a single continuously stirred tank with continuous inflow, continuous outflow, biological reaction source terms, and oxygen transfer. The present implementation is closest to an ASM-family carbon-nitrogen-phosphorus assimilation model for a single aerobic basin without secondary clarification or recycle. Because no clarifier is included, the outlet corresponds to the mixed-liquor concentration leaving the CSTR.
 
 ## 3. Mathematical definition and governing relations
 
-The simulation uses a Petersen-style stoichiometric matrix $\nu \in \mathbb{R}^{8 \times 13}$ together with a composition matrix $I \in \mathbb{R}^{13 \times 5}$. Their product defines a composite-space stoichiometric map:
+Let the state vector be
 
 $$
-S_{comp} = \nu I
+x = [S_S, S_I, S_{NH4}, S_{NO3}, S_{PO4}, S_O, S_{Alk}, X_I, X_S, X_H, X_{AUT}]^T
 $$
 
-where $S_{comp} \in \mathbb{R}^{8 \times 5}$ maps eight biological-process extents into five composite balance changes.
+where the soluble states represent readily biodegradable substrate, inert soluble COD, ammonium nitrogen, oxidized nitrogen, orthophosphate phosphorus, dissolved oxygen, and alkalinity; the particulate states represent inert particulates, slowly biodegradable substrate, heterotrophic biomass, and autotrophic biomass.
 
-For each synthetic sample, the influent vector is
-
-$$
-C_{in} \in \mathbb{R}^{5}
-$$
-
-and a vector of sampled process extents is generated as
+For a tank with hydraulic retention time $\tau$ and volumetric dilution rate $D = 1 / \tau$, the steady-state mass balance for each state is written as
 
 $$
-e \in \mathbb{R}^{8}
+0 = D(x_{in} - x) + \nu \rho(x) + a(x, u)
 $$
 
-with only the first three extents active in the present implementation:
+where $x_{in}$ is the influent state vector, $\nu$ is the process stoichiometry, $\rho(x)$ is the vector of biological process rates, and $a(x, u)$ is the aeration contribution to dissolved oxygen.
+
+The implemented process set is:
+
+1. hydrolysis of slowly biodegradable substrate
+2. aerobic heterotrophic growth
+3. anoxic heterotrophic growth
+4. autotrophic growth and nitrification
+5. heterotrophic decay
+6. autotrophic decay
+
+Representative rate expressions are Monod-type kinetics:
 
 $$
-e_1 = C_{in,\mathrm{COD}} \cdot u_1, \quad u_1 \sim U(0.1, 0.4)
+\rho_{H,ae} = \mu_H \frac{S_S}{K_S + S_S} \frac{S_O}{K_{OH} + S_O} X_H
 $$
 
 $$
-e_2 = C_{in,\mathrm{COD}} \cdot u_2, \quad u_2 \sim U(0.0, 0.1)
+\rho_{H,an} = \mu_H \eta_g \frac{S_S}{K_S + S_S} \frac{K_{OH}}{K_{OH} + S_O} \frac{S_{NO3}}{K_{NO} + S_{NO3}} X_H
 $$
 
 $$
-e_3 = C_{in,\mathrm{N}} \cdot u_3, \quad u_3 \sim U(0.1, 0.8)
+\rho_A = \mu_A \frac{S_{NH4}}{K_{NH} + S_{NH4}} \frac{S_O}{K_{OA} + S_O} X_{AUT}
 $$
 
-The effluent composition is then computed algebraically:
+Oxygen transfer is represented mechanistically in the dissolved-oxygen balance by
 
 $$
-C_{out} = C_{in} + e S_{comp}
+a_O = K_L a \left(S_{O,sat} - S_O\right)
 $$
 
-This means each dataset row is generated independently. The model is therefore a stochastic algebraic simulator rather than a time-marching dynamic reactor solver.
+with $K_L a$ computed from the configured aeration intensity.
+
+The nonlinear steady-state algebraic system is solved numerically for each sampled operating point using a bounded least-squares residual solve.
 
 ## 4. Inputs, outputs, state variables, and assumptions
 
-Inputs sampled for each row are:
+Independent columns (inputs):
 
-- hydraulic retention time
-- aeration intensity
-- influent total chemical oxygen demand
-- influent total nitrogen
-- influent dissolved oxygen
-- influent nitrate
-- influent alkalinity
+- HRT
+- Aeration
+- In_S_S
+- In_S_I
+- In_S_NH4_N
+- In_S_NO3_N
+- In_S_PO4_P
+- In_S_O2
+- In_S_Alkalinity
+- In_X_I
+- In_X_S
+- In_X_H
+- In_X_AUT
 
-Outputs produced for each row are:
+Dependent columns (outputs):
 
-- effluent total chemical oxygen demand
-- effluent total nitrogen
-- effluent dissolved oxygen
-- effluent nitrate
-- effluent alkalinity
+- Out_S_S
+- Out_S_I
+- Out_S_NH4_N
+- Out_S_NO3_N
+- Out_S_PO4_P
+- Out_S_O2
+- Out_S_Alkalinity
+- Out_X_I
+- Out_X_S
+- Out_X_H
+- Out_X_AUT
+- Out_COD
+- Out_TSS
+- Out_VSS
+- Out_TN
+- Out_TP
+- Out_NH4_N
+- Out_NO3_N
+- Out_PO4_P
+- Out_DO
+- Out_Alkalinity
 
-The implementation assumes:
+Assumptions:
 
-- each row is statistically independent from every other row
-- operating variables are sampled independently from uniform distributions
-- reaction extents are sampled independently from uniform fractions of selected influent composites
-- only a subset of the available ASM1 reaction rows is activated during dataset generation
-- the stoichiometric projection is sufficient to produce a useful reduced-order synthetic benchmark
+- the reactor is a single completely mixed aerobic CSTR
+- the outlet is the reactor mixed liquor because no clarifier or recycle loop is included
+- temperature is implicit in the configured kinetic constants rather than dynamically varied
+- pH is not exported because the present mechanistic state set does not yet include the aqueous chemistry needed to solve it rigorously
+- BOD5 and nitrite are not exported because they are not direct states of the implemented reactor model
 
 ## 5. Implementation used in this repository
 
-The repository implementation lives in the ASM1 simulation module under src/models/simulation. All numerical settings are loaded at runtime from config/params.json, including:
+Implementation is in `src/models/simulation/asm1_simulation.py`.
 
-- sample count
-- random seed
-- influent sampling ranges
-- operating-variable sampling ranges
-- ASM1 yield and stoichiometric constants
-- active reaction-extent rules
+Main implementation blocks:
 
-When the simulation is executed through the system entry point, it produces a tabular dataset and a metadata JSON contract. The metadata records the predictor columns, target columns, and the CSV path corresponding to the generated dataset.
+1. Load the parameter namespace from `config/params.json`.
+2. Sample mechanistic influent state variables and operating variables from configured ranges.
+3. Solve the steady-state nonlinear CSTR balances for each sampled operating point.
+4. Map the solved outlet state to measured analyte summaries.
+5. Build metadata describing the new state-based schema.
+6. Persist the dataset and metadata using the shared simulation utilities.
 
 ## 6. Architecture, orchestration, or adopted approach details and standard name, when relevant
 
-The adopted approach is best described as a reduced-order, stoichiometric synthetic-data generator derived from ASM1 concepts. The architecture is:
+The adopted approach is a mechanistic steady-state activated-sludge CSTR model with nonlinear residual solving.
 
-1. Load path and parameter configuration.
-2. Build the composite stoichiometric matrix from configured ASM1 constants.
-3. Sample influent and operational inputs from configured uniform ranges.
-4. Sample biological reaction extents from configured fractional rules.
-5. Compute effluent composites using the stoichiometric map.
-6. Save the dataset and metadata contract to the configured repository locations.
+Execution architecture:
 
-This architecture is deterministic once the random seed is fixed.
+1. configuration load
+2. influent-state and operating-point sampling
+3. single-point nonlinear steady-state solve
+4. analyte observation mapping
+5. dataset assembly and artifact persistence
+
+The simulation remains deterministic when the random seed is fixed.
 
 ## 7. Dataset-generation or execution workflow
 
-The workflow executed in the main notebook is:
+The workflow is:
 
-1. Import the reusable simulation function from the source package.
-2. Run the simulation with the configured parameters.
-3. Save the dataset under data/asm1_simulation using the repository naming contract.
-4. Save a companion metadata JSON file in the same folder family.
-5. Inspect the generated dataframe head and the metadata contract from the notebook.
-
-The current file naming contract is:
-
-$$
-\text{data/asm1\_simulation/data\_\{date\_time\}.csv}
-$$
-
-$$
-\text{data/asm1\_simulation/metadata\_\{date\_time\}.json}
-$$
+1. Import and call `run_asm1_simulation` from the simulation package.
+2. Generate a table of sampled influent states, solved outlet states, and mapped analyte outputs.
+3. Save outputs under the repository simulation artifact contract:
+   - `data/asm1_simulation/data_{date_time}.csv`
+   - `data/asm1_simulation/metadata_{date_time}.json`
+4. Use the metadata file as the contract for downstream loading.
 
 ## 8. Limitations and expected failure modes
 
-This simulation should not be interpreted as a high-fidelity wastewater-process simulator. Important limitations are:
+Key limitations:
 
-- there is no dynamic state evolution over time
-- process kinetics are not solved explicitly
-- the operating variables do not currently modulate the reaction extents mechanistically
-- only three reaction extents are active during sample generation
-- the generated outputs can be physically stylized without representing a fully calibrated treatment plant
+- this is a single-reactor model and does not include secondary clarification, sludge recycle, wastage, or multi-zone phosphorus release and uptake
+- the kinetics are literature-default values and are not calibrated to a specific plant
+- pH, inorganic carbon chemistry, and explicit nitrite dynamics are intentionally excluded until the required chemistry states are added
+- because there is no clarifier, the outlet solids represent the CSTR mixed liquor rather than final clarified effluent
 
-Expected failure modes include unrealistic effluent combinations if parameter ranges are widened excessively, or poor downstream machine-learning performance if the synthetic sampling ranges do not resemble the intended application domain.
+Expected failure modes:
+
+- unrealistic operating points if the sampled influent state ranges are not physically compatible with a single aerobic reactor
+- biomass washout if the sampled HRT is too short relative to the configured growth kinetics
+- solver convergence failure if the parameter set or sampled influent states produce inconsistent balances
 
 ## 9. References
 
-Henze, M., Grady, C. P. L., Gujer, W., Marais, G. v. R., and Matsuo, T. Activated Sludge Model No. 1. IAWPRC Scientific and Technical Reports, 1987.
+Henze, M., Gujer, W., Mino, T., and van Loosdrecht, M. Activated Sludge Models ASM1, ASM2, ASM2d and ASM3. IWA Scientific and Technical Report No. 9, 2000.
 
 Gujer, W. Systems Analysis for Water Technology. Springer, 2008.
