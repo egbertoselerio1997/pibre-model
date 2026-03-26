@@ -161,6 +161,45 @@ The orchestration of simulation-driven dataset generation and the machine learni
 
 Functions, helpers, modules, and related code in src are imported and used there.
 
+## 16. Machine Learning Documentation Requirement
+
+Each machine learning model must have a corresponding Markdown document inside docs/ml.
+
+The documentation filename should correspond to the machine learning model filename whenever practical. For example, src/models/ml/model_name.py should be documented by docs/ml/model_name.md.
+
+Each documentation file must thoroughly document the model as if the intended reader is an academic who is not a programmer and does not have access to the codebase.
+
+The writing must be comprehensive, technically rigorous, and readable without reference to implementation files.
+
+At minimum, each model document must include:
+
+- the model background
+- the rigorous mathematical definition of the model
+- the exact implementation used in this repository
+- the adopted model structure or architecture when relevant, especially for neural networks and deep learning models
+- the standard name of the adopted architecture when such a standard name exists
+- citations for sources used for the adopted architecture
+- diagrams or other visualizations whenever they materially improve explanation of process flow, architecture, or another concept
+
+Mermaid diagrams may be used whenever they help communicate structure, flow, or architecture.
+
+Each machine learning documentation file must follow the same standard structure unless a specific model requires an additional section:
+
+1. Title and model summary
+2. Background and use case
+3. Mathematical definition
+4. Inputs, outputs, and assumptions
+5. Implementation used in this repository
+6. Architecture details and adopted standard architecture name, when relevant
+7. Training or optimization notes, when relevant
+8. Prediction workflow
+9. Limitations and expected failure modes
+10. References
+
+The documentation must explain the exact implementation adopted in the repository, not only the generic textbook model.
+
+If a visualization is omitted, the document should still explain the process or architecture clearly in prose.
+
 ## CLI Command Log
 
 Document command strategy outcomes here.
@@ -169,6 +208,7 @@ Document command strategy outcomes here.
 
 - Case: repository inspection on Windows. Strategy: use PowerShell-oriented workspace inspection and file reads before editing. Result: effective for confirming the repo was still a blank scaffold and identifying empty root files.
 - Case: bootstrap scaffold validation on Windows. Strategy: use PowerShell Get-ChildItem -Name to confirm the root layout, then run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for verifying the required folders, config contracts, and utility-module scaffold with minimal tests.
+- Case: rule revision validation for ML documentation requirements. Strategy: update the policy, scaffold docs/ml, and rerun uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for confirming that the new documentation contract remained consistent with the repository scaffold.
 
 ### Ineffective
 
