@@ -37,11 +37,6 @@ REQUIRED_MEASURED_OUTPUTS = [
     "VSS",
     "TN",
     "TP",
-    "NH4_N",
-    "NO3_N",
-    "PO4_P",
-    "DO",
-    "Alkalinity",
 ]
 
 
@@ -177,11 +172,6 @@ def get_asm1_matrices(model_params: Mapping[str, Any]) -> dict[str, Any]:
     composition_matrix[output_index["TN"], state_index["S_NH4_N"]] = 1.0
     composition_matrix[output_index["TN"], state_index["S_NO3_N"]] = 1.0
     composition_matrix[output_index["TP"], state_index["S_PO4_P"]] = 1.0
-    composition_matrix[output_index["NH4_N"], state_index["S_NH4_N"]] = 1.0
-    composition_matrix[output_index["NO3_N"], state_index["S_NO3_N"]] = 1.0
-    composition_matrix[output_index["PO4_P"], state_index["S_PO4_P"]] = 1.0
-    composition_matrix[output_index["DO"], state_index["S_O2"]] = 1.0
-    composition_matrix[output_index["Alkalinity"], state_index["S_Alkalinity"]] = 1.0
 
     return {
         "petersen_matrix": petersen_matrix,

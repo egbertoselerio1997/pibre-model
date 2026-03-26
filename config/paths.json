@@ -13,6 +13,7 @@
   "src_models_dir": "src/models",
   "simulation_models_dir": "src/models/simulation",
   "ml_models_dir": "src/models/ml",
+  "ml_model_artifact_pattern": "results/{model_name}/{artifact_name}_{date_time}.pkl",
   "simulation_data_pattern": "data/{simulation_name}/data_{date_time}.csv",
   "simulation_metadata_pattern": "data/{simulation_name}/metadata_{date_time}.json"
 }
