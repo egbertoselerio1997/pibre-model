@@ -54,7 +54,13 @@ Each note must briefly describe the case, the command strategy used, and whether
 
 If an agent is unsure where a new file belongs within the existing folders, the agent must ask the user before creating the file.
 
-## 8. Testing Requirement
+## 8. Revision Impact Analysis
+
+When asked to revise a file, an agent must begin planning by identifying all upstream, downstream, and dependency files within the codebase that are affected by the change.
+
+Any affected files that require corresponding updates to preserve correctness, consistency, documentation accuracy, or test validity must also be revised accordingly.
+
+## 9. Testing Requirement
 
 Minimal-scenario tests must always be carried out whenever code is developed.
 
@@ -62,13 +68,13 @@ Test scripts must be saved under the tests folder.
 
 The tests folder must use subfolders that correspond to the code file or feature area being tested. Multiple test scripts may be required for a feature.
 
-## 9. Dependency Declaration
+## 10. Dependency Declaration
 
 Whenever new packages are needed, agents must first check pyproject.toml.
 
 If a required package is missing, pyproject.toml must be updated and uv must be used to install or lock the dependency.
 
-## 10. Source Layout
+## 11. Source Layout
 
 The src folder contains:
 
@@ -84,7 +90,7 @@ The simulation folder contains Python files used to generate datasets for machin
 
 The ml folder contains Python files for machine learning models, and each filename should match the model name.
 
-## 11. Utility Modules
+## 12. Utility Modules
 
 The src/utils folder must contain reusable helper modules with the following intended responsibilities:
 
@@ -100,7 +106,7 @@ The src/utils folder must contain reusable helper modules with the following int
 
 These helpers must be designed for maximum reuse, especially optuna.py, train.py, test.py, metrics.py, plot.py, and analysis.py.
 
-## 12. Simulation Dataset Output Contract
+## 13. Simulation Dataset Output Contract
 
 All simulation-generated datasets for machine learning training must be saved under:
 
@@ -120,7 +126,7 @@ The metadata JSON must define:
 
 Machine learning training and testing pipelines must use the metadata JSON as the dataset-loading contract.
 
-## 13. Machine Learning Module Contract
+## 14. Machine Learning Module Contract
 
 Each machine learning model file must contain:
 
@@ -145,7 +151,7 @@ Minimum predict-module requirements:
 
 Models may define additional inputs or outputs when required by the specific algorithm.
 
-## 14. Standard Metrics
+## 15. Standard Metrics
 
 All machine learning models must calculate the following metrics:
 
@@ -155,13 +161,13 @@ All machine learning models must calculate the following metrics:
 - MAE
 - MAPE
 
-## 15. Orchestration Entry Point
+## 16. Orchestration Entry Point
 
 The orchestration of simulation-driven dataset generation and the machine learning pipeline is done through the root notebook main.ipynb.
 
 Functions, helpers, modules, and related code in src are imported and used there.
 
-## 16. Model Documentation Requirement
+## 17. Model Documentation Requirement
 
 Both machine learning models and simulation models must have corresponding Markdown documentation files under docs.
 
@@ -180,7 +186,7 @@ Each documentation file must be written as if the intended reader is an academic
 
 The writing must be comprehensive, technically rigorous, and understandable without referring to source code.
 
-### 16.1 Machine Learning Documentation
+### 17.1 Machine Learning Documentation
 
 Each machine learning model document must thoroughly explain:
 
@@ -211,7 +217,7 @@ The documentation must explain the exact implementation adopted in the repositor
 
 If a visualization is omitted, the document should still explain the process or architecture clearly in prose.
 
-### 16.2 Simulation Documentation
+### 17.2 Simulation Documentation
 
 Each simulation model document must thoroughly explain:
 
@@ -251,6 +257,9 @@ Document command strategy outcomes here.
 - Case: bootstrap scaffold validation on Windows. Strategy: use PowerShell Get-ChildItem -Name to confirm the root layout, then run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for verifying the required folders, config contracts, and utility-module scaffold with minimal tests.
 - Case: rule revision validation for ML documentation requirements. Strategy: update the policy, scaffold docs/ml, and rerun uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for confirming that the new documentation contract remained consistent with the repository scaffold.
 - Case: rule revision validation for simulation documentation requirements. Strategy: extend the shared model-documentation policy, scaffold docs/simulation, and rerun uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract. Result: effective for confirming that the simulation documentation contract remained consistent with the repository scaffold.
+- Case: simulation integration validation on Windows. Strategy: run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_project_cobre after wiring the reusable Project Cobre simulation module and main notebook entry point. Result: effective for validating the repository contract and the new simulation dataset and metadata workflow together.
+- Case: rule revision validation for revision-impact analysis requirements. Strategy: determine affected repository files before editing the policy, then run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract after updating CODEBASE_RULES.md. Result: effective for confirming that the policy revision remained consistent with the repository bootstrap contract.
+- Case: ASM1 simulation rename validation on Windows. Strategy: run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm1_simulation after renaming the simulation module, config namespace, notebook entry point, and documentation from project_cobre to asm1_simulation. Result: effective for validating that the rename remained consistent across the repository contract and simulation workflow.
 
 ### Ineffective
 

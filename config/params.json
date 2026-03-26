@@ -2,5 +2,89 @@
   "template_model": {
     "hyperparameters": {},
     "notes": "Replace template_model with a concrete model name when implementing a model."
+  },
+  "asm1_simulation": {
+    "hyperparameters": {
+      "n_samples": 10000,
+      "seed": 42
+    },
+    "composites": [
+      "Total_COD",
+      "Total_N",
+      "O2",
+      "NO3",
+      "Alkalinity"
+    ],
+    "operational_columns": [
+      "HRT",
+      "Aeration"
+    ],
+    "influent_ranges": {
+      "Total_COD": [
+        300.0,
+        600.0
+      ],
+      "Total_N": [
+        30.0,
+        60.0
+      ],
+      "O2": [
+        5.0,
+        15.0
+      ],
+      "NO3": [
+        0.0,
+        5.0
+      ],
+      "Alkalinity": [
+        100.0,
+        200.0
+      ]
+    },
+    "operational_ranges": {
+      "HRT": [
+        0.5,
+        2.0
+      ],
+      "Aeration": [
+        0.5,
+        2.0
+      ]
+    },
+    "stoichiometry": {
+      "yields": {
+        "Y_H": 0.67,
+        "Y_A": 0.24,
+        "f_P": 0.08,
+        "i_XB": 0.086,
+        "i_XP": 0.06
+      },
+      "constants": {
+        "anoxic_nitrate_factor": 2.86,
+        "oxygen_nitrification_factor": 4.57,
+        "nitrogen_atomic_mass_factor": 14.0,
+        "alkalinity_ammonification_factor": 7.0
+      }
+    },
+    "extent_rules": [
+      {
+        "name": "Aerobic growth",
+        "influent_component": "Total_COD",
+        "min_fraction": 0.1,
+        "max_fraction": 0.4
+      },
+      {
+        "name": "Anoxic growth",
+        "influent_component": "Total_COD",
+        "min_fraction": 0.0,
+        "max_fraction": 0.1
+      },
+      {
+        "name": "Nitrification",
+        "influent_component": "Total_N",
+        "min_fraction": 0.1,
+        "max_fraction": 0.8
+      }
+    ]
   }
 }
