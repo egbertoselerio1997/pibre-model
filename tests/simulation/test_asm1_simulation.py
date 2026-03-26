@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import tempfile
 import unittest
@@ -24,13 +23,17 @@ from src.utils.simulation import save_simulation_artifacts
 
 class Asm1SimulationTests(unittest.TestCase):
     def test_generate_asm1_dataset_matches_metadata_contract(self) -> None:
-        dataset, metadata, state_matrix = generate_asm1_dataset(n_samples=12, random_seed=7)
+        dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=12, random_seed=7)
 
         self.assertEqual(dataset.shape, (12, 34))
-        self.assertEqual(state_matrix.shape, (11, 11))
+        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (7, 11))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (10, 11))
         self.assertEqual(metadata["simulation_name"], "asm1_simulation")
         self.assertEqual(metadata["n_samples"], 12)
-        self.assertEqual(metadata["schema_version"], "3.0")
+        self.assertEqual(metadata["schema_version"], "3.1")
+        self.assertEqual(metadata["petersen_matrix_shape"], [7, 11])
+        self.assertEqual(metadata["composition_matrix_shape"], [10, 11])
+        self.assertEqual(metadata["process_types"][-1], "mass_transfer")
         self.assertIsNone(metadata["dataset_file"])
 
         expected_independent = [
@@ -85,6 +88,54 @@ class Asm1SimulationTests(unittest.TestCase):
         self.assertTrue((dataset["Out_PO4_P"] >= 0.0).all())
         self.assertTrue((dataset["Out_VSS"] <= dataset["Out_TSS"] + 1e-9).all())
 
+    def test_explicit_matrices_capture_aeration_and_output_mapping(self) -> None:
+        params = load_asm1_simulation_params()
+        matrix_bundle = get_asm1_matrices(params)
+        state_columns = list(matrix_bundle["state_columns"])
+        measured_output_columns = list(matrix_bundle["measured_output_columns"])
+        state_index = {name: position for position, name in enumerate(state_columns)}
+
+        aeration_row = matrix_bundle["petersen_matrix"][-1]
+        self.assertEqual(matrix_bundle["process_names"][-1], "Aeration")
+        self.assertEqual(matrix_bundle["process_types"][-1], "mass_transfer")
+        self.assertEqual(np.count_nonzero(aeration_row), 1)
+        self.assertEqual(aeration_row[state_index["S_O2"]], 1.0)
+
+        sample_state = np.array([15.0, 30.0, 4.0, 6.0, 2.0, 3.5, 120.0, 25.0, 40.0, 80.0, 10.0], dtype=float)
+        observed = matrix_bundle["composition_matrix"] @ sample_state
+        observation_model = params["observation_model"]
+
+        expected = {
+            "COD": 15.0 + 30.0 + 25.0 + 40.0 + 80.0 + 10.0,
+            "TSS": 25.0 * observation_model["state_tss_factors"]["X_I"]
+            + 40.0 * observation_model["state_tss_factors"]["X_S"]
+            + 80.0 * observation_model["state_tss_factors"]["X_H"]
+            + 10.0 * observation_model["state_tss_factors"]["X_AUT"],
+            "VSS": 25.0 * observation_model["state_vss_factors"]["X_I"]
+            + 40.0 * observation_model["state_vss_factors"]["X_S"]
+            + 80.0 * observation_model["state_vss_factors"]["X_H"]
+            + 10.0 * observation_model["state_vss_factors"]["X_AUT"],
+            "TN": 4.0
+            + 6.0
+            + 25.0 * observation_model["particulate_nitrogen_factors"]["X_I"]
+            + 40.0 * observation_model["particulate_nitrogen_factors"]["X_S"]
+            + 80.0 * observation_model["particulate_nitrogen_factors"]["X_H"]
+            + 10.0 * observation_model["particulate_nitrogen_factors"]["X_AUT"],
+            "TP": 2.0
+            + 25.0 * observation_model["particulate_phosphorus_factors"]["X_I"]
+            + 40.0 * observation_model["particulate_phosphorus_factors"]["X_S"]
+            + 80.0 * observation_model["particulate_phosphorus_factors"]["X_H"]
+            + 10.0 * observation_model["particulate_phosphorus_factors"]["X_AUT"],
+            "NH4_N": 4.0,
+            "NO3_N": 6.0,
+            "PO4_P": 2.0,
+            "DO": 3.5,
+            "Alkalinity": 120.0,
+        }
+
+        expected_vector = np.array([expected[name] for name in measured_output_columns], dtype=float)
+        np.testing.assert_allclose(observed, expected_vector)
+
     def test_single_operating_point_solves_to_small_residual(self) -> None:
         params = load_asm1_simulation_params()
         state_columns = list(params["state_columns"])
@@ -109,7 +160,8 @@ class Asm1SimulationTests(unittest.TestCase):
 
     def test_generate_asm1_dataset_responds_to_aeration_and_hrt(self) -> None:
         baseline_params = load_asm1_simulation_params()
-        _, state_columns = get_asm1_matrices(baseline_params)
+        matrix_bundle = get_asm1_matrices(baseline_params)
+        state_columns = list(matrix_bundle["state_columns"])
         midpoint_state = np.array(
             [
                 np.mean(baseline_params["influent_state_ranges"][column_name])
@@ -133,13 +185,11 @@ class Asm1SimulationTests(unittest.TestCase):
 
         low_measured = _compute_measured_outputs(
             low_aeration_state,
-            state_columns,
-            baseline_params,
+            matrix_bundle,
         )
         high_measured = _compute_measured_outputs(
             high_aeration_state,
-            state_columns,
-            baseline_params,
+            matrix_bundle,
         )
 
         self.assertGreater(high_measured["DO"], low_measured["DO"])
@@ -159,13 +209,11 @@ class Asm1SimulationTests(unittest.TestCase):
         )
         low_hrt_measured = _compute_measured_outputs(
             low_hrt_state,
-            state_columns,
-            baseline_params,
+            matrix_bundle,
         )
         high_hrt_measured = _compute_measured_outputs(
             high_hrt_state,
-            state_columns,
-            baseline_params,
+            matrix_bundle,
         )
 
         self.assertLess(high_hrt_measured["COD"], low_hrt_measured["COD"])
@@ -214,6 +262,9 @@ class Asm1SimulationTests(unittest.TestCase):
 
         self.assertEqual(result["dataset"].shape[0], 8)
         self.assertEqual(result["dataset"].shape[1], 34)
+        self.assertEqual(result["petersen_matrix"].shape, (7, 11))
+        self.assertEqual(result["composition_matrix"].shape, (10, 11))
+        np.testing.assert_allclose(result["composite_matrix"], result["composition_matrix"])
         self.assertIsNone(result["artifact_paths"]["dataset_csv"])
         self.assertIsNone(result["artifact_paths"]["metadata_json"])
 

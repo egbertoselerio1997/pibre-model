@@ -14,7 +14,7 @@ from src.utils.simulation import load_model_params, save_simulation_artifacts
 
 
 MODEL_NAME = "asm1_simulation"
-N_PROCESSES = 6
+N_PROCESSES = 7
 
 
 REQUIRED_STATES = [
@@ -51,22 +51,146 @@ def load_asm1_simulation_params(repo_root: str | Path | None = None) -> dict[str
     return load_model_params(MODEL_NAME, repo_root)
 
 
-def get_asm1_matrices(model_params: Mapping[str, Any]) -> tuple[np.ndarray, list[str]]:
-    """Return the internal-state identity map used for downstream diagnostics."""
-
+def _validate_model_structure(
+    model_params: Mapping[str, Any],
+) -> tuple[list[str], list[str], list[str], list[str]]:
     state_columns = list(model_params["state_columns"])
+    measured_output_columns = list(model_params["measured_output_columns"])
+    process_names = list(model_params["processes"])
+    process_types = list(model_params["process_types"])
+
     missing = [name for name in REQUIRED_STATES if name not in state_columns]
     if missing:
         missing_display = ", ".join(missing)
         raise KeyError(f"asm1_simulation missing required state columns: {missing_display}")
 
-    measured_output_columns = list(model_params["measured_output_columns"])
     missing_outputs = [name for name in REQUIRED_MEASURED_OUTPUTS if name not in measured_output_columns]
     if missing_outputs:
         missing_output_display = ", ".join(missing_outputs)
         raise KeyError(f"asm1_simulation missing required measured outputs: {missing_output_display}")
 
-    return np.eye(len(state_columns), dtype=float), state_columns
+    if len(process_names) != N_PROCESSES:
+        raise ValueError(f"asm1_simulation requires exactly {N_PROCESSES} configured process descriptors.")
+    if len(process_types) != N_PROCESSES:
+        raise ValueError(f"asm1_simulation requires exactly {N_PROCESSES} configured process types.")
+
+    return state_columns, measured_output_columns, process_names, process_types
+
+
+def get_asm1_matrices(model_params: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the explicit Petersen and composition matrices for the configured state set."""
+
+    state_columns, measured_output_columns, process_names, process_types = _validate_model_structure(model_params)
+    state_index = _build_state_index(state_columns)
+    output_index = _build_state_index(measured_output_columns)
+    factors = model_params["stoichiometric_factors"]
+    observation_model = model_params["observation_model"]
+
+    petersen_matrix = np.zeros((N_PROCESSES, len(state_columns)), dtype=float)
+    composition_matrix = np.zeros((len(measured_output_columns), len(state_columns)), dtype=float)
+
+    y_h = float(factors["heterotroph_yield"])
+    y_a = float(factors["autotroph_yield"])
+    anoxic_nitrate_factor = float(factors["anoxic_nitrate_factor"])
+    decay_to_inert_fraction_h = float(factors["heterotroph_decay_to_inert_fraction"])
+    decay_to_inert_fraction_a = float(factors["autotroph_decay_to_inert_fraction"])
+    nitrate_consumed_anoxic = (1.0 - y_h) / max(anoxic_nitrate_factor * y_h, 1e-9)
+
+    heterotroph_decay_n_release = float(factors["nitrogen_content_x_h"]) - (
+        float(factors["nitrogen_content_x_i"]) * decay_to_inert_fraction_h
+        + float(factors["nitrogen_content_x_s"]) * (1.0 - decay_to_inert_fraction_h)
+    )
+    autotroph_decay_n_release = float(factors["nitrogen_content_x_aut"]) - (
+        float(factors["nitrogen_content_x_i"]) * decay_to_inert_fraction_a
+        + float(factors["nitrogen_content_x_s"]) * (1.0 - decay_to_inert_fraction_a)
+    )
+    heterotroph_decay_p_release = float(factors["phosphorus_content_x_h"]) - (
+        float(factors["phosphorus_content_x_i"]) * decay_to_inert_fraction_h
+        + float(factors["phosphorus_content_x_s"]) * (1.0 - decay_to_inert_fraction_h)
+    )
+    autotroph_decay_p_release = float(factors["phosphorus_content_x_aut"]) - (
+        float(factors["phosphorus_content_x_i"]) * decay_to_inert_fraction_a
+        + float(factors["phosphorus_content_x_s"]) * (1.0 - decay_to_inert_fraction_a)
+    )
+
+    petersen_matrix[0, state_index["S_S"]] = 1.0
+    petersen_matrix[0, state_index["X_S"]] = -1.0
+
+    petersen_matrix[1, state_index["S_S"]] = -1.0 / max(y_h, 1e-9)
+    petersen_matrix[1, state_index["S_NH4_N"]] = -float(factors["nitrogen_content_x_h"])
+    petersen_matrix[1, state_index["S_PO4_P"]] = -float(factors["phosphorus_content_x_h"])
+    petersen_matrix[1, state_index["S_O2"]] = -(1.0 - y_h) / max(y_h, 1e-9)
+    petersen_matrix[1, state_index["X_H"]] = 1.0
+
+    petersen_matrix[2, state_index["S_S"]] = -1.0 / max(y_h, 1e-9)
+    petersen_matrix[2, state_index["S_NH4_N"]] = -float(factors["nitrogen_content_x_h"])
+    petersen_matrix[2, state_index["S_NO3_N"]] = -nitrate_consumed_anoxic
+    petersen_matrix[2, state_index["S_PO4_P"]] = -float(factors["phosphorus_content_x_h"])
+    petersen_matrix[2, state_index["S_Alkalinity"]] = (
+        float(factors["alkalinity_recovery_per_nox_denitrified"]) * nitrate_consumed_anoxic
+    )
+    petersen_matrix[2, state_index["X_H"]] = 1.0
+
+    petersen_matrix[3, state_index["S_NH4_N"]] = -(1.0 / max(y_a, 1e-9) + float(factors["nitrogen_content_x_aut"]))
+    petersen_matrix[3, state_index["S_NO3_N"]] = 1.0 / max(y_a, 1e-9)
+    petersen_matrix[3, state_index["S_PO4_P"]] = -float(factors["phosphorus_content_x_aut"])
+    petersen_matrix[3, state_index["S_O2"]] = -(
+        float(factors["oxygen_per_nh4_nitrified"]) / max(y_a, 1e-9)
+    )
+    petersen_matrix[3, state_index["S_Alkalinity"]] = -(
+        float(factors["alkalinity_per_nh4_nitrified"]) / max(y_a, 1e-9)
+    )
+    petersen_matrix[3, state_index["X_AUT"]] = 1.0
+
+    petersen_matrix[4, state_index["S_NH4_N"]] = heterotroph_decay_n_release
+    petersen_matrix[4, state_index["S_PO4_P"]] = heterotroph_decay_p_release
+    petersen_matrix[4, state_index["X_I"]] = decay_to_inert_fraction_h
+    petersen_matrix[4, state_index["X_S"]] = 1.0 - decay_to_inert_fraction_h
+    petersen_matrix[4, state_index["X_H"]] = -1.0
+
+    petersen_matrix[5, state_index["S_NH4_N"]] = autotroph_decay_n_release
+    petersen_matrix[5, state_index["S_PO4_P"]] = autotroph_decay_p_release
+    petersen_matrix[5, state_index["X_I"]] = decay_to_inert_fraction_a
+    petersen_matrix[5, state_index["X_S"]] = 1.0 - decay_to_inert_fraction_a
+    petersen_matrix[5, state_index["X_AUT"]] = -1.0
+
+    petersen_matrix[6, state_index["S_O2"]] = 1.0
+
+    particulate_states = ["X_I", "X_S", "X_H", "X_AUT"]
+    for state_name in ["S_S", "S_I", *particulate_states]:
+        composition_matrix[output_index["COD"], state_index[state_name]] = 1.0
+
+    for state_name in particulate_states:
+        composition_matrix[output_index["TSS"], state_index[state_name]] = float(
+            observation_model["state_tss_factors"][state_name]
+        )
+        composition_matrix[output_index["VSS"], state_index[state_name]] = float(
+            observation_model["state_vss_factors"][state_name]
+        )
+        composition_matrix[output_index["TN"], state_index[state_name]] = float(
+            observation_model["particulate_nitrogen_factors"][state_name]
+        )
+        composition_matrix[output_index["TP"], state_index[state_name]] = float(
+            observation_model["particulate_phosphorus_factors"][state_name]
+        )
+
+    composition_matrix[output_index["TN"], state_index["S_NH4_N"]] = 1.0
+    composition_matrix[output_index["TN"], state_index["S_NO3_N"]] = 1.0
+    composition_matrix[output_index["TP"], state_index["S_PO4_P"]] = 1.0
+    composition_matrix[output_index["NH4_N"], state_index["S_NH4_N"]] = 1.0
+    composition_matrix[output_index["NO3_N"], state_index["S_NO3_N"]] = 1.0
+    composition_matrix[output_index["PO4_P"], state_index["S_PO4_P"]] = 1.0
+    composition_matrix[output_index["DO"], state_index["S_O2"]] = 1.0
+    composition_matrix[output_index["Alkalinity"], state_index["S_Alkalinity"]] = 1.0
+
+    return {
+        "petersen_matrix": petersen_matrix,
+        "composition_matrix": composition_matrix,
+        "process_names": process_names,
+        "process_types": process_types,
+        "state_columns": state_columns,
+        "measured_output_columns": measured_output_columns,
+    }
 
 
 def _sample_named_ranges(
@@ -91,29 +215,24 @@ def _monod(numerator: float, half_saturation: float) -> float:
     return float(numerator) / max(float(numerator) + float(half_saturation), 1e-9)
 
 
-def _steady_state_residuals(
+def _compute_process_rates(
     state: np.ndarray,
-    influent_state: np.ndarray,
-    hrt_hours: float,
     aeration: float,
     state_columns: list[str],
     model_params: Mapping[str, Any],
 ) -> np.ndarray:
     index = _build_state_index(state_columns)
     kinetics = model_params["kinetics"]
-    factors = model_params["stoichiometric_factors"]
     aeration_model = model_params["aeration_model"]
 
     s_s = state[index["S_S"]]
     s_nh4 = state[index["S_NH4_N"]]
     s_no3 = state[index["S_NO3_N"]]
-    s_po4 = state[index["S_PO4_P"]]
     s_o2 = state[index["S_O2"]]
     x_s = state[index["X_S"]]
     x_h = state[index["X_H"]]
     x_aut = state[index["X_AUT"]]
 
-    dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
     kla = float(aeration_model["kla_base"]) + float(aeration_model["kla_per_aeration"]) * max(float(aeration), 0.0)
     do_saturation = float(aeration_model["do_saturation"])
 
@@ -145,81 +264,37 @@ def _steady_state_residuals(
     autotroph_growth_rate = float(kinetics["autotroph_max_growth_rate"]) * ammonium_term * oxygen_term_a * x_aut
     heterotroph_decay_rate = float(kinetics["heterotroph_decay_rate"]) * x_h
     autotroph_decay_rate = float(kinetics["autotroph_decay_rate"]) * x_aut
+    aeration_rate = kla * (do_saturation - s_o2)
 
-    y_h = float(factors["heterotroph_yield"])
-    y_a = float(factors["autotroph_yield"])
-    anoxic_nitrate_factor = float(factors["anoxic_nitrate_factor"])
+    return np.array(
+        [
+            hydrolysis_rate,
+            heterotroph_aerobic_rate,
+            heterotroph_anoxic_rate,
+            autotroph_growth_rate,
+            heterotroph_decay_rate,
+            autotroph_decay_rate,
+            aeration_rate,
+        ],
+        dtype=float,
+    )
 
-    substrate_consumed_aerobic = heterotroph_aerobic_rate / max(y_h, 1e-9)
-    substrate_consumed_anoxic = heterotroph_anoxic_rate / max(y_h, 1e-9)
-    oxygen_consumed_aerobic = ((1.0 - y_h) / max(y_h, 1e-9)) * heterotroph_aerobic_rate
-    nitrate_consumed_anoxic = ((1.0 - y_h) / max(anoxic_nitrate_factor * y_h, 1e-9)) * heterotroph_anoxic_rate
 
-    ammonium_consumed_autotroph = (1.0 / max(y_a, 1e-9) + float(factors["nitrogen_content_x_aut"])) * autotroph_growth_rate
-    nitrate_generated_autotroph = autotroph_growth_rate / max(y_a, 1e-9)
-    oxygen_consumed_autotroph = float(factors["oxygen_per_nh4_nitrified"]) * nitrate_generated_autotroph
-    alkalinity_consumed_autotroph = float(factors["alkalinity_per_nh4_nitrified"]) * nitrate_generated_autotroph
-    alkalinity_recovered_anoxic = float(factors["alkalinity_recovery_per_nox_denitrified"]) * nitrate_consumed_anoxic
-
-    decay_to_inert_fraction_h = float(factors["heterotroph_decay_to_inert_fraction"])
-    decay_to_inert_fraction_a = float(factors["autotroph_decay_to_inert_fraction"])
-    decay_to_inert_h = decay_to_inert_fraction_h * heterotroph_decay_rate
-    decay_to_slow_h = heterotroph_decay_rate - decay_to_inert_h
-    decay_to_inert_a = decay_to_inert_fraction_a * autotroph_decay_rate
-    decay_to_slow_a = autotroph_decay_rate - decay_to_inert_a
-
-    n_release_h = (
-        float(factors["nitrogen_content_x_h"])
-        - (
-            float(factors["nitrogen_content_x_i"]) * decay_to_inert_fraction_h
-            + float(factors["nitrogen_content_x_s"]) * (1.0 - decay_to_inert_fraction_h)
-        )
-    ) * heterotroph_decay_rate
-    n_release_a = (
-        float(factors["nitrogen_content_x_aut"])
-        - (
-            float(factors["nitrogen_content_x_i"]) * decay_to_inert_fraction_a
-            + float(factors["nitrogen_content_x_s"]) * (1.0 - decay_to_inert_fraction_a)
-        )
-    ) * autotroph_decay_rate
-    p_release_h = (
-        float(factors["phosphorus_content_x_h"])
-        - (
-            float(factors["phosphorus_content_x_i"]) * decay_to_inert_fraction_h
-            + float(factors["phosphorus_content_x_s"]) * (1.0 - decay_to_inert_fraction_h)
-        )
-    ) * heterotroph_decay_rate
-    p_release_a = (
-        float(factors["phosphorus_content_x_aut"])
-        - (
-            float(factors["phosphorus_content_x_i"]) * decay_to_inert_fraction_a
-            + float(factors["phosphorus_content_x_s"]) * (1.0 - decay_to_inert_fraction_a)
-        )
-    ) * autotroph_decay_rate
-
+def _steady_state_residuals(
+    state: np.ndarray,
+    influent_state: np.ndarray,
+    hrt_hours: float,
+    aeration: float,
+    matrix_bundle: Mapping[str, Any],
+    model_params: Mapping[str, Any],
+) -> np.ndarray:
+    state_columns = list(matrix_bundle["state_columns"])
+    petersen_matrix = np.asarray(matrix_bundle["petersen_matrix"], dtype=float)
+    dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
     residual = dilution_rate * (influent_state - state)
 
-    residual[index["S_S"]] += hydrolysis_rate - substrate_consumed_aerobic - substrate_consumed_anoxic
-    residual[index["S_I"]] += 0.0
-    residual[index["S_NH4_N"]] += (
-        -float(factors["nitrogen_content_x_h"]) * (heterotroph_aerobic_rate + heterotroph_anoxic_rate)
-        - ammonium_consumed_autotroph
-        + n_release_h
-        + n_release_a
-    )
-    residual[index["S_NO3_N"]] += nitrate_generated_autotroph - nitrate_consumed_anoxic
-    residual[index["S_PO4_P"]] += (
-        -float(factors["phosphorus_content_x_h"]) * (heterotroph_aerobic_rate + heterotroph_anoxic_rate)
-        - float(factors["phosphorus_content_x_aut"]) * autotroph_growth_rate
-        + p_release_h
-        + p_release_a
-    )
-    residual[index["S_O2"]] += kla * (do_saturation - s_o2) - oxygen_consumed_aerobic - oxygen_consumed_autotroph
-    residual[index["S_Alkalinity"]] += alkalinity_recovered_anoxic - alkalinity_consumed_autotroph
-    residual[index["X_I"]] += decay_to_inert_h + decay_to_inert_a
-    residual[index["X_S"]] += -hydrolysis_rate + decay_to_slow_h + decay_to_slow_a
-    residual[index["X_H"]] += heterotroph_aerobic_rate + heterotroph_anoxic_rate - heterotroph_decay_rate
-    residual[index["X_AUT"]] += autotroph_growth_rate - autotroph_decay_rate
+    process_rates = _compute_process_rates(state, aeration, state_columns, model_params)
+    residual += process_rates @ petersen_matrix
 
     return residual
 
@@ -267,42 +342,15 @@ def _build_initial_guess(
 
 def _compute_measured_outputs(
     state: np.ndarray,
-    state_columns: list[str],
-    model_params: Mapping[str, Any],
+    matrix_bundle: Mapping[str, Any],
 ) -> dict[str, float]:
-    index = _build_state_index(state_columns)
-    observation_model = model_params["observation_model"]
-    particulate_states = ["X_I", "X_S", "X_H", "X_AUT"]
-
-    cod = sum(float(state[index[name]]) for name in ["S_S", "S_I", *particulate_states])
-    tss = sum(
-        float(state[index[name]]) * float(observation_model["state_tss_factors"][name])
-        for name in particulate_states
-    )
-    vss = sum(
-        float(state[index[name]]) * float(observation_model["state_vss_factors"][name])
-        for name in particulate_states
-    )
-    tn = float(state[index["S_NH4_N"]]) + float(state[index["S_NO3_N"]]) + sum(
-        float(state[index[name]]) * float(observation_model["particulate_nitrogen_factors"][name])
-        for name in particulate_states
-    )
-    tp = float(state[index["S_PO4_P"]]) + sum(
-        float(state[index[name]]) * float(observation_model["particulate_phosphorus_factors"][name])
-        for name in particulate_states
-    )
+    measured_output_columns = list(matrix_bundle["measured_output_columns"])
+    composition_matrix = np.asarray(matrix_bundle["composition_matrix"], dtype=float)
+    observed_values = composition_matrix @ state
 
     return {
-        "COD": cod,
-        "TSS": tss,
-        "VSS": vss,
-        "TN": tn,
-        "TP": tp,
-        "NH4_N": float(state[index["S_NH4_N"]]),
-        "NO3_N": float(state[index["S_NO3_N"]]),
-        "PO4_P": float(state[index["S_PO4_P"]]),
-        "DO": float(state[index["S_O2"]]),
-        "Alkalinity": float(state[index["S_Alkalinity"]]),
+        output_name: float(observed_values[output_index])
+        for output_index, output_name in enumerate(measured_output_columns)
     }
 
 
@@ -316,7 +364,8 @@ def solve_asm1_cstr_steady_state(
 ) -> tuple[np.ndarray, dict[str, float | bool | int]]:
     """Solve a single mechanistic steady-state CSTR operating point."""
 
-    state_columns = list(model_params["state_columns"])
+    matrix_bundle = get_asm1_matrices(model_params)
+    state_columns = list(matrix_bundle["state_columns"])
     solver = model_params["solver"]
     lower_bounds = np.full(len(state_columns), float(solver["lower_bound"]), dtype=float)
     upper_bounds = np.full(len(state_columns), np.inf, dtype=float)
@@ -355,7 +404,7 @@ def solve_asm1_cstr_steady_state(
             ftol=float(solver["residual_tolerance"]),
             gtol=float(solver["gradient_tolerance"]),
             max_nfev=int(solver["max_nfev"]),
-            args=(influent_state, hrt_hours, aeration, state_columns, model_params),
+            args=(influent_state, hrt_hours, aeration, matrix_bundle, model_params),
         )
         residual_max = float(np.max(np.abs(result.fun)))
         if residual_max < best_residual_max:
@@ -369,7 +418,7 @@ def solve_asm1_cstr_steady_state(
                 influent_state,
                 hrt_hours,
                 aeration,
-                state_columns,
+                matrix_bundle,
                 model_params,
             ),
             (0.0, float(solver["dynamic_relaxation_days"])),
@@ -389,7 +438,7 @@ def solve_asm1_cstr_steady_state(
                 ftol=float(solver["residual_tolerance"]),
                 gtol=float(solver["gradient_tolerance"]),
                 max_nfev=int(solver["max_nfev"]),
-                args=(influent_state, hrt_hours, aeration, state_columns, model_params),
+                args=(influent_state, hrt_hours, aeration, matrix_bundle, model_params),
             )
             residual_max = float(np.max(np.abs(result.fun)))
             if residual_max < best_residual_max:
@@ -425,9 +474,8 @@ def build_asm1_metadata(
 ) -> dict[str, Any]:
     """Create the metadata contract required for simulation outputs."""
 
-    state_columns = list(model_params["state_columns"])
+    state_columns, measured_output_columns, process_names, process_types = _validate_model_structure(model_params)
     operational_columns = list(model_params["operational_columns"])
-    measured_output_columns = list(model_params["measured_output_columns"])
     schema_version = str(model_params["schema_version"])
 
     return {
@@ -442,7 +490,10 @@ def build_asm1_metadata(
         "state_columns": state_columns,
         "measured_output_columns": measured_output_columns,
         "operational_columns": operational_columns,
-        "processes": list(model_params["processes"]),
+        "processes": process_names,
+        "process_types": process_types,
+        "petersen_matrix_shape": [N_PROCESSES, len(state_columns)],
+        "composition_matrix_shape": [len(measured_output_columns), len(state_columns)],
         "schema_version": schema_version,
     }
 
@@ -452,7 +503,7 @@ def generate_asm1_dataset(
     model_params: Mapping[str, Any] | None = None,
     n_samples: int | None = None,
     random_seed: int | None = None,
-) -> tuple[pd.DataFrame, dict[str, Any], np.ndarray]:
+ ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
     """Generate a mechanistic steady-state CSTR dataset from configured state ranges."""
 
     params = dict(model_params) if model_params is not None else load_asm1_simulation_params()
@@ -462,12 +513,10 @@ def generate_asm1_dataset(
     max_sample_attempts = int(configured_hyperparameters["max_sample_attempts"])
     rng = np.random.default_rng(seed)
 
-    state_matrix, state_columns = get_asm1_matrices(params)
+    matrix_bundle = get_asm1_matrices(params)
+    state_columns = list(matrix_bundle["state_columns"])
     operational_columns = list(params["operational_columns"])
-    measured_output_columns = list(params["measured_output_columns"])
-
-    if len(params["processes"]) != N_PROCESSES:
-        raise ValueError(f"asm1_simulation requires exactly {N_PROCESSES} configured process descriptors.")
+    measured_output_columns = list(matrix_bundle["measured_output_columns"])
 
     influent_states = np.zeros((sample_count, len(state_columns)), dtype=float)
     operational = np.zeros((sample_count, len(operational_columns)), dtype=float)
@@ -476,6 +525,7 @@ def generate_asm1_dataset(
     previous_solution: np.ndarray | None = None
     for sample_index in range(sample_count):
         solved = False
+        effluent_state: np.ndarray | None = None
         last_error: RuntimeError | None = None
         for _attempt_index in range(max_sample_attempts):
             candidate_influent = _sample_named_ranges(
@@ -513,9 +563,10 @@ def generate_asm1_dataset(
                 f"after {max_sample_attempts} attempts at sample index {sample_index}."
             ) from last_error
 
+        assert effluent_state is not None
         previous_solution = effluent_state
         effluent_states[sample_index] = effluent_state
-        observations = _compute_measured_outputs(effluent_state, state_columns, params)
+        observations = _compute_measured_outputs(effluent_state, matrix_bundle)
         measured_outputs[sample_index] = [observations[name] for name in measured_output_columns]
 
     influent_df = pd.DataFrame(influent_states, columns=[f"In_{name}" for name in state_columns])
@@ -530,7 +581,7 @@ def generate_asm1_dataset(
         random_seed=seed,
     )
 
-    return dataset, metadata, state_matrix
+    return dataset, metadata, matrix_bundle
 
 
 def run_asm1_simulation(
@@ -544,7 +595,7 @@ def run_asm1_simulation(
     """Run the configured steady-state CSTR simulation and optionally persist artifacts."""
 
     params = load_asm1_simulation_params(repo_root)
-    dataset, metadata, state_matrix = generate_asm1_dataset(
+    dataset, metadata, matrix_bundle = generate_asm1_dataset(
         model_params=params,
         n_samples=n_samples,
         random_seed=random_seed,
@@ -572,7 +623,10 @@ def run_asm1_simulation(
     return {
         "dataset": dataset,
         "metadata": metadata,
-        "composite_matrix": state_matrix,
+        "petersen_matrix": matrix_bundle["petersen_matrix"],
+        "composition_matrix": matrix_bundle["composition_matrix"],
+        "matrix_bundle": matrix_bundle,
+        "composite_matrix": matrix_bundle["composition_matrix"],
         "artifact_paths": artifact_paths,
     }
 

@@ -25,10 +25,10 @@ where the soluble states represent readily biodegradable substrate, inert solubl
 For a tank with hydraulic retention time $\tau$ and volumetric dilution rate $D = 1 / \tau$, the steady-state mass balance for each state is written as
 
 $$
-0 = D(x_{in} - x) + \nu \rho(x) + a(x, u)
+0 = D(x_{in} - x) + \nu^T r(x, u)
 $$
 
-where $x_{in}$ is the influent state vector, $\nu$ is the process stoichiometry, $\rho(x)$ is the vector of biological process rates, and $a(x, u)$ is the aeration contribution to dissolved oxygen.
+where $x_{in}$ is the influent state vector, $\nu$ is the explicit Petersen matrix, and $r(x, u)$ is the process-rate vector evaluated at the reactor state and operating condition. In this repository the Petersen matrix has 7 rows and 11 columns. The first six rows are biochemical conversions and the seventh row is a deliberate mass-transfer extension representing aeration.
 
 The implemented process set is:
 
@@ -38,6 +38,7 @@ The implemented process set is:
 4. autotrophic growth and nitrification
 5. heterotrophic decay
 6. autotrophic decay
+7. aeration mass transfer
 
 Representative rate expressions are Monod-type kinetics:
 
@@ -53,13 +54,21 @@ $$
 \rho_A = \mu_A \frac{S_{NH4}}{K_{NH} + S_{NH4}} \frac{S_O}{K_{OA} + S_O} X_{AUT}
 $$
 
-Oxygen transfer is represented mechanistically in the dissolved-oxygen balance by
+Oxygen transfer is represented mechanistically by the seventh process rate,
 
 $$
-a_O = K_L a \left(S_{O,sat} - S_O\right)
+r_7 = K_L a \left(S_{O,sat} - S_O\right)
 $$
 
-with $K_L a$ computed from the configured aeration intensity.
+with $K_L a$ computed from the configured aeration intensity. The associated Petersen row contains a nonzero coefficient only in the dissolved-oxygen column. This is not the standard textbook presentation, where oxygen transfer is often added outside the biochemical Petersen matrix, but it is an intentional implementation choice here so that all state-source terms are exposed in one matrix object.
+
+The repository also constructs an explicit composition matrix $C$ that maps solved internal states to reported analytes:
+
+$$
+y = Cx
+$$
+
+where $y = [COD, TSS, VSS, TN, TP, NH4\text{-}N, NO3\text{-}N, PO4\text{-}P, DO, Alkalinity]^T$. This matrix is built from the configured solids, nitrogen, and phosphorus observation factors so that the analyte mapping is explicit and inspectable.
 
 The nonlinear steady-state algebraic system is solved numerically for each sampled operating point using a bounded least-squares residual solve.
 
@@ -120,23 +129,25 @@ Implementation is in `src/models/simulation/asm1_simulation.py`.
 Main implementation blocks:
 
 1. Load the parameter namespace from `config/params.json`.
-2. Sample mechanistic influent state variables and operating variables from configured ranges.
-3. Solve the steady-state nonlinear CSTR balances for each sampled operating point.
-4. Map the solved outlet state to measured analyte summaries.
-5. Build metadata describing the new state-based schema.
-6. Persist the dataset and metadata using the shared simulation utilities.
+2. Construct the explicit Petersen matrix and composition matrix from the configured stoichiometric and observation factors.
+3. Sample mechanistic influent state variables and operating variables from configured ranges.
+4. Solve the steady-state nonlinear CSTR balances for each sampled operating point using dilution plus matrix-based process contributions.
+5. Map the solved outlet state to measured analyte summaries through the composition matrix.
+6. Build metadata describing the state-based schema and matrix shapes.
+7. Persist the dataset and metadata using the shared simulation utilities.
 
 ## 6. Architecture, orchestration, or adopted approach details and standard name, when relevant
 
-The adopted approach is a mechanistic steady-state activated-sludge CSTR model with nonlinear residual solving.
+The adopted approach is a mechanistic steady-state activated-sludge CSTR model with nonlinear residual solving and explicit matrix exposure.
 
 Execution architecture:
 
 1. configuration load
-2. influent-state and operating-point sampling
-3. single-point nonlinear steady-state solve
-4. analyte observation mapping
-5. dataset assembly and artifact persistence
+2. Petersen/composition matrix construction
+3. influent-state and operating-point sampling
+4. single-point nonlinear steady-state solve
+5. analyte observation mapping
+6. dataset assembly and artifact persistence
 
 The simulation remains deterministic when the random seed is fixed.
 
@@ -159,6 +170,7 @@ Key limitations:
 - the kinetics are literature-default values and are not calibrated to a specific plant
 - pH, inorganic carbon chemistry, and explicit nitrite dynamics are intentionally excluded until the required chemistry states are added
 - because there is no clarifier, the outlet solids represent the CSTR mixed liquor rather than final clarified effluent
+- the aeration row is a non-standard matrix extension used for implementation clarity; it should be interpreted as a mass-transfer source term, not as a biological conversion
 
 Expected failure modes:
 
