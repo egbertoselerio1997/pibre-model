@@ -4,7 +4,7 @@
 
 The asm1_simulation module is now implemented as a mechanistic steady-state activated-sludge CSTR solver for a single completely mixed aerobic reactor. The model no longer maps sampled laboratory analytes directly to effluent through surrogate removal factors. Instead, it samples mechanistic influent state variables, solves the nonlinear steady-state reactor balances, and then maps the solved reactor outlet state to a smaller panel of directly interpretable analytes.
 
-The generated dataset is intended for simulation-driven studies where the predictors are operating conditions plus influent state variables, and the responses are the steady-state reactor outlet states together with selected analyte summaries such as COD, NH4-N, NO3-N, TP, TSS, and dissolved oxygen.
+The generated dataset is intended for simulation-driven studies where the predictors are operating conditions plus influent state variables, and the responses are the steady-state reactor outlet states together with selected analyte summaries such as COD, TSS, TN, TP, NH4-N, NO3-N, PO4-P, and alkalinity.
 
 ## 2. Background and system or process context
 
@@ -68,7 +68,7 @@ $$
 y = Cx
 $$
 
-where $y = [COD, TSS, VSS, TN, TP, NH4\text{-}N, NO3\text{-}N, PO4\text{-}P, DO, Alkalinity]^T$. This matrix is built from the configured solids, nitrogen, and phosphorus observation factors so that the analyte mapping is explicit and inspectable.
+where $y = [COD, TSS, TN, TP, NH4\text{-}N, NO3\text{-}N, PO4\text{-}P, Alkalinity]^T$. This matrix is built from the configured solids, nitrogen, and phosphorus observation factors so that the analyte mapping is explicit and inspectable.
 
 The nonlinear steady-state algebraic system is solved numerically for each sampled operating point using a bounded least-squares residual solve.
 
@@ -105,13 +105,11 @@ Dependent columns (outputs):
 - Out_X_AUT
 - Out_COD
 - Out_TSS
-- Out_VSS
 - Out_TN
 - Out_TP
 - Out_NH4_N
 - Out_NO3_N
 - Out_PO4_P
-- Out_DO
 - Out_Alkalinity
 
 Assumptions:
@@ -119,6 +117,7 @@ Assumptions:
 - the reactor is a single completely mixed aerobic CSTR
 - the outlet is the reactor mixed liquor because no clarifier or recycle loop is included
 - temperature is implicit in the configured kinetic constants rather than dynamically varied
+- dissolved oxygen remains an internal mechanistic state used by the kinetics and aeration model, but it is not exported as part of the composite-measure output contract
 - pH is not exported because the present mechanistic state set does not yet include the aqueous chemistry needed to solve it rigorously
 - BOD5 and nitrite are not exported because they are not direct states of the implemented reactor model
 

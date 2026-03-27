@@ -4,9 +4,9 @@
     "notes": "Replace template_model with a concrete model name when implementing a model."
   },
   "asm1_simulation": {
-    "schema_version": "3.1",
+    "schema_version": "3.2",
     "hyperparameters": {
-      "n_samples": 250,
+      "n_samples": 10000,
       "seed": 42,
       "max_sample_attempts": 25
     },
@@ -26,13 +26,11 @@
     "measured_output_columns": [
       "COD",
       "TSS",
-      "VSS",
       "TN",
       "TP",
       "NH4_N",
       "NO3_N",
       "PO4_P",
-      "DO",
       "Alkalinity"
     ],
     "operational_columns": [
@@ -161,12 +159,6 @@
         "X_H": 0.9,
         "X_AUT": 0.9
       },
-      "state_vss_factors": {
-        "X_I": 0.55,
-        "X_S": 0.7,
-        "X_H": 0.85,
-        "X_AUT": 0.82
-      },
       "particulate_nitrogen_factors": {
         "X_I": 0.03,
         "X_S": 0.04,
@@ -198,5 +190,545 @@
       "biochemical",
       "mass_transfer"
     ]
+  },
+  "pibre": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "batch_size": 64,
+      "scale_features": true,
+      "scale_targets": false,
+      "default_tuning_profile": "thorough",
+      "log_interval": 25
+    },
+    "training_defaults": {
+      "learning_rate": 0.001,
+      "lambda_l1": 0.0001,
+      "weight_decay": 0.000001,
+      "clip_max_norm": 1.0,
+      "bilinear_init_scale": 0.01
+    },
+    "search_space": {
+      "learning_rate": {
+        "type": "float",
+        "low": 0.0001,
+        "high": 0.05,
+        "log": true
+      },
+      "lambda_l1": {
+        "type": "float",
+        "low": 0.000001,
+        "high": 0.01,
+        "log": true
+      },
+      "weight_decay": {
+        "type": "float",
+        "low": 0.00000001,
+        "high": 0.001,
+        "log": true
+      },
+      "clip_max_norm": {
+        "type": "float",
+        "low": 0.5,
+        "high": 5.0,
+        "log": false
+      },
+      "bilinear_init_scale": {
+        "type": "float",
+        "low": 0.0001,
+        "high": 0.05,
+        "log": true
+      }
+    },
+    "pruner": {
+      "type": "median",
+      "n_startup_trials": 5,
+      "n_warmup_steps": 20,
+      "interval_steps": 10
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 50,
+        "tuning_epochs": 50,
+        "final_epochs": 1000,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 75,
+        "tuning_epochs": 75,
+        "final_epochs": 3000,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 100,
+        "tuning_epochs": 100,
+        "final_epochs": 500,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "xgboost_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "scale_features": false,
+      "scale_targets": false,
+      "default_tuning_profile": "balanced"
+    },
+    "training_defaults": {
+      "objective": "reg:squarederror",
+      "n_estimators": 200,
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "min_child_weight": 1.0,
+      "subsample": 0.9,
+      "colsample_bytree": 0.9,
+      "reg_alpha": 0.000001,
+      "reg_lambda": 1.0,
+      "tree_method": "hist",
+      "random_state": 42,
+      "n_jobs": -1,
+      "verbosity": 0
+    },
+    "search_space": {
+      "n_estimators": {
+        "type": "int",
+        "low": 80,
+        "high": 320,
+        "log": false
+      },
+      "learning_rate": {
+        "type": "float",
+        "low": 0.01,
+        "high": 0.2,
+        "log": true
+      },
+      "max_depth": {
+        "type": "int",
+        "low": 3,
+        "high": 8,
+        "log": false
+      },
+      "min_child_weight": {
+        "type": "float",
+        "low": 0.5,
+        "high": 8.0,
+        "log": true
+      },
+      "subsample": {
+        "type": "float",
+        "low": 0.6,
+        "high": 1.0,
+        "log": false
+      },
+      "colsample_bytree": {
+        "type": "float",
+        "low": 0.6,
+        "high": 1.0,
+        "log": false
+      },
+      "reg_alpha": {
+        "type": "float",
+        "low": 0.000001,
+        "high": 1.0,
+        "log": true
+      },
+      "reg_lambda": {
+        "type": "float",
+        "low": 0.001,
+        "high": 10.0,
+        "log": true
+      }
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 10,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 25,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 50,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "lightgbm_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "scale_features": false,
+      "scale_targets": false,
+      "default_tuning_profile": "balanced"
+    },
+    "training_defaults": {
+      "objective": "regression",
+      "n_estimators": 200,
+      "learning_rate": 0.05,
+      "num_leaves": 31,
+      "max_depth": -1,
+      "min_child_samples": 10,
+      "subsample": 0.9,
+      "colsample_bytree": 0.9,
+      "reg_alpha": 0.000001,
+      "reg_lambda": 0.000001,
+      "random_state": 42,
+      "verbosity": -1,
+      "n_jobs": -1
+    },
+    "search_space": {
+      "n_estimators": {
+        "type": "int",
+        "low": 80,
+        "high": 320,
+        "log": false
+      },
+      "learning_rate": {
+        "type": "float",
+        "low": 0.01,
+        "high": 0.2,
+        "log": true
+      },
+      "num_leaves": {
+        "type": "int",
+        "low": 15,
+        "high": 63,
+        "log": false
+      },
+      "max_depth": {
+        "type": "categorical",
+        "choices": [-1, 4, 6, 8, 10]
+      },
+      "min_child_samples": {
+        "type": "int",
+        "low": 5,
+        "high": 40,
+        "log": false
+      },
+      "subsample": {
+        "type": "float",
+        "low": 0.6,
+        "high": 1.0,
+        "log": false
+      },
+      "colsample_bytree": {
+        "type": "float",
+        "low": 0.6,
+        "high": 1.0,
+        "log": false
+      },
+      "reg_alpha": {
+        "type": "float",
+        "low": 0.000001,
+        "high": 1.0,
+        "log": true
+      },
+      "reg_lambda": {
+        "type": "float",
+        "low": 0.000001,
+        "high": 10.0,
+        "log": true
+      }
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 10,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 25,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 50,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "catboost_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "scale_features": false,
+      "scale_targets": false,
+      "default_tuning_profile": "balanced"
+    },
+    "training_defaults": {
+      "loss_function": "MultiRMSE",
+      "iterations": 250,
+      "learning_rate": 0.05,
+      "depth": 6,
+      "l2_leaf_reg": 3.0,
+      "bootstrap_type": "Bayesian",
+      "bagging_temperature": 1.0,
+      "random_strength": 1.0,
+      "random_seed": 42,
+      "verbose": false,
+      "allow_writing_files": false
+    },
+    "search_space": {
+      "iterations": {
+        "type": "int",
+        "low": 80,
+        "high": 320,
+        "log": false
+      },
+      "learning_rate": {
+        "type": "float",
+        "low": 0.01,
+        "high": 0.2,
+        "log": true
+      },
+      "depth": {
+        "type": "int",
+        "low": 4,
+        "high": 8,
+        "log": false
+      },
+      "l2_leaf_reg": {
+        "type": "float",
+        "low": 0.01,
+        "high": 20.0,
+        "log": true
+      },
+      "bagging_temperature": {
+        "type": "float",
+        "low": 0.0,
+        "high": 5.0,
+        "log": false
+      },
+      "random_strength": {
+        "type": "float",
+        "low": 0.001,
+        "high": 5.0,
+        "log": true
+      }
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 10,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 25,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 50,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "adaboost_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "scale_features": false,
+      "scale_targets": false,
+      "default_tuning_profile": "balanced"
+    },
+    "training_defaults": {
+      "n_estimators": 150,
+      "learning_rate": 0.05,
+      "loss": "linear",
+      "random_state": 42
+    },
+    "search_space": {
+      "n_estimators": {
+        "type": "int",
+        "low": 50,
+        "high": 250,
+        "log": false
+      },
+      "learning_rate": {
+        "type": "float",
+        "low": 0.01,
+        "high": 1.0,
+        "log": true
+      },
+      "loss": {
+        "type": "categorical",
+        "choices": ["linear", "square", "exponential"]
+      }
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 10,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 25,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 50,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "random_forest_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "scale_features": false,
+      "scale_targets": false,
+      "default_tuning_profile": "balanced"
+    },
+    "training_defaults": {
+      "n_estimators": 300,
+      "max_depth": null,
+      "min_samples_split": 2,
+      "min_samples_leaf": 1,
+      "max_features": 1.0,
+      "bootstrap": true,
+      "random_state": 42,
+      "n_jobs": -1
+    },
+    "search_space": {
+      "n_estimators": {
+        "type": "int",
+        "low": 100,
+        "high": 400,
+        "log": false
+      },
+      "max_depth": {
+        "type": "categorical",
+        "choices": [null, 6, 10, 14, 18]
+      },
+      "min_samples_split": {
+        "type": "int",
+        "low": 2,
+        "high": 10,
+        "log": false
+      },
+      "min_samples_leaf": {
+        "type": "int",
+        "low": 1,
+        "high": 4,
+        "log": false
+      },
+      "max_features": {
+        "type": "float",
+        "low": 0.5,
+        "high": 1.0,
+        "log": false
+      }
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 10,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 25,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 50,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "svr_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "test_fraction": 0.2,
+      "validation_fraction": 0.2,
+      "scale_features": true,
+      "scale_targets": false,
+      "default_tuning_profile": "balanced"
+    },
+    "training_defaults": {
+      "C": 10.0,
+      "epsilon": 0.05,
+      "kernel": "rbf",
+      "gamma": "scale",
+      "degree": 3
+    },
+    "search_space": {
+      "C": {
+        "type": "float",
+        "low": 0.1,
+        "high": 100.0,
+        "log": true
+      },
+      "epsilon": {
+        "type": "float",
+        "low": 0.001,
+        "high": 1.0,
+        "log": true
+      },
+      "kernel": {
+        "type": "categorical",
+        "choices": ["rbf", "linear", "poly"]
+      },
+      "gamma": {
+        "type": "categorical",
+        "choices": ["scale", "auto"]
+      },
+      "degree": {
+        "type": "int",
+        "low": 2,
+        "high": 4,
+        "log": false
+      }
+    },
+    "tuning_profiles": {
+      "fast": {
+        "n_trials": 10,
+        "timeout_seconds": null
+      },
+      "balanced": {
+        "n_trials": 25,
+        "timeout_seconds": null
+      },
+      "thorough": {
+        "n_trials": 50,
+        "timeout_seconds": null
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
   }
 }

@@ -25,14 +25,14 @@ class Asm1SimulationTests(unittest.TestCase):
     def test_generate_asm1_dataset_matches_metadata_contract(self) -> None:
         dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=12, random_seed=7)
 
-        self.assertEqual(dataset.shape, (12, 34))
+        self.assertEqual(dataset.shape, (12, 32))
         self.assertEqual(matrix_bundle["petersen_matrix"].shape, (7, 11))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (10, 11))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (8, 11))
         self.assertEqual(metadata["simulation_name"], "asm1_simulation")
         self.assertEqual(metadata["n_samples"], 12)
-        self.assertEqual(metadata["schema_version"], "3.1")
+        self.assertEqual(metadata["schema_version"], "3.2")
         self.assertEqual(metadata["petersen_matrix_shape"], [7, 11])
-        self.assertEqual(metadata["composition_matrix_shape"], [10, 11])
+        self.assertEqual(metadata["composition_matrix_shape"], [8, 11])
         self.assertEqual(metadata["process_types"][-1], "mass_transfer")
         self.assertIsNone(metadata["dataset_file"])
 
@@ -67,13 +67,11 @@ class Asm1SimulationTests(unittest.TestCase):
         expected_measured_outputs = [
             "Out_COD",
             "Out_TSS",
-            "Out_VSS",
             "Out_TN",
             "Out_TP",
             "Out_NH4_N",
             "Out_NO3_N",
             "Out_PO4_P",
-            "Out_DO",
             "Out_Alkalinity",
         ]
         expected_dependent = expected_effluent_states + expected_measured_outputs
@@ -82,11 +80,10 @@ class Asm1SimulationTests(unittest.TestCase):
         self.assertEqual(metadata["dependent_columns"], expected_dependent)
         self.assertEqual(list(dataset.columns), expected_independent + expected_dependent)
 
-        self.assertTrue((dataset["Out_DO"] >= 0.0).all())
+        self.assertTrue((dataset["Out_Alkalinity"] >= 0.0).all())
         self.assertTrue((dataset["Out_NH4_N"] >= 0.0).all())
         self.assertTrue((dataset["Out_NO3_N"] >= 0.0).all())
         self.assertTrue((dataset["Out_PO4_P"] >= 0.0).all())
-        self.assertTrue((dataset["Out_VSS"] <= dataset["Out_TSS"] + 1e-9).all())
 
     def test_explicit_matrices_capture_aeration_and_output_mapping(self) -> None:
         params = load_asm1_simulation_params()
@@ -111,10 +108,6 @@ class Asm1SimulationTests(unittest.TestCase):
             + 40.0 * observation_model["state_tss_factors"]["X_S"]
             + 80.0 * observation_model["state_tss_factors"]["X_H"]
             + 10.0 * observation_model["state_tss_factors"]["X_AUT"],
-            "VSS": 25.0 * observation_model["state_vss_factors"]["X_I"]
-            + 40.0 * observation_model["state_vss_factors"]["X_S"]
-            + 80.0 * observation_model["state_vss_factors"]["X_H"]
-            + 10.0 * observation_model["state_vss_factors"]["X_AUT"],
             "TN": 4.0
             + 6.0
             + 25.0 * observation_model["particulate_nitrogen_factors"]["X_I"]
@@ -129,7 +122,6 @@ class Asm1SimulationTests(unittest.TestCase):
             "NH4_N": 4.0,
             "NO3_N": 6.0,
             "PO4_P": 2.0,
-            "DO": 3.5,
             "Alkalinity": 120.0,
         }
 
@@ -162,6 +154,7 @@ class Asm1SimulationTests(unittest.TestCase):
         baseline_params = load_asm1_simulation_params()
         matrix_bundle = get_asm1_matrices(baseline_params)
         state_columns = list(matrix_bundle["state_columns"])
+        state_index = {name: position for position, name in enumerate(state_columns)}
         midpoint_state = np.array(
             [
                 np.mean(baseline_params["influent_state_ranges"][column_name])
@@ -192,7 +185,7 @@ class Asm1SimulationTests(unittest.TestCase):
             matrix_bundle,
         )
 
-        self.assertGreater(high_measured["DO"], low_measured["DO"])
+        self.assertGreater(high_aeration_state[state_index["S_O2"]], low_aeration_state[state_index["S_O2"]])
         self.assertLess(high_measured["NH4_N"], low_measured["NH4_N"])
 
         low_hrt_state, _ = solve_asm1_cstr_steady_state(
@@ -261,9 +254,9 @@ class Asm1SimulationTests(unittest.TestCase):
         result = run_asm1_simulation(save_artifacts=False, n_samples=8, random_seed=11)
 
         self.assertEqual(result["dataset"].shape[0], 8)
-        self.assertEqual(result["dataset"].shape[1], 34)
+        self.assertEqual(result["dataset"].shape[1], 32)
         self.assertEqual(result["petersen_matrix"].shape, (7, 11))
-        self.assertEqual(result["composition_matrix"].shape, (10, 11))
+        self.assertEqual(result["composition_matrix"].shape, (8, 11))
         np.testing.assert_allclose(result["composite_matrix"], result["composition_matrix"])
         self.assertIsNone(result["artifact_paths"]["dataset_csv"])
         self.assertIsNone(result["artifact_paths"]["metadata_json"])

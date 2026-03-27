@@ -1,0 +1,19 @@
+{
+  "best_value": 1139.070259572496,
+  "best_params": {
+    "learning_rate": 0.0010253509690168502,
+    "lambda_l1": 0.006351221010640704,
+    "weight_decay": 4.570563099801451e-05,
+    "clip_max_norm": 3.1939631788866647,
+    "bilinear_init_scale": 0.0002636875533972306
+  },
+  "best_trial_number": 0,
+  "n_trials": 2,
+  "trial_state_counts": {
+    "running": 0,
+    "complete": 2,
+    "pruned": 0,
+    "fail": 0,
+    "waiting": 0
+  }
+}

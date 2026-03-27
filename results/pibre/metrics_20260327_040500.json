@@ -1,0 +1,863 @@
+{
+  "train": {
+    "aggregate_metrics": [
+      {
+        "prediction_type": "raw",
+        "R2": -0.034776614193359395,
+        "MSE": 803.7823020234741,
+        "RMSE": 28.351054689790185,
+        "MAE": 17.145570380666484,
+        "MAPE": 66604325.87525982,
+        "constraint_mean_l2": 754.5063491789679,
+        "constraint_max_l2": 2085.967016455289,
+        "constraint_mean_abs": 368.7131941957545,
+        "constraint_max_abs": 1873.9079092675793
+      },
+      {
+        "prediction_type": "projected",
+        "R2": 0.04037561169056847,
+        "MSE": 793.8735158853365,
+        "RMSE": 28.175761141189007,
+        "MAE": 16.76521176435145,
+        "MAPE": 68607443.5820502,
+        "constraint_mean_l2": 7.293996107704614e-05,
+        "constraint_max_l2": 0.00013016038970938744,
+        "constraint_mean_abs": 2.8954584599174276e-05,
+        "constraint_max_abs": 0.00012945963459287668
+      }
+    ],
+    "per_target_metrics": [
+      {
+        "target": "Out_COD",
+        "raw_R2": 0.016834355690527047,
+        "raw_MSE": 1839.8843086662023,
+        "raw_RMSE": 42.89387262379328,
+        "raw_MAE": 38.246238000346274,
+        "raw_MAPE": 0.11778881336570153,
+        "projected_R2": 0.02206207240934832,
+        "projected_MSE": 1830.101222757147,
+        "projected_RMSE": 42.779682359236226,
+        "projected_MAE": 38.161788953162855,
+        "projected_MAPE": 0.11752867235780924
+      },
+      {
+        "target": "Out_TSS",
+        "raw_R2": -0.01377388048145134,
+        "raw_MSE": 1408.455637868908,
+        "raw_RMSE": 37.529396982484386,
+        "raw_MAE": 28.307570145807738,
+        "raw_MAPE": 0.12067708657651345,
+        "projected_R2": -0.00951204533631489,
+        "projected_MSE": 1402.5345879647768,
+        "projected_RMSE": 37.4504284082943,
+        "projected_MAE": 28.272743142481755,
+        "projected_MAPE": 0.12053390091579459
+      },
+      {
+        "target": "Out_TN",
+        "raw_R2": 0.1954374585035057,
+        "raw_MSE": 68.04956148439405,
+        "raw_RMSE": 8.249215810269122,
+        "raw_MAE": 7.074515094354481,
+        "raw_MAPE": 0.20428939790966855,
+        "projected_R2": 0.4840111070329406,
+        "projected_MSE": 43.642123621510066,
+        "projected_RMSE": 6.606218556898497,
+        "projected_MAE": 5.447107006043631,
+        "projected_MAPE": 0.15565882375154497
+      },
+      {
+        "target": "Out_TP",
+        "raw_R2": -0.7436659313605427,
+        "raw_MSE": 10.047177002229187,
+        "raw_RMSE": 3.169728222139745,
+        "raw_MAE": 2.5109775931632496,
+        "raw_MAPE": 0.40110707209549945,
+        "projected_R2": 0.8000243979976189,
+        "projected_MSE": 1.1522793634429358,
+        "projected_RMSE": 1.0734427620711482,
+        "projected_MAE": 0.8531005611605889,
+        "projected_MAPE": 0.12551698669264946
+      },
+      {
+        "target": "Out_NH4_N",
+        "raw_R2": -0.057783447209500904,
+        "raw_MSE": 160.62496379077834,
+        "raw_RMSE": 12.67379042712867,
+        "raw_MAE": 11.505456575402063,
+        "raw_MAPE": 33.01412856314693,
+        "projected_R2": 0.03053560217651341,
+        "projected_MSE": 147.2136704423253,
+        "projected_RMSE": 12.133164073823666,
+        "projected_MAE": 11.104803164944046,
+        "projected_MAPE": 32.02805491872025
+      },
+      {
+        "target": "Out_NO3_N",
+        "raw_R2": 0.053698408499334715,
+        "raw_MSE": 67.66981874660374,
+        "raw_RMSE": 8.226166710358095,
+        "raw_MAE": 6.698804719027084,
+        "raw_MAPE": 22.290143509701643,
+        "projected_R2": -0.16064112181489865,
+        "projected_MSE": 82.9971914329321,
+        "projected_RMSE": 9.110279437697402,
+        "projected_MAE": 6.57436918280672,
+        "projected_MAPE": 11.11836979231356
+      },
+      {
+        "target": "Out_PO4_P",
+        "raw_R2": 0.26707525032223256,
+        "raw_MSE": 4.669769131722599,
+        "raw_RMSE": 2.1609648612882624,
+        "raw_MAE": 1.7507599284910633,
+        "raw_MAPE": 17138136.055939056,
+        "projected_R2": -0.86109858590583,
+        "projected_MSE": 11.857834970611384,
+        "projected_RMSE": 3.443520723127913,
+        "projected_MAE": 2.9155366878972555,
+        "projected_MAPE": 36459545.49509439
+      },
+      {
+        "target": "Out_Alkalinity",
+        "raw_R2": 0.003964872489019888,
+        "raw_MSE": 2870.8571794969553,
+        "raw_RMSE": 53.58038054639921,
+        "raw_MAE": 41.07024098873994,
+        "raw_MAPE": 515696414.79800504,
+        "projected_R2": 0.01762346696517003,
+        "projected_MSE": 2831.4892165299457,
+        "projected_RMSE": 53.21173946160702,
+        "projected_MAE": 40.792245416314735,
+        "projected_MAPE": 512399959.49564403
+      }
+    ],
+    "raw_predictions": [
+      {
+        "Raw_Out_COD": 332.89727783203125,
+        "Raw_Out_TSS": 230.2006072998047,
+        "Raw_Out_TN": 39.475833892822266,
+        "Raw_Out_TP": 6.698267936706543,
+        "Raw_Out_NH4_N": 15.365621566772461,
+        "Raw_Out_NO3_N": 9.233969688415527,
+        "Raw_Out_PO4_P": 5.594555377960205,
+        "Raw_Out_Alkalinity": 96.84159851074219
+      },
+      {
+        "Raw_Out_COD": 332.64935302734375,
+        "Raw_Out_TSS": 230.25022888183594,
+        "Raw_Out_TN": 36.539154052734375,
+        "Raw_Out_TP": 6.164443492889404,
+        "Raw_Out_NH4_N": 15.219217300415039,
+        "Raw_Out_NO3_N": 8.999727249145508,
+        "Raw_Out_PO4_P": 5.891671180725098,
+        "Raw_Out_Alkalinity": 96.94546508789062
+      },
+      {
+        "Raw_Out_COD": 331.25567626953125,
+        "Raw_Out_TSS": 230.93479919433594,
+        "Raw_Out_TN": 38.54943084716797,
+        "Raw_Out_TP": 11.623991012573242,
+        "Raw_Out_NH4_N": 12.315195083618164,
+        "Raw_Out_NO3_N": 7.0533552169799805,
+        "Raw_Out_PO4_P": 3.256239414215088,
+        "Raw_Out_Alkalinity": 97.73823547363281
+      },
+      {
+        "Raw_Out_COD": 331.838623046875,
+        "Raw_Out_TSS": 231.0816192626953,
+        "Raw_Out_TN": 39.57353210449219,
+        "Raw_Out_TP": 8.516712188720703,
+        "Raw_Out_NH4_N": 13.089088439941406,
+        "Raw_Out_NO3_N": 7.4344096183776855,
+        "Raw_Out_PO4_P": 3.8673698902130127,
+        "Raw_Out_Alkalinity": 98.01629638671875
+      },
+      {
+        "Raw_Out_COD": 332.869384765625,
+        "Raw_Out_TSS": 230.74459838867188,
+        "Raw_Out_TN": 40.7203254699707,
+        "Raw_Out_TP": 9.058030128479004,
+        "Raw_Out_NH4_N": 12.342917442321777,
+        "Raw_Out_NO3_N": 7.726113319396973,
+        "Raw_Out_PO4_P": 2.9718594551086426,
+        "Raw_Out_Alkalinity": 97.13835906982422
+      },
+      {
+        "Raw_Out_COD": 332.1384582519531,
+        "Raw_Out_TSS": 230.81605529785156,
+        "Raw_Out_TN": 39.14985275268555,
+        "Raw_Out_TP": 8.71523380279541,
+        "Raw_Out_NH4_N": 12.86476993560791,
+        "Raw_Out_NO3_N": 7.492347240447998,
+        "Raw_Out_PO4_P": 3.0647943019866943,
+        "Raw_Out_Alkalinity": 97.64221954345703
+      },
+      {
+        "Raw_Out_COD": 330.8143615722656,
+        "Raw_Out_TSS": 232.62985229492188,
+        "Raw_Out_TN": 38.315128326416016,
+        "Raw_Out_TP": 8.492942810058594,
+        "Raw_Out_NH4_N": 13.862987518310547,
+        "Raw_Out_NO3_N": 8.327802658081055,
+        "Raw_Out_PO4_P": 5.336231231689453,
+        "Raw_Out_Alkalinity": 97.90193176269531
+      },
+      {
+        "Raw_Out_COD": 333.4689636230469,
+        "Raw_Out_TSS": 230.0913543701172,
+        "Raw_Out_TN": 38.62974548339844,
+        "Raw_Out_TP": 6.397984981536865,
+        "Raw_Out_NH4_N": 12.97268295288086,
+        "Raw_Out_NO3_N": 6.904741287231445,
+        "Raw_Out_PO4_P": 1.562732219696045,
+        "Raw_Out_Alkalinity": 97.29100799560547
+      },
+      {
+        "Raw_Out_COD": 332.16827392578125,
+        "Raw_Out_TSS": 231.95323181152344,
+        "Raw_Out_TN": 37.43114471435547,
+        "Raw_Out_TP": 9.229275703430176,
+        "Raw_Out_NH4_N": 14.237637519836426,
+        "Raw_Out_NO3_N": 8.126199722290039,
+        "Raw_Out_PO4_P": 5.350945949554443,
+        "Raw_Out_Alkalinity": 97.44888305664062
+      },
+      {
+        "Raw_Out_COD": 332.1494140625,
+        "Raw_Out_TSS": 231.2451629638672,
+        "Raw_Out_TN": 37.88359451293945,
+        "Raw_Out_TP": 8.12325668334961,
+        "Raw_Out_NH4_N": 12.84660816192627,
+        "Raw_Out_NO3_N": 8.489694595336914,
+        "Raw_Out_PO4_P": 4.772181034088135,
+        "Raw_Out_Alkalinity": 97.5220947265625
+      },
+      {
+        "Raw_Out_COD": 331.7453918457031,
+        "Raw_Out_TSS": 231.2813262939453,
+        "Raw_Out_TN": 39.42972946166992,
+        "Raw_Out_TP": 8.685530662536621,
+        "Raw_Out_NH4_N": 13.47101879119873,
+        "Raw_Out_NO3_N": 7.904735088348389,
+        "Raw_Out_PO4_P": 4.39422607421875,
+        "Raw_Out_Alkalinity": 97.21630859375
+      },
+      {
+        "Raw_Out_COD": 333.4059753417969,
+        "Raw_Out_TSS": 229.1880340576172,
+        "Raw_Out_TN": 39.52147674560547,
+        "Raw_Out_TP": 7.7034196853637695,
+        "Raw_Out_NH4_N": 14.120692253112793,
+        "Raw_Out_NO3_N": 8.403130531311035,
+        "Raw_Out_PO4_P": 3.4696905612945557,
+        "Raw_Out_Alkalinity": 96.68336486816406
+      },
+      {
+        "Raw_Out_COD": 332.0287170410156,
+        "Raw_Out_TSS": 231.10011291503906,
+        "Raw_Out_TN": 40.70646667480469,
+        "Raw_Out_TP": 9.454788208007812,
+        "Raw_Out_NH4_N": 13.789074897766113,
+        "Raw_Out_NO3_N": 7.637932777404785,
+        "Raw_Out_PO4_P": 3.1739039421081543,
+        "Raw_Out_Alkalinity": 96.31597900390625
+      },
+      {
+        "Raw_Out_COD": 332.8053283691406,
+        "Raw_Out_TSS": 231.9341583251953,
+        "Raw_Out_TN": 36.912208557128906,
+        "Raw_Out_TP": 8.985244750976562,
+        "Raw_Out_NH4_N": 10.926164627075195,
+        "Raw_Out_NO3_N": 8.100512504577637,
+        "Raw_Out_PO4_P": 4.331191062927246,
+        "Raw_Out_Alkalinity": 95.62936401367188
+      },
+      {
+        "Raw_Out_COD": 333.505859375,
+        "Raw_Out_TSS": 230.1986846923828,
+        "Raw_Out_TN": 42.33613204956055,
+        "Raw_Out_TP": 8.486634254455566,
+        "Raw_Out_NH4_N": 12.956587791442871,
+        "Raw_Out_NO3_N": 8.300889015197754,
+        "Raw_Out_PO4_P": 2.557070255279541,
+        "Raw_Out_Alkalinity": 95.29732513427734
+      },
+      {
+        "Raw_Out_COD": 332.9460754394531,
+        "Raw_Out_TSS": 230.68272399902344,
+        "Raw_Out_TN": 40.54692077636719,
+        "Raw_Out_TP": 6.602833271026611,
+        "Raw_Out_NH4_N": 12.923737525939941,
+        "Raw_Out_NO3_N": 8.11674690246582,
+        "Raw_Out_PO4_P": 3.9233930110931396,
+        "Raw_Out_Alkalinity": 97.2562484741211
+      },
+      {
+        "Raw_Out_COD": 332.4912109375,
+        "Raw_Out_TSS": 231.0425262451172,
+        "Raw_Out_TN": 41.84898376464844,
+        "Raw_Out_TP": 8.680943489074707,
+        "Raw_Out_NH4_N": 13.376440048217773,
+        "Raw_Out_NO3_N": 7.013012886047363,
+        "Raw_Out_PO4_P": 2.6405434608459473,
+        "Raw_Out_Alkalinity": 97.059814453125
+      },
+      {
+        "Raw_Out_COD": 332.97412109375,
+        "Raw_Out_TSS": 230.61114501953125,
+        "Raw_Out_TN": 38.976253509521484,
+        "Raw_Out_TP": 7.487013339996338,
+        "Raw_Out_NH4_N": 13.833855628967285,
+        "Raw_Out_NO3_N": 8.081297874450684,
+        "Raw_Out_PO4_P": 4.146498203277588,
+        "Raw_Out_Alkalinity": 96.56352996826172
+      },
+      {
+        "Raw_Out_COD": 332.1068115234375,
+        "Raw_Out_TSS": 229.63758850097656,
+        "Raw_Out_TN": 36.64278793334961,
+        "Raw_Out_TP": 6.4969305992126465,
+        "Raw_Out_NH4_N": 15.916866302490234,
+        "Raw_Out_NO3_N": 8.868879318237305,
+        "Raw_Out_PO4_P": 5.5650224685668945,
+        "Raw_Out_Alkalinity": 97.00492095947266
+      }
+    ],
+    "projected_predictions": [
+      {
+        "Projected_Out_COD": 333.03111863174354,
+        "Projected_Out_TSS": 230.2680787402768,
+        "Projected_Out_TN": 37.205836992078765,
+        "Projected_Out_TP": 12.436588500534288,
+        "Projected_Out_NH4_N": 13.953878897238857,
+        "Projected_Out_NO3_N": 15.233669203862831,
+        "Projected_Out_PO4_P": 11.407170793466033,
+        "Projected_Out_Alkalinity": 97.88634898417763
+      },
+      {
+        "Projected_Out_COD": 332.81848658620726,
+        "Projected_Out_TSS": 230.3502759458467,
+        "Projected_Out_TN": 33.86058799711731,
+        "Projected_Out_TP": 10.747252751981387,
+        "Projected_Out_NH4_N": 14.130787937876683,
+        "Projected_Out_NO3_N": 15.50588433364569,
+        "Projected_Out_PO4_P": 10.910779727709528,
+        "Projected_Out_Alkalinity": 98.01763942839567
+      },
+      {
+        "Projected_Out_COD": 331.03949771350636,
+        "Projected_Out_TSS": 230.83087520331847,
+        "Projected_Out_TN": 42.37231787133732,
+        "Projected_Out_TP": 0.9206530475996644,
+        "Projected_Out_NH4_N": 14.833167582050013,
+        "Projected_Out_NO3_N": -3.1878629204442817,
+        "Projected_Out_PO4_P": -6.927310857476339,
+        "Projected_Out_Alkalinity": 95.94035631989217
+      },
+      {
+        "Projected_Out_COD": 331.68198087978516,
+        "Projected_Out_TSS": 230.96911541253465,
+        "Projected_Out_TN": 41.6796755093309,
+        "Projected_Out_TP": 8.537547253716784,
+        "Projected_Out_NH4_N": 13.16354378037275,
+        "Projected_Out_NO3_N": 3.0915632219102163,
+        "Projected_Out_PO4_P": 2.3411633916732613,
+        "Projected_Out_Alkalinity": 97.38975268409884
+      },
+      {
+        "Projected_Out_COD": 332.9287630778097,
+        "Projected_Out_TSS": 230.80411976330936,
+        "Projected_Out_TN": 40.25784634064571,
+        "Projected_Out_TP": 5.324218181788275,
+        "Projected_Out_NH4_N": 13.10848755612603,
+        "Projected_Out_NO3_N": 7.9067558042623105,
+        "Projected_Out_PO4_P": 0.8957011190452464,
+        "Projected_Out_Alkalinity": 97.05941714881092
+      },
+      {
+        "Projected_Out_COD": 332.128288179934,
+        "Projected_Out_TSS": 230.83428663376424,
+        "Projected_Out_TN": 39.69194574916545,
+        "Projected_Out_TP": 3.6663856160847903,
+        "Projected_Out_NH4_N": 14.070953260479827,
+        "Projected_Out_NO3_N": 5.198312124039941,
+        "Projected_Out_PO4_P": -1.0519992045919784,
+        "Projected_Out_Alkalinity": 97.15147690891578
+      },
+      {
+        "Projected_Out_COD": 330.4494568736039,
+        "Projected_Out_TSS": 232.35368950760022,
+        "Projected_Out_TN": 42.953322578916925,
+        "Projected_Out_TP": 11.581188384905612,
+        "Projected_Out_NH4_N": 13.374074532885379,
+        "Projected_Out_NO3_N": -0.5903588103096862,
+        "Projected_Out_PO4_P": 3.996009217850296,
+        "Projected_Out_Alkalinity": 96.70302517757685
+      },
+      {
+        "Projected_Out_COD": 334.00401747101995,
+        "Projected_Out_TSS": 230.47423929984515,
+        "Projected_Out_TN": 31.69823831201459,
+        "Projected_Out_TP": 4.9769315218227765,
+        "Projected_Out_NH4_N": 12.652023989463583,
+        "Projected_Out_NO3_N": 21.280064565325063,
+        "Projected_Out_PO4_P": 6.99779158475132,
+        "Projected_Out_Alkalinity": 99.3761608755211
+      },
+      {
+        "Projected_Out_COD": 331.8905494357164,
+        "Projected_Out_TSS": 231.7547429668094,
+        "Projected_Out_TN": 41.197510033426404,
+        "Projected_Out_TP": 8.977427517274704,
+        "Projected_Out_NH4_N": 14.415682730870683,
+        "Projected_Out_NO3_N": 0.3159514474971763,
+        "Projected_Out_PO4_P": 2.4910417741852418,
+        "Projected_Out_Alkalinity": 96.31611354931852
+      },
+      {
+        "Projected_Out_COD": 332.21027810739855,
+        "Projected_Out_TSS": 231.3005975644656,
+        "Projected_Out_TN": 37.15335372107112,
+        "Projected_Out_TP": 6.356646553411366,
+        "Projected_Out_NH4_N": 13.369210584588744,
+        "Projected_Out_NO3_N": 9.449359437305205,
+        "Projected_Out_PO4_P": 3.520679213767,
+        "Projected_Out_Alkalinity": 97.5863666110785
+      },
+      {
+        "Projected_Out_COD": 331.55620465206596,
+        "Projected_Out_TSS": 231.1411882485054,
+        "Projected_Out_TN": 41.92194686010764,
+        "Projected_Out_TP": 9.46112776101193,
+        "Projected_Out_NH4_N": 13.360524957899585,
+        "Projected_Out_NO3_N": 2.963037686630371,
+        "Projected_Out_PO4_P": 3.2211915789176433,
+        "Projected_Out_Alkalinity": 96.53016006066534
+      },
+      {
+        "Projected_Out_COD": 333.5246401840751,
+        "Projected_Out_TSS": 229.2742520963956,
+        "Projected_Out_TN": 38.05240076789785,
+        "Projected_Out_TP": 6.859290341666427,
+        "Projected_Out_NH4_N": 14.110742060181641,
+        "Projected_Out_NO3_N": 11.393737413802524,
+        "Projected_Out_PO4_P": 4.470531325721735,
+        "Projected_Out_Alkalinity": 97.10957420725106
+      },
+      {
+        "Projected_Out_COD": 331.7364721145243,
+        "Projected_Out_TSS": 230.8863325593443,
+        "Projected_Out_TN": 44.79134306057472,
+        "Projected_Out_TP": 9.021404871986654,
+        "Projected_Out_NH4_N": 13.745006942247786,
+        "Projected_Out_NO3_N": -0.5924141810294792,
+        "Projected_Out_PO4_P": 0.9384493855764218,
+        "Projected_Out_Alkalinity": 95.15474864788602
+      },
+      {
+        "Projected_Out_COD": 332.9528017516118,
+        "Projected_Out_TSS": 232.05954072488188,
+        "Projected_Out_TN": 35.237791186868954,
+        "Projected_Out_TP": 5.119240242259328,
+        "Projected_Out_NH4_N": 11.771757999397952,
+        "Projected_Out_NO3_N": 10.656556449748697,
+        "Projected_Out_PO4_P": 2.7056955868935697,
+        "Projected_Out_Alkalinity": 95.87633241310647
+      },
+      {
+        "Projected_Out_COD": 333.6142847757484,
+        "Projected_Out_TSS": 230.2608780605775,
+        "Projected_Out_TN": 40.93614974718289,
+        "Projected_Out_TP": 9.82089528677422,
+        "Projected_Out_NH4_N": 12.166983922009914,
+        "Projected_Out_NO3_N": 11.929316405731548,
+        "Projected_Out_PO4_P": 6.081863067419626,
+        "Projected_Out_Alkalinity": 95.92154593204246
+      },
+      {
+        "Projected_Out_COD": 333.29398980556226,
+        "Projected_Out_TSS": 230.9206421837209,
+        "Projected_Out_TN": 35.62902695443074,
+        "Projected_Out_TP": 9.208450695139977,
+        "Projected_Out_NH4_N": 12.19568653987722,
+        "Projected_Out_NO3_N": 18.805206614670993,
+        "Projected_Out_PO4_P": 9.19499453563725,
+        "Projected_Out_Alkalinity": 98.87269121205966
+      },
+      {
+        "Projected_Out_COD": 332.31267672685976,
+        "Projected_Out_TSS": 230.90868493455966,
+        "Projected_Out_TN": 44.2871322801419,
+        "Projected_Out_TP": 9.090813281169043,
+        "Projected_Out_NH4_N": 13.197022778391748,
+        "Projected_Out_NO3_N": 2.252197134148255,
+        "Projected_Out_PO4_P": 1.7848858612274459,
+        "Projected_Out_Alkalinity": 96.40918683947785
+      },
+      {
+        "Projected_Out_COD": 333.01754594163566,
+        "Projected_Out_TSS": 230.64372931761596,
+        "Projected_Out_TN": 38.359322885770254,
+        "Projected_Out_TP": 7.520626709678623,
+        "Projected_Out_NH4_N": 13.878941513710627,
+        "Projected_Out_NO3_N": 9.285623545290711,
+        "Projected_Out_PO4_P": 4.3497798761461555,
+        "Projected_Out_Alkalinity": 96.72807184255655
+      },
+      {
+        "Projected_Out_COD": 332.13726717583256,
+        "Projected_Out_TSS": 229.64049403796153,
+        "Projected_Out_TN": 35.9133217894072,
+        "Projected_Out_TP": 10.352058985242737,
+        "Projected_Out_NH4_N": 15.01002963161768,
+        "Projected_Out_NO3_N": 11.245573135140575,
+        "Projected_Out_PO4_P": 8.84610205320062,
+        "Projected_Out_Alkalinity": 97.46633388727437
+      }
+    ],
+    "constraint_residuals": [
+      {
+        "raw_constraint_l2": 1209.5953052665768,
+        "projected_constraint_l2": 3.2346753522489094e-05
+      },
+      {
+        "raw_constraint_l2": 1088.9727127861847,
+        "projected_constraint_l2": 2.7002291385511836e-05
+      },
+      {
+        "raw_constraint_l2": 2085.967016455289,
+        "projected_constraint_l2": 0.00013016038970938744
+      },
+      {
+        "raw_constraint_l2": 455.8574527192458,
+        "projected_constraint_l2": 0.00010873570598750338
+      },
+      {
+        "raw_constraint_l2": 330.4887151126273,
+        "projected_constraint_l2": 9.747615167239899e-05
+      },
+      {
+        "raw_constraint_l2": 779.2127961041226,
+        "projected_constraint_l2": 8.095792541504553e-05
+      },
+      {
+        "raw_constraint_l2": 704.714175439687,
+        "projected_constraint_l2": 9.449032020927553e-05
+      },
+      {
+        "raw_constraint_l2": 1655.2471047936956,
+        "projected_constraint_l2": 3.452561420659413e-05
+      },
+      {
+        "raw_constraint_l2": 831.7371115271629,
+        "projected_constraint_l2": 8.171810968032085e-05
+      },
+      {
+        "raw_constraint_l2": 217.21499494592152,
+        "projected_constraint_l2": 4.8422186912399456e-05
+      },
+      {
+        "raw_constraint_l2": 434.3777555322841,
+        "projected_constraint_l2": 0.00010152267770827616
+      },
+      {
+        "raw_constraint_l2": 343.0180703209876,
+        "projected_constraint_l2": 6.252082117259899e-05
+      },
+      {
+        "raw_constraint_l2": 711.548190765613,
+        "projected_constraint_l2": 0.00012907372327438518
+      },
+      {
+        "raw_constraint_l2": 240.60866935897477,
+        "projected_constraint_l2": 3.322133610731651e-05
+      },
+      {
+        "raw_constraint_l2": 836.9189719611554,
+        "projected_constraint_l2": 9.247670611060355e-05
+      },
+      {
+        "raw_constraint_l2": 1334.8595095296184,
+        "projected_constraint_l2": 3.9407423476551105e-05
+      },
+      {
+        "raw_constraint_l2": 354.2631951551686,
+        "projected_constraint_l2": 0.00012914633163499045
+      },
+      {
+        "raw_constraint_l2": 83.69483766192397,
+        "projected_constraint_l2": 4.481173665109788e-05
+      },
+      {
+        "raw_constraint_l2": 637.3240489641508,
+        "projected_constraint_l2": 1.7843055627130776e-05
+      }
+    ]
+  },
+  "test": {
+    "aggregate_metrics": [
+      {
+        "prediction_type": "raw",
+        "R2": -85.93085956578959,
+        "MSE": 863.8806731542325,
+        "RMSE": 29.391847052443513,
+        "MAE": 18.96630130919371,
+        "MAPE": 42828257.63772525,
+        "constraint_mean_l2": 644.1715170874232,
+        "constraint_max_l2": 1499.272197446543,
+        "constraint_mean_abs": 330.6038470473456,
+        "constraint_max_abs": 1298.4232989853178
+      },
+      {
+        "prediction_type": "projected",
+        "R2": -88.3888840031471,
+        "MSE": 852.8064057650046,
+        "RMSE": 29.202849274771197,
+        "MAE": 18.87142719505156,
+        "MAPE": 39677441.452571236,
+        "constraint_mean_l2": 4.100934106818746e-05,
+        "constraint_max_l2": 8.108394617355798e-05,
+        "constraint_mean_abs": 1.9880484660461662e-05,
+        "constraint_max_abs": 7.977398308867123e-05
+      }
+    ],
+    "per_target_metrics": [
+      {
+        "target": "Out_COD",
+        "raw_R2": -0.054110322754991946,
+        "raw_MSE": 1989.873406404963,
+        "raw_RMSE": 44.60799711268107,
+        "raw_MAE": 41.91402554678531,
+        "raw_MAPE": 0.134909976227581,
+        "projected_R2": -0.0547378313102056,
+        "projected_MSE": 1991.0579717766857,
+        "projected_RMSE": 44.62127263734962,
+        "projected_MAE": 41.94631908704356,
+        "projected_MAPE": 0.13510111264662927
+      },
+      {
+        "target": "Out_TSS",
+        "raw_R2": -0.050840461614886534,
+        "raw_MSE": 850.2195138938625,
+        "raw_RMSE": 29.158523863423927,
+        "raw_MAE": 25.03222058757841,
+        "raw_MAPE": 0.10578759588814557,
+        "projected_R2": -0.047248334649935275,
+        "projected_MSE": 847.3131769630476,
+        "projected_RMSE": 29.108644368349545,
+        "projected_MAE": 24.946589490955933,
+        "projected_MAPE": 0.10551057315136625
+      },
+      {
+        "target": "Out_TN",
+        "raw_R2": -1.9720033466912592,
+        "raw_MSE": 129.68173848420693,
+        "raw_RMSE": 11.387789007713787,
+        "raw_MAE": 9.7338535282773,
+        "raw_MAPE": 0.40243593843347447,
+        "projected_R2": -0.7940719595484831,
+        "projected_MSE": 78.28334747302165,
+        "projected_RMSE": 8.847787716317658,
+        "projected_MAE": 7.307014114878918,
+        "projected_MAPE": 0.3053453128427834
+      },
+      {
+        "target": "Out_TP",
+        "raw_R2": -1.625984216450545,
+        "raw_MSE": 6.76329184704535,
+        "raw_RMSE": 2.6006329704603357,
+        "raw_MAE": 2.0966871604380595,
+        "raw_MAPE": 0.42076379795683544,
+        "projected_R2": 0.5624130183811855,
+        "projected_MSE": 1.1270168520494794,
+        "projected_RMSE": 1.0616104992178061,
+        "projected_MAE": 0.9588022153458897,
+        "projected_MAPE": 0.1752109063442555
+      },
+      {
+        "target": "Out_NH4_N",
+        "raw_R2": -679.6534435092599,
+        "raw_MSE": 152.68849942988444,
+        "raw_RMSE": 12.356718797070865,
+        "raw_MAE": 12.341469458179295,
+        "raw_MAPE": 258023275.370717,
+        "projected_R2": -694.5068816684102,
+        "projected_MSE": 156.0205169279556,
+        "projected_RMSE": 12.490817304242169,
+        "projected_MAE": 12.478178805369394,
+        "projected_MAPE": 247101560.4421803
+      },
+      {
+        "target": "Out_NO3_N",
+        "raw_R2": 0.025189928868115885,
+        "raw_MSE": 60.60270264821055,
+        "raw_RMSE": 7.784773769879928,
+        "raw_MAE": 7.146878224616057,
+        "raw_MAPE": 17.70670056922946,
+        "projected_R2": -1.0050824179885742,
+        "projected_MSE": 124.65342445777499,
+        "projected_RMSE": 11.164829799767437,
+        "projected_MAE": 9.136476475201672,
+        "projected_MAPE": 45.473846753114046
+      },
+      {
+        "target": "Out_PO4_P",
+        "raw_R2": -3.7576216188346026,
+        "raw_MSE": 7.491588649463156,
+        "raw_RMSE": 2.73707666123241,
+        "raw_MAE": 2.3011102047578516,
+        "raw_MAPE": 84602766.51374489,
+        "projected_R2": -10.947092072134524,
+        "projected_MSE": 18.81248794720634,
+        "projected_RMSE": 4.337336503801191,
+        "projected_MAE": 3.7992224006409194,
+        "projected_MAPE": 70317924.54031074
+      },
+      {
+        "target": "Out_Alkalinity",
+        "raw_R2": -0.3580629795787227,
+        "raw_MSE": 3713.724643876223,
+        "raw_RMSE": 60.94033675552034,
+        "raw_MAE": 51.16416576291741,
+        "raw_MAPE": 0.44674223041236355,
+        "projected_R2": -0.318370759516049,
+        "projected_MSE": 3605.183303722296,
+        "projected_RMSE": 60.04317866104605,
+        "projected_MAE": 50.398814970976176,
+        "projected_MAPE": 0.4430642047531488
+      }
+    ],
+    "raw_predictions": [
+      {
+        "Raw_Out_COD": 332.9847717285156,
+        "Raw_Out_TSS": 231.33572387695312,
+        "Raw_Out_TN": 38.70014953613281,
+        "Raw_Out_TP": 6.415877342224121,
+        "Raw_Out_NH4_N": 12.901163101196289,
+        "Raw_Out_NO3_N": 8.056265830993652,
+        "Raw_Out_PO4_P": 3.8333168029785156,
+        "Raw_Out_Alkalinity": 97.79439544677734
+      },
+      {
+        "Raw_Out_COD": 334.2637023925781,
+        "Raw_Out_TSS": 231.0978240966797,
+        "Raw_Out_TN": 38.59367752075195,
+        "Raw_Out_TP": 8.157906532287598,
+        "Raw_Out_NH4_N": 13.515168190002441,
+        "Raw_Out_NO3_N": 9.420680046081543,
+        "Raw_Out_PO4_P": 5.4381818771362305,
+        "Raw_Out_Alkalinity": 96.7103042602539
+      },
+      {
+        "Raw_Out_COD": 332.2760314941406,
+        "Raw_Out_TSS": 229.4370880126953,
+        "Raw_Out_TN": 40.104434967041016,
+        "Raw_Out_TP": 8.345614433288574,
+        "Raw_Out_NH4_N": 13.027541160583496,
+        "Raw_Out_NO3_N": 7.399657249450684,
+        "Raw_Out_PO4_P": 2.305227518081665,
+        "Raw_Out_Alkalinity": 97.01044464111328
+      },
+      {
+        "Raw_Out_COD": 332.7102355957031,
+        "Raw_Out_TSS": 231.28688049316406,
+        "Raw_Out_TN": 37.87715530395508,
+        "Raw_Out_TP": 8.551036834716797,
+        "Raw_Out_NH4_N": 12.108484268188477,
+        "Raw_Out_NO3_N": 8.752963066101074,
+        "Raw_Out_PO4_P": 4.230138301849365,
+        "Raw_Out_Alkalinity": 97.45585632324219
+      },
+      {
+        "Raw_Out_COD": 331.7008361816406,
+        "Raw_Out_TSS": 231.47052001953125,
+        "Raw_Out_TN": 37.2293586730957,
+        "Raw_Out_TP": 7.999601364135742,
+        "Raw_Out_NH4_N": 13.558784484863281,
+        "Raw_Out_NO3_N": 8.989190101623535,
+        "Raw_Out_PO4_P": 5.643381595611572,
+        "Raw_Out_Alkalinity": 97.09886169433594
+      }
+    ],
+    "projected_predictions": [
+      {
+        "Projected_Out_COD": 333.4319466446272,
+        "Projected_Out_TSS": 231.6498055673146,
+        "Projected_Out_TN": 32.58948896668322,
+        "Projected_Out_TP": 7.676198419108529,
+        "Projected_Out_NH4_N": 12.355077329156257,
+        "Projected_Out_NO3_N": 20.983843503130444,
+        "Projected_Out_PO4_P": 9.305710006777723,
+        "Projected_Out_Alkalinity": 99.7039425840135
+      },
+      {
+        "Projected_Out_COD": 334.61019443096205,
+        "Projected_Out_TSS": 231.35653267683432,
+        "Projected_Out_TN": 34.049449515720966,
+        "Projected_Out_TP": 6.40253770498777,
+        "Projected_Out_NH4_N": 13.813944588915552,
+        "Projected_Out_NO3_N": 18.334451762695064,
+        "Projected_Out_PO4_P": 7.264141635639161,
+        "Projected_Out_Alkalinity": 97.9343022372324
+      },
+      {
+        "Projected_Out_COD": 332.3979788349522,
+        "Projected_Out_TSS": 229.5243406966255,
+        "Projected_Out_TN": 38.73503038831006,
+        "Projected_Out_TP": 6.821229616499365,
+        "Projected_Out_NH4_N": 12.953588088575192,
+        "Projected_Out_NO3_N": 10.256106547389116,
+        "Projected_Out_PO4_P": 3.5468997540112204,
+        "Projected_Out_Alkalinity": 97.42699135150158
+      },
+      {
+        "Projected_Out_COD": 333.0803929004339,
+        "Projected_Out_TSS": 231.58019764301864,
+        "Projected_Out_TN": 33.33653496438602,
+        "Projected_Out_TP": 3.068190820920348,
+        "Projected_Out_NH4_N": 13.224515054169252,
+        "Projected_Out_NO3_N": 16.85072660454359,
+        "Projected_Out_PO4_P": 3.5158961690237054,
+        "Projected_Out_Alkalinity": 98.45229177787753
+      },
+      {
+        "Projected_Out_COD": 331.71477679674035,
+        "Projected_Out_TSS": 231.47830748041045,
+        "Projected_Out_TN": 36.94103041727909,
+        "Projected_Out_TP": 8.812348836532909,
+        "Projected_Out_NH4_N": 13.44756287996822,
+        "Projected_Out_NO3_N": 9.682061158524263,
+        "Projected_Out_PO4_P": 6.129001426012787,
+        "Projected_Out_Alkalinity": 97.21218179558046
+      }
+    ],
+    "constraint_residuals": [
+      {
+        "raw_constraint_l2": 1499.272197446543,
+        "projected_constraint_l2": 4.0514758939848675e-05
+      },
+      {
+        "raw_constraint_l2": 741.2515099975539,
+        "projected_constraint_l2": 2.521548904031425e-05
+      },
+      {
+        "raw_constraint_l2": 434.11297178629246,
+        "projected_constraint_l2": 8.108394617355798e-05
+      },
+      {
+        "raw_constraint_l2": 451.5156727979632,
+        "projected_constraint_l2": 2.992534064431112e-05
+      },
+      {
+        "raw_constraint_l2": 94.70523340876343,
+        "projected_constraint_l2": 2.8307170542905212e-05
+      }
+    ]
+  },
+  "split_sizes": {
+    "train": 14,
+    "validation": 5,
+    "test": 5
+  }
+}

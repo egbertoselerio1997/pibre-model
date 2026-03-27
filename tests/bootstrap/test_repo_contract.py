@@ -51,6 +51,9 @@ EXPECTED_PATH_KEYS = {
     "src_models_dir",
     "simulation_models_dir",
     "ml_models_dir",
+    "ml_model_bundle_pattern",
+    "ml_metrics_pattern",
+    "ml_optuna_pattern",
     "simulation_data_pattern",
     "simulation_metadata_pattern",
 }
