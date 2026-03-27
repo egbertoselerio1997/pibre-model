@@ -199,7 +199,7 @@
       "test_fraction": 0.2,
       "optuna_dataset_fraction": 0.1,
       "optuna_test_fraction": 0.2,
-      "tuning_epochs": 1000,
+      "tuning_epochs": 200,
       "n_trials": 100,
       "timeout_seconds": null
     }
@@ -211,7 +211,7 @@
       "scale_features": true,
       "scale_targets": false,
       "log_interval": 25,
-      "training_epochs": 10000
+      "training_epochs": 500
     },
     "runtime": {
       "prefer_directml": true,
