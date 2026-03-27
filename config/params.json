@@ -501,7 +501,7 @@
     "hyperparameters": {
       "random_seed": 42,
       "scale_features": true,
-      "scale_targets": false
+      "scale_targets": true
     },
     "training_defaults": {
       "regression_mode": "ridge",
@@ -540,8 +540,8 @@
   "xgboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "scale_features": false,
-      "scale_targets": false
+      "scale_features": true,
+      "scale_targets": true
     },
     "training_defaults": {
       "objective": "reg:squarederror",
@@ -617,8 +617,8 @@
   "lightgbm_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "scale_features": false,
-      "scale_targets": false
+      "scale_features": true,
+      "scale_targets": true
     },
     "training_defaults": {
       "objective": "regression",
@@ -698,8 +698,8 @@
   "catboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "scale_features": false,
-      "scale_targets": false
+      "scale_features": true,
+      "scale_targets": true
     },
     "training_defaults": {
       "loss_function": "MultiRMSE",
@@ -761,8 +761,8 @@
   "adaboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "scale_features": false,
-      "scale_targets": false
+      "scale_features": true,
+      "scale_targets": true
     },
     "training_defaults": {
       "n_estimators": 150,
@@ -797,8 +797,8 @@
   "random_forest_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "scale_features": false,
-      "scale_targets": false
+      "scale_features": true,
+      "scale_targets": true
     },
     "training_defaults": {
       "n_estimators": 300,
@@ -850,7 +850,7 @@
     "hyperparameters": {
       "random_seed": 42,
       "scale_features": true,
-      "scale_targets": false
+      "scale_targets": true
     },
     "training_defaults": {
       "C": 10.0,
