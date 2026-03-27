@@ -19,36 +19,36 @@ MODEL_NAME = "asm1_simulation"
 N_PROCESSES = 7
 
 
-REQUIRED_STATES = [
-    "S_S",
-    "S_I",
-    "S_NH4_N",
-    "S_NO3_N",
-    "S_PO4_P",
-    "S_O2",
-    "S_Alkalinity",
-    "X_I",
-    "X_S",
-    "X_H",
-    "X_AUT",
-]
-
-REQUIRED_MEASURED_OUTPUTS = [
-    "COD",
-    "TSS",
-    "TN",
-    "TP",
-    "NH4_N",
-    "NO3_N",
-    "PO4_P",
-    "Alkalinity",
-]
-
-
 def load_asm1_simulation_params(repo_root: str | Path | None = None) -> dict[str, Any]:
     """Load the configured parameters for the steady-state CSTR simulation."""
 
     return load_model_params(MODEL_NAME, repo_root)
+
+
+def _validate_unique_names(names: list[str], name_type: str) -> None:
+    if not names:
+        raise ValueError(f"{name_type} must not be empty.")
+
+    duplicate_names = sorted({name for name in names if names.count(name) > 1})
+    if duplicate_names:
+        duplicate_display = ", ".join(duplicate_names)
+        raise ValueError(f"asm1_simulation {name_type} contains duplicates: {duplicate_display}")
+
+
+def _resolve_measured_output_term_coefficient(
+    term: Mapping[str, Any],
+    state_name: str,
+    observation_model: Mapping[str, Any],
+) -> float:
+    coefficient = float(term.get("coefficient", 1.0))
+    factor_source = term.get("factor_source")
+
+    if factor_source is not None:
+        source_name = str(factor_source)
+        source_mapping = observation_model[source_name]
+        coefficient *= float(source_mapping[state_name])
+
+    return coefficient
 
 
 def _validate_model_structure(
@@ -56,18 +56,73 @@ def _validate_model_structure(
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     state_columns = list(model_params["state_columns"])
     measured_output_columns = list(model_params["measured_output_columns"])
+    measured_output_definitions = model_params["measured_output_definitions"]
+    observation_model = model_params["observation_model"]
     process_names = list(model_params["processes"])
     process_types = list(model_params["process_types"])
 
-    missing = [name for name in REQUIRED_STATES if name not in state_columns]
-    if missing:
-        missing_display = ", ".join(missing)
-        raise KeyError(f"asm1_simulation missing required state columns: {missing_display}")
+    _validate_unique_names(state_columns, "state_columns")
+    _validate_unique_names(measured_output_columns, "measured_output_columns")
 
-    missing_outputs = [name for name in REQUIRED_MEASURED_OUTPUTS if name not in measured_output_columns]
+    missing_state_definitions = [name for name in state_columns if name not in measured_output_definitions]
+    if missing_state_definitions:
+        missing_state_display = ", ".join(missing_state_definitions)
+        raise KeyError(
+            "asm1_simulation measured_output_definitions must include all state_columns; "
+            f"missing: {missing_state_display}"
+        )
+
+    missing_outputs = [name for name in measured_output_columns if name not in measured_output_definitions]
     if missing_outputs:
         missing_output_display = ", ".join(missing_outputs)
-        raise KeyError(f"asm1_simulation missing required measured outputs: {missing_output_display}")
+        raise KeyError(f"asm1_simulation missing measured output definitions for: {missing_output_display}")
+
+    for output_name in measured_output_columns:
+        output_definition = measured_output_definitions[output_name]
+        if "terms" not in output_definition:
+            raise KeyError(f"asm1_simulation measured output '{output_name}' missing terms definition.")
+
+        terms = list(output_definition["terms"])
+        if not terms:
+            raise ValueError(f"asm1_simulation measured output '{output_name}' terms must not be empty.")
+
+        for term_index, term in enumerate(terms):
+            if "state" not in term:
+                raise KeyError(
+                    f"asm1_simulation measured output '{output_name}' term {term_index} missing state reference."
+                )
+
+            state_name = str(term["state"])
+            if state_name not in state_columns:
+                raise KeyError(
+                    f"asm1_simulation measured output '{output_name}' term {term_index} references unknown state "
+                    f"'{state_name}'."
+                )
+
+            if ("coefficient" not in term) and ("factor_source" not in term):
+                raise ValueError(
+                    f"asm1_simulation measured output '{output_name}' term {term_index} must include coefficient "
+                    "or factor_source."
+                )
+
+            if "coefficient" in term:
+                float(term["coefficient"])
+
+            if "factor_source" in term:
+                factor_source = str(term["factor_source"])
+                if factor_source not in observation_model:
+                    raise KeyError(
+                        f"asm1_simulation measured output '{output_name}' term {term_index} references unknown "
+                        f"factor_source '{factor_source}'."
+                    )
+
+                source_mapping = observation_model[factor_source]
+                if state_name not in source_mapping:
+                    raise KeyError(
+                        f"asm1_simulation measured output '{output_name}' term {term_index} references state "
+                        f"'{state_name}' missing from observation_model['{factor_source}']."
+                    )
+                float(source_mapping[state_name])
 
     if len(process_names) != N_PROCESSES:
         raise ValueError(f"asm1_simulation requires exactly {N_PROCESSES} configured process descriptors.")
@@ -85,6 +140,7 @@ def get_asm1_matrices(model_params: Mapping[str, Any]) -> dict[str, Any]:
     output_index = _build_state_index(measured_output_columns)
     factors = model_params["stoichiometric_factors"]
     observation_model = model_params["observation_model"]
+    measured_output_definitions = model_params["measured_output_definitions"]
 
     petersen_matrix = np.zeros((N_PROCESSES, len(state_columns)), dtype=float)
     composition_matrix = np.zeros((len(measured_output_columns), len(state_columns)), dtype=float)
@@ -156,28 +212,14 @@ def get_asm1_matrices(model_params: Mapping[str, Any]) -> dict[str, Any]:
 
     petersen_matrix[6, state_index["S_O2"]] = 1.0
 
-    particulate_states = ["X_I", "X_S", "X_H", "X_AUT"]
-    for state_name in ["S_S", "S_I", *particulate_states]:
-        composition_matrix[output_index["COD"], state_index[state_name]] = 1.0
-
-    for state_name in particulate_states:
-        composition_matrix[output_index["TSS"], state_index[state_name]] = float(
-            observation_model["state_tss_factors"][state_name]
-        )
-        composition_matrix[output_index["TN"], state_index[state_name]] = float(
-            observation_model["particulate_nitrogen_factors"][state_name]
-        )
-        composition_matrix[output_index["TP"], state_index[state_name]] = float(
-            observation_model["particulate_phosphorus_factors"][state_name]
-        )
-
-    composition_matrix[output_index["TN"], state_index["S_NH4_N"]] = 1.0
-    composition_matrix[output_index["TN"], state_index["S_NO3_N"]] = 1.0
-    composition_matrix[output_index["TP"], state_index["S_PO4_P"]] = 1.0
-    composition_matrix[output_index["NH4_N"], state_index["S_NH4_N"]] = 1.0
-    composition_matrix[output_index["NO3_N"], state_index["S_NO3_N"]] = 1.0
-    composition_matrix[output_index["PO4_P"], state_index["S_PO4_P"]] = 1.0
-    composition_matrix[output_index["Alkalinity"], state_index["S_Alkalinity"]] = 1.0
+    for output_name in measured_output_columns:
+        output_row = output_index[output_name]
+        output_definition = measured_output_definitions[output_name]
+        for term in output_definition["terms"]:
+            state_name = str(term["state"])
+            state_column = state_index[state_name]
+            coefficient = _resolve_measured_output_term_coefficient(term, state_name, observation_model)
+            composition_matrix[output_row, state_column] += coefficient
 
     return {
         "petersen_matrix": petersen_matrix,
@@ -206,6 +248,10 @@ def _sample_named_ranges(
 
 def _build_state_index(state_columns: list[str]) -> dict[str, int]:
     return {name: position for position, name in enumerate(state_columns)}
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
 
 
 def _monod(numerator: float, half_saturation: float) -> float:
@@ -480,12 +526,15 @@ def build_asm1_metadata(
     state_columns, measured_output_columns, process_names, process_types = _validate_model_structure(model_params)
     operational_columns = list(model_params["operational_columns"])
     schema_version = str(model_params["schema_version"])
+    effluent_output_columns = [f"Out_{name}" for name in state_columns]
+    measured_output_dependent_columns = [f"Out_{name}" for name in measured_output_columns]
+    dependent_columns = _ordered_unique(effluent_output_columns + measured_output_dependent_columns)
 
     return {
         "simulation_name": MODEL_NAME,
         "n_samples": sample_count,
         "random_seed": random_seed,
-        "dependent_columns": [f"Out_{name}" for name in state_columns] + [f"Out_{name}" for name in measured_output_columns],
+        "dependent_columns": dependent_columns,
         "independent_columns": operational_columns + [f"In_{name}" for name in state_columns],
         "identifier_columns": [],
         "ignored_columns": [],
@@ -659,7 +708,12 @@ def generate_asm1_dataset(
     influent_df = pd.DataFrame(influent_states, columns=[f"In_{name}" for name in state_columns])
     operational_df = pd.DataFrame(operational, columns=operational_columns)
     effluent_df = pd.DataFrame(effluent_states, columns=[f"Out_{name}" for name in state_columns])
-    measured_df = pd.DataFrame(measured_outputs, columns=[f"Out_{name}" for name in measured_output_columns])
+    measured_output_dataset_columns = [f"Out_{name}" for name in measured_output_columns]
+    measured_df = pd.DataFrame(measured_outputs, columns=measured_output_dataset_columns)
+    measured_columns_to_append = [
+        column_name for column_name in measured_output_dataset_columns if column_name not in set(effluent_df.columns)
+    ]
+    measured_df = measured_df.loc[:, measured_columns_to_append]
     dataset = pd.concat([operational_df, influent_df, effluent_df, measured_df], axis=1)
 
     metadata = build_asm1_metadata(

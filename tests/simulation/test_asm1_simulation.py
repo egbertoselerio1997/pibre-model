@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import tempfile
 import unittest
@@ -142,6 +143,55 @@ class Asm1SimulationTests(unittest.TestCase):
 
         expected_vector = np.array([expected[name] for name in measured_output_columns], dtype=float)
         np.testing.assert_allclose(observed, expected_vector)
+
+    def test_missing_measured_output_definition_raises_informative_error(self) -> None:
+        params = copy.deepcopy(load_asm1_simulation_params())
+        del params["measured_output_definitions"]["Alkalinity"]
+
+        with self.assertRaisesRegex(KeyError, "missing measured output definitions"):
+            get_asm1_matrices(params)
+
+    def test_measured_output_definitions_cover_all_state_columns(self) -> None:
+        params = load_asm1_simulation_params()
+        state_columns = list(params["state_columns"])
+        measured_output_definitions = dict(params["measured_output_definitions"])
+
+        for state_name in state_columns:
+            self.assertIn(state_name, measured_output_definitions)
+            terms = measured_output_definitions[state_name]["terms"]
+            self.assertEqual(len(terms), 1)
+            self.assertEqual(terms[0]["state"], state_name)
+            self.assertEqual(float(terms[0]["coefficient"]), 1.0)
+
+    def test_state_output_can_be_added_to_measured_outputs_without_duplicate_columns(self) -> None:
+        params = copy.deepcopy(load_asm1_simulation_params())
+        params["measured_output_columns"].append("S_O2")
+
+        dataset, metadata, matrix_bundle = generate_asm1_dataset(
+            model_params=params,
+            n_samples=4,
+            random_seed=5,
+            parallel_workers=1,
+        )
+
+        self.assertIn("S_O2", metadata["measured_output_columns"])
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (9, 11))
+        self.assertEqual(list(dataset.columns).count("Out_S_O2"), 1)
+        self.assertEqual(metadata["dependent_columns"].count("Out_S_O2"), 1)
+
+    def test_unknown_state_in_output_definition_raises_informative_error(self) -> None:
+        params = copy.deepcopy(load_asm1_simulation_params())
+        params["measured_output_definitions"]["COD"]["terms"][0]["state"] = "S_UNKNOWN"
+
+        with self.assertRaisesRegex(KeyError, "references unknown state"):
+            get_asm1_matrices(params)
+
+    def test_missing_factor_state_entry_raises_informative_error(self) -> None:
+        params = copy.deepcopy(load_asm1_simulation_params())
+        del params["observation_model"]["state_tss_factors"]["X_AUT"]
+
+        with self.assertRaisesRegex(KeyError, "missing from observation_model"):
+            get_asm1_matrices(params)
 
     def test_single_operating_point_solves_to_small_residual(self) -> None:
         params = load_asm1_simulation_params()

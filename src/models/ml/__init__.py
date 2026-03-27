@@ -16,6 +16,12 @@ from .lightgbm_regressor import (
 	run_lightgbm_regressor_pipeline,
 )
 from .pibre import load_pibre_params, predict_pibre_model, run_pibre_pipeline, train_pibre_model
+from .pibre_unconstrained import (
+	load_pibre_unconstrained_params,
+	predict_pibre_unconstrained_model,
+	run_pibre_unconstrained_pipeline,
+	train_pibre_unconstrained_model,
+)
 from .random_forest_regressor import (
 	load_random_forest_regressor_params,
 	predict_random_forest_regressor_model,
@@ -33,6 +39,7 @@ __all__ = [
 	"load_catboost_regressor_params",
 	"load_lightgbm_regressor_params",
 	"load_pibre_params",
+	"load_pibre_unconstrained_params",
 	"load_random_forest_regressor_params",
 	"load_svr_regressor_params",
 	"load_xgboost_regressor_params",
@@ -40,6 +47,7 @@ __all__ = [
 	"predict_catboost_regressor_model",
 	"predict_lightgbm_regressor_model",
 	"predict_pibre_model",
+	"predict_pibre_unconstrained_model",
 	"predict_random_forest_regressor_model",
 	"predict_svr_regressor_model",
 	"predict_xgboost_regressor_model",
@@ -47,8 +55,10 @@ __all__ = [
 	"run_catboost_regressor_pipeline",
 	"run_lightgbm_regressor_pipeline",
 	"run_pibre_pipeline",
+	"run_pibre_unconstrained_pipeline",
 	"run_random_forest_regressor_pipeline",
 	"run_svr_regressor_pipeline",
 	"run_xgboost_regressor_pipeline",
 	"train_pibre_model",
+	"train_pibre_unconstrained_model",
 ]

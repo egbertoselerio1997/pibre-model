@@ -11,9 +11,14 @@ from scipy.linalg import null_space
 
 from src.models.ml.adaboost_regressor import build_adaboost_regressor_model, load_adaboost_regressor_params
 from src.models.ml.pibre import load_pibre_params
+from src.models.ml.pibre_unconstrained import load_pibre_unconstrained_params
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.process import build_measured_supervised_dataset, make_train_test_split, sample_dataset_fraction
-from src.utils.train import tune_pibre_hyperparameters, tune_tabular_regressor_hyperparameters
+from src.utils.train import (
+    tune_pibre_hyperparameters,
+    tune_pibre_unconstrained_hyperparameters,
+    tune_tabular_regressor_hyperparameters,
+)
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -43,6 +48,32 @@ def _build_tiny_pibre_params() -> dict[str, object]:
         "weight_decay": {"type": "float", "low": 0.00000001, "high": 0.0001, "log": True},
         "clip_max_norm": {"type": "float", "low": 0.5, "high": 2.0, "log": False},
         "bilinear_init_scale": {"type": "float", "low": 0.001, "high": 0.02, "log": True},
+    }
+    params["pruner"] = {
+        "type": "median",
+        "n_startup_trials": 1,
+        "n_warmup_steps": 1,
+        "interval_steps": 1,
+    }
+    return params
+
+
+def _build_tiny_pibre_unconstrained_params() -> dict[str, object]:
+    params = copy.deepcopy(load_pibre_unconstrained_params())
+    params["hyperparameters"]["random_seed"] = 11
+    params["training_defaults"] = {
+        "regression_mode": "ridge",
+        "ridge_alpha": 0.1,
+        "fit_intercept": True,
+        "include_bias": False,
+        "interaction_only": False,
+        "random_state": 11,
+    }
+    params["search_space"] = {
+        "regression_mode": {"type": "categorical", "choices": ["ols", "ridge"]},
+        "ridge_alpha": {"type": "float", "low": 0.001, "high": 1.0, "log": True},
+        "fit_intercept": {"type": "categorical", "choices": [True, False]},
+        "include_bias": {"type": "categorical", "choices": [False, True]},
     }
     params["pruner"] = {
         "type": "median",
@@ -98,6 +129,24 @@ class MlOrchestrationTests(unittest.TestCase):
             A_matrix=self.a_matrix,
             model_params=params,
             tuning_epochs=3,
+            n_trials=1,
+            show_progress_bar=False,
+        )
+
+        self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
+        self.assertEqual(optuna_summary["n_trials"], 1)
+
+    def test_external_pibre_unconstrained_tuning_returns_hyperparameters(self) -> None:
+        params = _build_tiny_pibre_unconstrained_params()
+        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
+        tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
+        tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
+
+        best_hyperparameters, optuna_summary = tune_pibre_unconstrained_hyperparameters(
+            tuning_splits.train,
+            tuning_splits.test,
+            A_matrix=self.a_matrix,
+            model_params=params,
             n_trials=1,
             show_progress_bar=False,
         )

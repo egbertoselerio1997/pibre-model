@@ -68,7 +68,9 @@ $$
 y = Cx
 $$
 
-where $y = [COD, TSS, TN, TP, NH4\text{-}N, NO3\text{-}N, PO4\text{-}P, Alkalinity]^T$. This matrix is built from the configured solids, nitrogen, and phosphorus observation factors so that the analyte mapping is explicit and inspectable.
+where $y = [COD, TSS, TN, TP, NH4\text{-}N, NO3\text{-}N, PO4\text{-}P, Alkalinity]^T$. This matrix is built programmatically from `measured_output_definitions` in `config/params.json`, with optional factor lookups in the configured observation-model dictionaries. The definitions section is intentionally complete and includes identity mappings for all configured state variables, so additional measured outputs can be enabled by editing only `measured_output_columns`.
+
+When a selected measured output name overlaps an existing state-output name, the exported dataset and metadata keep dependent columns unique while preserving the requested measured-output composition rows.
 
 The nonlinear steady-state algebraic system is solved numerically for each sampled operating point using a bounded least-squares residual solve.
 
@@ -128,7 +130,7 @@ Implementation is in `src/models/simulation/asm1_simulation.py`.
 Main implementation blocks:
 
 1. Load the parameter namespace from `config/params.json`.
-2. Construct the explicit Petersen matrix and composition matrix from the configured stoichiometric and observation factors.
+2. Validate and construct the explicit Petersen matrix and composition matrix from configured stoichiometric factors, observation factors, and measured-output definitions.
 3. Resolve the configured chunk size and worker count for dataset generation.
 4. Sample mechanistic influent state variables and operating variables from configured ranges.
 5. Solve the steady-state nonlinear CSTR balances for each sampled operating point using dilution plus matrix-based process contributions.

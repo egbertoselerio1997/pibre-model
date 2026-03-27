@@ -375,6 +375,84 @@ def tune_pibre_hyperparameters(
     return best_hyperparameters, make_study_summary(study)
 
 
+def tune_pibre_unconstrained_hyperparameters(
+    tuning_train_split: DatasetSplit,
+    tuning_test_split: DatasetSplit,
+    *,
+    A_matrix: np.ndarray,
+    model_params: Mapping[str, Any],
+    n_trials: int,
+    timeout: int | None = None,
+    show_progress_bar: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Tune unconstrained PIBRe with notebook-managed tuning splits."""
+
+    from src.models.ml.pibre_unconstrained import train_pibre_unconstrained_model
+
+    params = dict(model_params)
+    split_params = params["hyperparameters"]
+    seed = int(split_params["random_seed"])
+    scaling_bundle = fit_scalers(
+        tuning_train_split,
+        scale_features=bool(split_params["scale_features"]),
+        scale_targets=bool(split_params["scale_targets"]),
+    )
+    scaled_tuning_train_split = transform_dataset_split(tuning_train_split, scaling_bundle)
+    scaled_tuning_test_split = transform_dataset_split(tuning_test_split, scaling_bundle)
+    base_hyperparameters = dict(params["training_defaults"])
+
+    study = create_optuna_study(
+        "pibre_unconstrained",
+        seed=seed,
+        pruner_config=params.get("pruner"),
+    )
+
+    def objective(trial: Any) -> float:
+        hyperparameters = dict(base_hyperparameters)
+        hyperparameters.update(suggest_parameters(trial, params["search_space"]))
+
+        training_result = train_pibre_unconstrained_model(
+            {
+                "features": scaled_tuning_train_split.features,
+                "targets": scaled_tuning_train_split.targets,
+            },
+            hyperparameters,
+            training_options={
+                "show_progress": False,
+                "progress_description": "Train PIBRe Unconstrained",
+                "objective_name": str(hyperparameters.get("regression_mode", "ridge")),
+            },
+        )
+
+        expanded_validation_features = training_result["feature_expander"].transform(
+            scaled_tuning_test_split.features,
+        )
+        raw_predictions_scaled = np.asarray(training_result["model"].predict(expanded_validation_features), dtype=float)
+        if raw_predictions_scaled.ndim == 1:
+            raw_predictions_scaled = raw_predictions_scaled.reshape(-1, 1)
+
+        raw_predictions = inverse_transform_targets(raw_predictions_scaled, scaling_bundle)
+        projected_predictions = project_to_mass_balance(
+            raw_predictions,
+            scaled_tuning_test_split.constraint_reference.to_numpy(dtype=float),
+            np.asarray(A_matrix, dtype=float),
+        )
+        tuning_targets = inverse_transform_targets(scaled_tuning_test_split.targets, scaling_bundle)
+        return float(mean_squared_error(tuning_targets, projected_predictions))
+
+    optimize_study(
+        study,
+        objective,
+        n_trials=int(n_trials),
+        timeout=timeout,
+        show_progress_bar=show_progress_bar,
+        objective_name="validation_projected_mse",
+    )
+    best_hyperparameters = dict(base_hyperparameters)
+    best_hyperparameters.update(study.best_trial.params)
+    return best_hyperparameters, make_study_summary(study)
+
+
 def build_tabular_model_bundle(
     model_name: str,
     fitted_model: Any,
@@ -616,6 +694,7 @@ __all__ = [
     "run_tabular_regressor_pipeline",
     "serialize_report_frames",
     "tune_pibre_hyperparameters",
+    "tune_pibre_unconstrained_hyperparameters",
     "train_tabular_regressor",
     "transform_feature_frame",
     "tune_tabular_regressor_hyperparameters",
