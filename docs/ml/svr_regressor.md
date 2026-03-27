@@ -37,7 +37,7 @@ An important assumption is that feature scaling is enabled, because distance-bas
 
 Implementation is in src/models/ml/svr_regressor.py.
 
-The repository relies on shared helpers for dataset construction, splitting, scaling, tuning, evaluation, and persistence. The SVR module contributes the model-specific estimator builder and the standard train, tune, predict, and pipeline wrappers required by the repository contract.
+The repository relies on shared helpers for dataset construction, notebook-managed splitting, scaling, external tuning, evaluation, and persistence. The SVR module contributes the model-specific estimator builder and the standard train, predict, and pipeline wrappers required by the repository contract.
 
 ## 6. Architecture details and adopted standard architecture name
 
@@ -45,7 +45,7 @@ The adopted architecture is epsilon-insensitive support vector regression with c
 
 ## 7. Training or optimization notes
 
-Optuna tunes the regularization parameter $C$, the epsilon tube width, the kernel choice, the gamma setting, and the polynomial degree parameter when relevant. Because SVR is scale-sensitive, feature standardization is enabled by default for this model in config/params.json.
+Optuna tunes the regularization parameter $C$, the epsilon tube width, the kernel choice, the gamma setting, and the polynomial degree parameter when relevant. Because SVR is scale-sensitive, feature standardization is enabled by default for this model in config/params.json, while the notebook orchestration block controls the shared Optuna trial budget.
 
 ## 8. Prediction workflow
 

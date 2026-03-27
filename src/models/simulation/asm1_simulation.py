@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -182,6 +184,7 @@ def get_asm1_matrices(model_params: Mapping[str, Any]) -> dict[str, Any]:
         "composition_matrix": composition_matrix,
         "process_names": process_names,
         "process_types": process_types,
+        "state_index": state_index,
         "state_columns": state_columns,
         "measured_output_columns": measured_output_columns,
     }
@@ -212,20 +215,19 @@ def _monod(numerator: float, half_saturation: float) -> float:
 def _compute_process_rates(
     state: np.ndarray,
     aeration: float,
-    state_columns: list[str],
+    state_index: Mapping[str, int],
     model_params: Mapping[str, Any],
 ) -> np.ndarray:
-    index = _build_state_index(state_columns)
     kinetics = model_params["kinetics"]
     aeration_model = model_params["aeration_model"]
 
-    s_s = state[index["S_S"]]
-    s_nh4 = state[index["S_NH4_N"]]
-    s_no3 = state[index["S_NO3_N"]]
-    s_o2 = state[index["S_O2"]]
-    x_s = state[index["X_S"]]
-    x_h = state[index["X_H"]]
-    x_aut = state[index["X_AUT"]]
+    s_s = state[state_index["S_S"]]
+    s_nh4 = state[state_index["S_NH4_N"]]
+    s_no3 = state[state_index["S_NO3_N"]]
+    s_o2 = state[state_index["S_O2"]]
+    x_s = state[state_index["X_S"]]
+    x_h = state[state_index["X_H"]]
+    x_aut = state[state_index["X_AUT"]]
 
     kla = float(aeration_model["kla_base"]) + float(aeration_model["kla_per_aeration"]) * max(float(aeration), 0.0)
     do_saturation = float(aeration_model["do_saturation"])
@@ -282,12 +284,12 @@ def _steady_state_residuals(
     matrix_bundle: Mapping[str, Any],
     model_params: Mapping[str, Any],
 ) -> np.ndarray:
-    state_columns = list(matrix_bundle["state_columns"])
-    petersen_matrix = np.asarray(matrix_bundle["petersen_matrix"], dtype=float)
+    state_index = dict(matrix_bundle["state_index"])
+    petersen_matrix = matrix_bundle["petersen_matrix"]
     dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
     residual = dilution_rate * (influent_state - state)
 
-    process_rates = _compute_process_rates(state, aeration, state_columns, model_params)
+    process_rates = _compute_process_rates(state, aeration, state_index, model_params)
     residual += process_rates @ petersen_matrix
 
     return residual
@@ -297,7 +299,7 @@ def _build_initial_guess(
     influent_state: np.ndarray,
     hrt_hours: float,
     aeration: float,
-    state_columns: list[str],
+    state_index: Mapping[str, int],
     model_params: Mapping[str, Any],
     previous_solution: np.ndarray | None = None,
 ) -> np.ndarray:
@@ -309,29 +311,36 @@ def _build_initial_guess(
     if previous_solution is not None:
         guess = np.maximum(0.65 * previous_solution + 0.35 * guess, lower_floor)
 
-    index = _build_state_index(state_columns)
     if previous_solution is None:
-        guess[index["X_H"]] = max(
-            guess[index["X_H"]],
-            guess[index["X_S"]] * float(solver["initial_heterotroph_to_xs_ratio"]),
+        guess[state_index["X_H"]] = max(
+            guess[state_index["X_H"]],
+            guess[state_index["X_S"]] * float(solver["initial_heterotroph_to_xs_ratio"]),
         )
-        guess[index["X_AUT"]] = max(
-            guess[index["X_AUT"]],
-            guess[index["S_NH4_N"]] * float(solver["initial_autotroph_to_nh4_ratio"]),
+        guess[state_index["X_AUT"]] = max(
+            guess[state_index["X_AUT"]],
+            guess[state_index["S_NH4_N"]] * float(solver["initial_autotroph_to_nh4_ratio"]),
         )
 
     dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
     kla = float(aeration_model["kla_base"]) + float(aeration_model["kla_per_aeration"]) * max(float(aeration), 0.0)
     do_saturation = float(aeration_model["do_saturation"])
-    guess[index["S_O2"]] = np.clip(
-        (dilution_rate * guess[index["S_O2"]] + kla * do_saturation) / max(dilution_rate + kla, 1e-9),
+    guess[state_index["S_O2"]] = np.clip(
+        (dilution_rate * guess[state_index["S_O2"]] + kla * do_saturation) / max(dilution_rate + kla, 1e-9),
         lower_floor,
         do_saturation,
     )
-    guess[index["S_S"]] *= float(solver["initial_soluble_substrate_fraction"])
-    guess[index["X_S"]] *= float(solver["initial_slow_substrate_fraction"])
+    guess[state_index["S_S"]] *= float(solver["initial_soluble_substrate_fraction"])
+    guess[state_index["X_S"]] *= float(solver["initial_slow_substrate_fraction"])
 
     return guess
+
+
+def _compute_measured_output_values(
+    state: np.ndarray,
+    matrix_bundle: Mapping[str, Any],
+) -> np.ndarray:
+    composition_matrix = matrix_bundle["composition_matrix"]
+    return composition_matrix @ state
 
 
 def _compute_measured_outputs(
@@ -339,8 +348,7 @@ def _compute_measured_outputs(
     matrix_bundle: Mapping[str, Any],
 ) -> dict[str, float]:
     measured_output_columns = list(matrix_bundle["measured_output_columns"])
-    composition_matrix = np.asarray(matrix_bundle["composition_matrix"], dtype=float)
-    observed_values = composition_matrix @ state
+    observed_values = _compute_measured_output_values(state, matrix_bundle)
 
     return {
         output_name: float(observed_values[output_index])
@@ -354,12 +362,14 @@ def solve_asm1_cstr_steady_state(
     hrt_hours: float,
     aeration: float,
     model_params: Mapping[str, Any],
+    matrix_bundle: Mapping[str, Any] | None = None,
     previous_solution: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, float | bool | int]]:
     """Solve a single mechanistic steady-state CSTR operating point."""
 
-    matrix_bundle = get_asm1_matrices(model_params)
+    matrix_bundle = matrix_bundle if matrix_bundle is not None else get_asm1_matrices(model_params)
     state_columns = list(matrix_bundle["state_columns"])
+    state_index = dict(matrix_bundle["state_index"])
     solver = model_params["solver"]
     lower_bounds = np.full(len(state_columns), float(solver["lower_bound"]), dtype=float)
     upper_bounds = np.full(len(state_columns), np.inf, dtype=float)
@@ -367,24 +377,23 @@ def solve_asm1_cstr_steady_state(
         influent_state,
         hrt_hours,
         aeration,
-        state_columns,
+        state_index,
         model_params,
         previous_solution=previous_solution,
     )
 
     candidate_guesses = [initial_guess]
     biomass_rich_guess = initial_guess.copy()
-    index = _build_state_index(state_columns)
-    biomass_rich_guess[index["X_H"]] = max(
-        biomass_rich_guess[index["X_H"]],
-        influent_state[index["X_S"]] * float(solver["multistart_heterotroph_to_xs_ratio"]),
+    biomass_rich_guess[state_index["X_H"]] = max(
+        biomass_rich_guess[state_index["X_H"]],
+        influent_state[state_index["X_S"]] * float(solver["multistart_heterotroph_to_xs_ratio"]),
     )
-    biomass_rich_guess[index["X_AUT"]] = max(
-        biomass_rich_guess[index["X_AUT"]],
-        influent_state[index["S_NH4_N"]] * float(solver["multistart_autotroph_to_nh4_ratio"]),
+    biomass_rich_guess[state_index["X_AUT"]] = max(
+        biomass_rich_guess[state_index["X_AUT"]],
+        influent_state[state_index["S_NH4_N"]] * float(solver["multistart_autotroph_to_nh4_ratio"]),
     )
-    biomass_rich_guess[index["S_S"]] *= float(solver["multistart_soluble_substrate_fraction"])
-    biomass_rich_guess[index["X_S"]] *= float(solver["multistart_slow_substrate_fraction"])
+    biomass_rich_guess[state_index["S_S"]] *= float(solver["multistart_soluble_substrate_fraction"])
+    biomass_rich_guess[state_index["X_S"]] *= float(solver["multistart_slow_substrate_fraction"])
     candidate_guesses.append(biomass_rich_guess)
 
     best_result = None
@@ -492,20 +501,122 @@ def build_asm1_metadata(
     }
 
 
+def _resolve_parallel_workers(requested_workers: int, sample_count: int) -> int:
+    if requested_workers < 0:
+        raise ValueError("parallel_workers must be greater than or equal to 0.")
+
+    if sample_count <= 1:
+        return 1
+
+    available_workers = os.cpu_count() or 1
+    if requested_workers == 0:
+        requested_workers = max(available_workers - 1, 1)
+
+    return min(max(requested_workers, 1), available_workers, sample_count)
+
+
+def _resolve_parallel_chunk_size(requested_chunk_size: int) -> int:
+    if requested_chunk_size < 1:
+        raise ValueError("parallel_chunk_size must be at least 1.")
+
+    return requested_chunk_size
+
+
+def _generate_asm1_dataset_chunk(
+    *,
+    chunk_start: int,
+    chunk_size: int,
+    chunk_seed: int,
+    model_params: Mapping[str, Any],
+    matrix_bundle: Mapping[str, Any],
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    configured_hyperparameters = model_params["hyperparameters"]
+    max_sample_attempts = int(configured_hyperparameters["max_sample_attempts"])
+    state_columns = list(matrix_bundle["state_columns"])
+    operational_columns = list(model_params["operational_columns"])
+    measured_output_columns = list(matrix_bundle["measured_output_columns"])
+    rng = np.random.default_rng(chunk_seed)
+
+    influent_states = np.zeros((chunk_size, len(state_columns)), dtype=float)
+    operational = np.zeros((chunk_size, len(operational_columns)), dtype=float)
+    effluent_states = np.zeros((chunk_size, len(state_columns)), dtype=float)
+    measured_outputs = np.zeros((chunk_size, len(measured_output_columns)), dtype=float)
+
+    previous_solution: np.ndarray | None = None
+    for local_index in range(chunk_size):
+        solved = False
+        effluent_state: np.ndarray | None = None
+        last_error: RuntimeError | None = None
+        for _attempt_index in range(max_sample_attempts):
+            candidate_influent = _sample_named_ranges(
+                rng,
+                1,
+                state_columns,
+                model_params["influent_state_ranges"],
+            )[0]
+            candidate_operational = _sample_named_ranges(
+                rng,
+                1,
+                operational_columns,
+                model_params["operational_ranges"],
+            )[0]
+            try:
+                effluent_state, _ = solve_asm1_cstr_steady_state(
+                    influent_state=candidate_influent,
+                    hrt_hours=float(candidate_operational[0]),
+                    aeration=float(candidate_operational[1]),
+                    model_params=model_params,
+                    matrix_bundle=matrix_bundle,
+                    previous_solution=previous_solution,
+                )
+            except RuntimeError as error:
+                last_error = error
+                continue
+
+            influent_states[local_index] = candidate_influent
+            operational[local_index] = candidate_operational
+            solved = True
+            break
+
+        if not solved:
+            raise RuntimeError(
+                "asm1_simulation failed to generate a valid steady-state sample "
+                f"after {max_sample_attempts} attempts at sample index {chunk_start + local_index}."
+            ) from last_error
+
+        assert effluent_state is not None
+        previous_solution = effluent_state
+        effluent_states[local_index] = effluent_state
+        measured_outputs[local_index] = _compute_measured_output_values(effluent_state, matrix_bundle)
+
+    return chunk_start, influent_states, operational, effluent_states, measured_outputs
+
+
 def generate_asm1_dataset(
     *,
     model_params: Mapping[str, Any] | None = None,
     n_samples: int | None = None,
     random_seed: int | None = None,
+    parallel_workers: int | None = None,
+    parallel_chunk_size: int | None = None,
  ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
     """Generate a mechanistic steady-state CSTR dataset from configured state ranges."""
 
     params = dict(model_params) if model_params is not None else load_asm1_simulation_params()
     configured_hyperparameters = params["hyperparameters"]
     sample_count = int(n_samples if n_samples is not None else configured_hyperparameters["n_samples"])
+    if sample_count < 0:
+        raise ValueError("n_samples must be greater than or equal to 0.")
+
     seed = int(random_seed if random_seed is not None else configured_hyperparameters["seed"])
-    max_sample_attempts = int(configured_hyperparameters["max_sample_attempts"])
-    rng = np.random.default_rng(seed)
+    requested_parallel_workers = int(
+        parallel_workers if parallel_workers is not None else configured_hyperparameters.get("parallel_workers", 1)
+    )
+    requested_parallel_chunk_size = int(
+        parallel_chunk_size
+        if parallel_chunk_size is not None
+        else configured_hyperparameters.get("parallel_chunk_size", sample_count)
+    )
 
     matrix_bundle = get_asm1_matrices(params)
     state_columns = list(matrix_bundle["state_columns"])
@@ -516,52 +627,34 @@ def generate_asm1_dataset(
     operational = np.zeros((sample_count, len(operational_columns)), dtype=float)
     effluent_states = np.zeros((sample_count, len(state_columns)), dtype=float)
     measured_outputs = np.zeros((sample_count, len(measured_output_columns)), dtype=float)
-    previous_solution: np.ndarray | None = None
-    for sample_index in range(sample_count):
-        solved = False
-        effluent_state: np.ndarray | None = None
-        last_error: RuntimeError | None = None
-        for _attempt_index in range(max_sample_attempts):
-            candidate_influent = _sample_named_ranges(
-                rng,
-                1,
-                state_columns,
-                params["influent_state_ranges"],
-            )[0]
-            candidate_operational = _sample_named_ranges(
-                rng,
-                1,
-                operational_columns,
-                params["operational_ranges"],
-            )[0]
-            try:
-                effluent_state, _ = solve_asm1_cstr_steady_state(
-                    influent_state=candidate_influent,
-                    hrt_hours=float(candidate_operational[0]),
-                    aeration=float(candidate_operational[1]),
-                    model_params=params,
-                    previous_solution=previous_solution,
-                )
-            except RuntimeError as error:
-                last_error = error
-                continue
+    chunk_results: list[tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    if sample_count > 0:
+        worker_count = _resolve_parallel_workers(requested_parallel_workers, sample_count)
+        chunk_size = min(_resolve_parallel_chunk_size(requested_parallel_chunk_size), sample_count)
+        chunk_specs = [
+            {
+                "chunk_start": chunk_start,
+                "chunk_size": min(chunk_size, sample_count - chunk_start),
+                "chunk_seed": seed + chunk_index,
+                "model_params": params,
+                "matrix_bundle": matrix_bundle,
+            }
+            for chunk_index, chunk_start in enumerate(range(0, sample_count, chunk_size))
+        ]
 
-            influent_states[sample_index] = candidate_influent
-            operational[sample_index] = candidate_operational
-            solved = True
-            break
+        if worker_count == 1 or len(chunk_specs) == 1:
+            chunk_results = [_generate_asm1_dataset_chunk(**chunk_spec) for chunk_spec in chunk_specs]
+        else:
+            with ProcessPoolExecutor(max_workers=worker_count) as executor:
+                futures = [executor.submit(_generate_asm1_dataset_chunk, **chunk_spec) for chunk_spec in chunk_specs]
+                chunk_results = [future.result() for future in futures]
 
-        if not solved:
-            raise RuntimeError(
-                "asm1_simulation failed to generate a valid steady-state sample "
-                f"after {max_sample_attempts} attempts at sample index {sample_index}."
-            ) from last_error
-
-        assert effluent_state is not None
-        previous_solution = effluent_state
-        effluent_states[sample_index] = effluent_state
-        observations = _compute_measured_outputs(effluent_state, matrix_bundle)
-        measured_outputs[sample_index] = [observations[name] for name in measured_output_columns]
+    for chunk_start, chunk_influent, chunk_operational, chunk_effluent, chunk_measured in chunk_results:
+        chunk_end = chunk_start + len(chunk_influent)
+        influent_states[chunk_start:chunk_end] = chunk_influent
+        operational[chunk_start:chunk_end] = chunk_operational
+        effluent_states[chunk_start:chunk_end] = chunk_effluent
+        measured_outputs[chunk_start:chunk_end] = chunk_measured
 
     influent_df = pd.DataFrame(influent_states, columns=[f"In_{name}" for name in state_columns])
     operational_df = pd.DataFrame(operational, columns=operational_columns)
@@ -584,6 +677,8 @@ def run_asm1_simulation(
     repo_root: str | Path | None = None,
     n_samples: int | None = None,
     random_seed: int | None = None,
+    parallel_workers: int | None = None,
+    parallel_chunk_size: int | None = None,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Run the configured steady-state CSTR simulation and optionally persist artifacts."""
@@ -593,6 +688,8 @@ def run_asm1_simulation(
         model_params=params,
         n_samples=n_samples,
         random_seed=random_seed,
+        parallel_workers=parallel_workers,
+        parallel_chunk_size=parallel_chunk_size,
     )
 
     artifact_paths: dict[str, Path | None] = {

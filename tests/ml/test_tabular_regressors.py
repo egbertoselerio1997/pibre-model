@@ -39,6 +39,7 @@ from src.models.ml.xgboost_regressor import (
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
+from src.utils.process import build_measured_supervised_dataset, make_train_test_split
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -59,13 +60,6 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
 def _build_tiny_params(base_params: dict[str, object], *, iteration_key: str | None) -> dict[str, object]:
     params = copy.deepcopy(base_params)
     params["hyperparameters"]["random_seed"] = 11
-    params["hyperparameters"]["default_tuning_profile"] = "fast"
-    params["tuning_profiles"] = {
-        "fast": {
-            "n_trials": 1,
-            "timeout_seconds": None,
-        }
-    }
     params["artifact_options"] = {
         "persist_model": True,
         "persist_metrics": True,
@@ -139,16 +133,25 @@ class TabularRegressorTests(unittest.TestCase):
         ]
 
     def test_requested_regressors_pipeline_and_roundtrip(self) -> None:
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
         for spec in self.model_specs:
             with self.subTest(model=spec["name"]):
                 params = _build_tiny_params(spec["load_params"](), iteration_key=spec["iteration_key"])
                 result = spec["run_pipeline"](
-                    self.dataset,
-                    self.metadata,
-                    self.composition_matrix,
+                    dataset_splits.train,
+                    dataset_splits.test,
                     self.a_matrix,
                     model_params=params,
-                    tuning_profile="fast",
                     persist_artifacts=False,
                 )
 

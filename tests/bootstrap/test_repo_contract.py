@@ -83,6 +83,7 @@ class BootstrapContractTests(unittest.TestCase):
             data = json.load(handle)
 
         self.assertTrue(data, "params.json must define at least one model namespace template")
+        self.assertIn("ml_orchestration", data)
         for model_name, params in data.items():
             self.assertIsInstance(model_name, str)
             self.assertIsInstance(params, dict)

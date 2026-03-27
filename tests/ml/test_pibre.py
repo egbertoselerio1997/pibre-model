@@ -5,7 +5,9 @@ from __future__ import annotations
 import copy
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 from scipy.linalg import null_space
@@ -13,8 +15,9 @@ from scipy.linalg import null_space
 from src.models.ml.pibre import predict_pibre_model, project_to_mass_balance, run_pibre_pipeline
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.metrics import summarize_mass_balance_residuals
-from src.utils.process import build_measured_supervised_dataset
+from src.utils.process import build_measured_supervised_dataset, make_train_test_split
 from src.utils.io import save_pickle_file
+from src.utils.train import get_training_device, resolve_torch_adam_options
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -92,17 +95,41 @@ class PibreModelTests(unittest.TestCase):
         self.assertLess(summary["constraint_max_abs"], 1e-8)
         self.assertLess(summary["constraint_mean_l2"], 1e-8)
 
+    def test_resolve_torch_adam_options_disables_foreach_on_directml_by_default(self) -> None:
+        self.assertEqual(resolve_torch_adam_options(device_label="directml"), {"foreach": False})
+        self.assertEqual(resolve_torch_adam_options(device_label="cuda"), {})
+        self.assertEqual(resolve_torch_adam_options(device_label="directml", foreach=True), {"foreach": True})
+
     def test_run_pibre_pipeline_returns_metrics_and_zero_projected_residuals(self) -> None:
         params = self._tiny_params()
-        result = run_pibre_pipeline(
+        measured_dataset = build_measured_supervised_dataset(
             self.dataset,
             self.metadata,
             self.composition_matrix,
-            self.a_matrix,
-            model_params=params,
-            tuning_profile="fast",
-            persist_artifacts=False,
         )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        runtime_params = cast(dict[str, Any], params["runtime"])
+        self.assertIsInstance(runtime_params, dict)
+        _, device_label = get_training_device(prefer_directml=bool(runtime_params["prefer_directml"]))
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            result = run_pibre_pipeline(
+                dataset_splits.train,
+                dataset_splits.test,
+                self.a_matrix,
+                model_params=params,
+                persist_artifacts=False,
+            )
+
+        if device_label == "directml":
+            self.assertFalse(
+                any("lerp.Scalar_out" in str(warning.message) for warning in caught_warnings),
+                "PIBRe DirectML training should avoid Adam CPU fallback warnings.",
+            )
 
         aggregate_metrics = result["test_report"]["aggregate_metrics"]
         self.assertEqual(list(aggregate_metrics["prediction_type"]), ["raw", "projected"])
@@ -112,13 +139,21 @@ class PibreModelTests(unittest.TestCase):
 
     def test_predict_pibre_model_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()
-        result = run_pibre_pipeline(
+        measured_dataset = build_measured_supervised_dataset(
             self.dataset,
             self.metadata,
             self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        result = run_pibre_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
             self.a_matrix,
             model_params=params,
-            tuning_profile="fast",
             persist_artifacts=False,
         )
 
@@ -145,13 +180,15 @@ class PibreModelTests(unittest.TestCase):
             {
                 "hyperparameters": {
                     "random_seed": 11,
-                    "test_fraction": 0.2,
-                    "validation_fraction": 0.2,
                     "batch_size": 16,
                     "scale_features": True,
                     "scale_targets": False,
-                    "default_tuning_profile": "fast",
                     "log_interval": 5,
+                    "training_epochs": 12,
+                },
+                "runtime": {
+                    "prefer_directml": True,
+                    "adam_foreach": None,
                 },
                 "training_defaults": {
                     "learning_rate": 0.01,
@@ -172,14 +209,6 @@ class PibreModelTests(unittest.TestCase):
                     "n_startup_trials": 1,
                     "n_warmup_steps": 2,
                     "interval_steps": 1,
-                },
-                "tuning_profiles": {
-                    "fast": {
-                        "n_trials": 2,
-                        "tuning_epochs": 8,
-                        "final_epochs": 12,
-                        "timeout_seconds": None,
-                    }
                 },
                 "artifact_options": {
                     "persist_model": True,

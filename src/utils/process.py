@@ -39,6 +39,14 @@ class DatasetSplits:
 
 
 @dataclass(frozen=True)
+class TrainTestDatasetSplits:
+	"""Container for train/test splits."""
+
+	train: DatasetSplit
+	test: DatasetSplit
+
+
+@dataclass(frozen=True)
 class ScalingBundle:
 	"""Fitted scalers and the column order they expect."""
 
@@ -133,6 +141,74 @@ def build_measured_supervised_dataset(
 
 def _split_frame(frame: pd.DataFrame, indices: pd.Index) -> pd.DataFrame:
 	return frame.loc[indices].copy()
+
+
+def _select_dataset_split(
+	dataset: SupervisedDatasetFrames | DatasetSplit,
+	indices: pd.Index,
+) -> DatasetSplit:
+	return DatasetSplit(
+		features=_split_frame(dataset.features, indices),
+		targets=_split_frame(dataset.targets, indices),
+		constraint_reference=_split_frame(dataset.constraint_reference, indices),
+	)
+
+
+def make_train_test_split(
+	supervised_dataset: SupervisedDatasetFrames | DatasetSplit,
+	*,
+	test_fraction: float,
+	random_seed: int,
+) -> TrainTestDatasetSplits:
+	"""Create a reproducible train/test split with aligned indices."""
+
+	if not 0.0 < test_fraction < 1.0:
+		raise ValueError("test_fraction must be between 0 and 1.")
+
+	all_indices = supervised_dataset.features.index.to_numpy()
+	train_indices, test_indices = train_test_split(
+		all_indices,
+		test_size=test_fraction,
+		random_state=random_seed,
+		shuffle=True,
+	)
+
+	train_index = pd.Index(train_indices)
+	test_index = pd.Index(test_indices)
+
+	return TrainTestDatasetSplits(
+		train=_select_dataset_split(supervised_dataset, train_index),
+		test=_select_dataset_split(supervised_dataset, test_index),
+	)
+
+
+def sample_dataset_fraction(
+	dataset_split: DatasetSplit,
+	*,
+	fraction: float,
+	random_seed: int,
+) -> DatasetSplit:
+	"""Sample a reproducible subset from one prepared dataset split."""
+
+	if not 0.0 < fraction <= 1.0:
+		raise ValueError("fraction must be between 0 and 1.")
+
+	if fraction == 1.0:
+		return DatasetSplit(
+			features=dataset_split.features.copy(),
+			targets=dataset_split.targets.copy(),
+			constraint_reference=dataset_split.constraint_reference.copy(),
+		)
+
+	all_indices = dataset_split.features.index.to_numpy()
+	sampled_indices, _ = train_test_split(
+		all_indices,
+		train_size=fraction,
+		random_state=random_seed,
+		shuffle=True,
+	)
+
+	return _select_dataset_split(dataset_split, pd.Index(sampled_indices))
 
 
 def make_train_validation_test_splits(
@@ -276,6 +352,7 @@ __all__ = [
 	"DatasetSplits",
 	"ScalingBundle",
 	"SupervisedDatasetFrames",
+	"TrainTestDatasetSplits",
 	"build_projection_operator",
 	"build_measured_supervised_dataset",
 	"combine_dataset_splits",
@@ -283,7 +360,9 @@ __all__ = [
 	"fit_scalers",
 	"inverse_transform_targets",
 	"make_train_validation_test_splits",
+	"make_train_test_split",
 	"project_to_mass_balance",
+	"sample_dataset_fraction",
 	"transform_dataset_split",
 	"transform_dataset_splits",
 ]

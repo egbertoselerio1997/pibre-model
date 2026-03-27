@@ -8,7 +8,9 @@
     "hyperparameters": {
       "n_samples": 10000,
       "seed": 42,
-      "max_sample_attempts": 25
+      "max_sample_attempts": 25,
+      "parallel_workers": 10,
+      "parallel_chunk_size": 32
     },
     "state_columns": [
       "S_S",
@@ -191,16 +193,29 @@
       "mass_transfer"
     ]
   },
-  "pibre": {
+  "ml_orchestration": {
     "hyperparameters": {
       "random_seed": 42,
       "test_fraction": 0.2,
-      "validation_fraction": 0.2,
+      "optuna_dataset_fraction": 0.1,
+      "optuna_test_fraction": 0.2,
+      "tuning_epochs": 1000,
+      "n_trials": 100,
+      "timeout_seconds": null
+    }
+  },
+  "pibre": {
+    "hyperparameters": {
+      "random_seed": 42,
       "batch_size": 64,
       "scale_features": true,
       "scale_targets": false,
-      "default_tuning_profile": "thorough",
-      "log_interval": 25
+      "log_interval": 25,
+      "training_epochs": 10000
+    },
+    "runtime": {
+      "prefer_directml": true,
+      "adam_foreach": null
     },
     "training_defaults": {
       "learning_rate": 0.001,
@@ -247,26 +262,6 @@
       "n_warmup_steps": 20,
       "interval_steps": 10
     },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 50,
-        "tuning_epochs": 50,
-        "final_epochs": 1000,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 75,
-        "tuning_epochs": 75,
-        "final_epochs": 3000,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 100,
-        "tuning_epochs": 100,
-        "final_epochs": 500,
-        "timeout_seconds": null
-      }
-    },
     "artifact_options": {
       "persist_model": true,
       "persist_metrics": true,
@@ -276,11 +271,8 @@
   "xgboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "test_fraction": 0.2,
-      "validation_fraction": 0.2,
       "scale_features": false,
-      "scale_targets": false,
-      "default_tuning_profile": "balanced"
+      "scale_targets": false
     },
     "training_defaults": {
       "objective": "reg:squarederror",
@@ -347,20 +339,6 @@
         "log": true
       }
     },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 10,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 25,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 50,
-        "timeout_seconds": null
-      }
-    },
     "artifact_options": {
       "persist_model": true,
       "persist_metrics": true,
@@ -370,11 +348,8 @@
   "lightgbm_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "test_fraction": 0.2,
-      "validation_fraction": 0.2,
       "scale_features": false,
-      "scale_targets": false,
-      "default_tuning_profile": "balanced"
+      "scale_targets": false
     },
     "training_defaults": {
       "objective": "regression",
@@ -445,20 +420,6 @@
         "log": true
       }
     },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 10,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 25,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 50,
-        "timeout_seconds": null
-      }
-    },
     "artifact_options": {
       "persist_model": true,
       "persist_metrics": true,
@@ -468,11 +429,8 @@
   "catboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "test_fraction": 0.2,
-      "validation_fraction": 0.2,
       "scale_features": false,
-      "scale_targets": false,
-      "default_tuning_profile": "balanced"
+      "scale_targets": false
     },
     "training_defaults": {
       "loss_function": "MultiRMSE",
@@ -525,20 +483,6 @@
         "log": true
       }
     },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 10,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 25,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 50,
-        "timeout_seconds": null
-      }
-    },
     "artifact_options": {
       "persist_model": true,
       "persist_metrics": true,
@@ -548,11 +492,8 @@
   "adaboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "test_fraction": 0.2,
-      "validation_fraction": 0.2,
       "scale_features": false,
-      "scale_targets": false,
-      "default_tuning_profile": "balanced"
+      "scale_targets": false
     },
     "training_defaults": {
       "n_estimators": 150,
@@ -578,20 +519,6 @@
         "choices": ["linear", "square", "exponential"]
       }
     },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 10,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 25,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 50,
-        "timeout_seconds": null
-      }
-    },
     "artifact_options": {
       "persist_model": true,
       "persist_metrics": true,
@@ -601,11 +528,8 @@
   "random_forest_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "test_fraction": 0.2,
-      "validation_fraction": 0.2,
       "scale_features": false,
-      "scale_targets": false,
-      "default_tuning_profile": "balanced"
+      "scale_targets": false
     },
     "training_defaults": {
       "n_estimators": 300,
@@ -647,20 +571,6 @@
         "log": false
       }
     },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 10,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 25,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 50,
-        "timeout_seconds": null
-      }
-    },
     "artifact_options": {
       "persist_model": true,
       "persist_metrics": true,
@@ -670,11 +580,8 @@
   "svr_regressor": {
     "hyperparameters": {
       "random_seed": 42,
-      "test_fraction": 0.2,
-      "validation_fraction": 0.2,
       "scale_features": true,
-      "scale_targets": false,
-      "default_tuning_profile": "balanced"
+      "scale_targets": false
     },
     "training_defaults": {
       "C": 10.0,
@@ -709,20 +616,6 @@
         "low": 2,
         "high": 4,
         "log": false
-      }
-    },
-    "tuning_profiles": {
-      "fast": {
-        "n_trials": 10,
-        "timeout_seconds": null
-      },
-      "balanced": {
-        "n_trials": 25,
-        "timeout_seconds": null
-      },
-      "thorough": {
-        "n_trials": 50,
-        "timeout_seconds": null
       }
     },
     "artifact_options": {

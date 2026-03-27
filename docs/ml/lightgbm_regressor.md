@@ -40,7 +40,7 @@ The main assumptions are that the training data are simulation-driven, the measu
 
 Implementation is in src/models/ml/lightgbm_regressor.py.
 
-The repository uses shared preprocessing, splitting, scaling, tuning, evaluation, and persistence helpers. The model file contributes only the LightGBM estimator builder and the model-specific train, tune, predict, and pipeline wrappers that satisfy the common machine-learning interface.
+The repository uses shared preprocessing, notebook-managed splitting, scaling, external tuning, evaluation, and persistence helpers. The model file contributes only the LightGBM estimator builder and the model-specific train, predict, and thin pipeline wrappers that satisfy the common machine-learning interface.
 
 ## 6. Architecture details and adopted standard architecture name
 
@@ -48,7 +48,7 @@ The adopted architecture is histogram-based gradient-boosted decision trees as i
 
 ## 7. Training or optimization notes
 
-The Optuna search space tunes the number of boosting rounds, learning rate, number of leaves, depth control, minimum child samples, subsampling ratios, and L1 and L2 penalties. Fixed choices such as the regression objective and verbosity settings are supplied from config/params.json.
+The Optuna search space tunes the number of boosting rounds, learning rate, number of leaves, depth control, minimum child samples, subsampling ratios, and L1 and L2 penalties. Fixed choices such as the regression objective and verbosity settings are supplied from config/params.json, while the notebook-owned orchestration block defines the shared Optuna trial budget.
 
 ## 8. Prediction workflow
 

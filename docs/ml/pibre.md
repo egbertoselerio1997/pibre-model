@@ -82,12 +82,15 @@ Implementation is in src/models/ml/pibre.py.
 The exact repository workflow is:
 
 1. build measured-space supervised features from the ASM1 dataset and composition matrix
-2. split the dataset into train, validation, and test partitions using reusable preprocessing helpers
-3. scale the feature matrix with a standard scaler fitted on the training split
-4. run Optuna hyperparameter tuning using reusable utility helpers
-5. train the final bilinear model with the selected hyperparameters
-6. evaluate both raw and projected predictions using shared metric utilities
-7. optionally save a pickle model bundle plus JSON metrics and Optuna summaries under the configured results paths
+2. in main.ipynb, create the final train-test split and, when tuning is enabled, a separate Optuna-only subset drawn from the training pool
+3. optionally run external Optuna from main.ipynb using reusable utility helpers
+4. pass the notebook-prepared training and test splits plus explicit hyperparameters into the PIBRe runner
+5. resolve the configured PyTorch runtime settings, including whether DirectML is preferred and whether built-in Adam foreach updates may be used
+6. scale the feature matrix with a standard scaler fitted on the provided training split
+7. train the bilinear model for the configured PIBRe training_epochs value
+8. when DirectML is selected, route optimization through a custom Adam-equivalent update path that avoids the unsupported `lerp` kernel used by PyTorch's built-in Adam implementation
+9. evaluate both raw and projected predictions using shared metric utilities
+10. optionally save a pickle model bundle plus JSON metrics and Optuna summaries under the configured results paths
 
 The saved model bundle contains the learned state dictionary, feature and target column order, scaling objects, A matrix, and the selected hyperparameters.
 
@@ -104,7 +107,7 @@ The projection layer is not learned. It is computed analytically from the measur
 
 ## 7. Training or optimization notes
 
-Hyperparameter tuning is performed with Optuna and uses reusable utilities rather than ad hoc notebook code. The tuned quantities are:
+Hyperparameter tuning is performed with Optuna from main.ipynb and uses reusable utilities rather than model-local code. The tuned quantities are:
 
 - learning rate
 - L1 regularization strength
@@ -112,7 +115,7 @@ Hyperparameter tuning is performed with Optuna and uses reusable utilities rathe
 - gradient clipping norm
 - bilinear-weight initialization scale
 
-Training uses the Adam optimizer and minimizes the projected prediction mean squared error plus an L1 penalty on the learned linear and bilinear weights. The repository parameter file defines multiple tuning profiles so notebook usage can choose fast, balanced, or thorough optimization without changing source code.
+Training uses Adam-style first- and second-moment updates and minimizes the projected prediction mean squared error plus an L1 penalty on the learned linear and bilinear weights. On CPU and CUDA the repository uses PyTorch's built-in Adam implementation, while on DirectML it uses an equivalent custom update path that avoids unsupported optimizer kernels and keeps the optimization step on the GPU backend. The shared notebook orchestration block in config/params.json defines the global Optuna trial budget and tuning epoch budget, while the PIBRe namespace defines the model-specific final training_epochs value and the PyTorch runtime options used to control DirectML preference and built-in Adam foreach behavior.
 
 ## 8. Prediction workflow
 

@@ -9,22 +9,18 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.metrics import mean_squared_error
-import torch
 
 from .io import load_pickle_file, save_json_file, save_pickle_file
 from .optuna import create_optuna_study, make_study_summary, optimize_study, suggest_parameters
 from .process import (
     DatasetSplit,
     ScalingBundle,
-    SupervisedDatasetFrames,
+    TrainTestDatasetSplits,
     build_measured_supervised_dataset,
-    combine_dataset_splits,
     fit_scalers,
     inverse_transform_targets,
-    make_train_validation_test_splits,
     project_to_mass_balance,
     transform_dataset_split,
-    transform_dataset_splits,
 )
 from .simulation import get_repo_root, load_model_params, load_paths_config, make_simulation_timestamp
 from .test import evaluate_prediction_bundle
@@ -48,6 +44,27 @@ def get_training_device(*, prefer_directml: bool = True) -> tuple[Any, str]:
         return torch.device("cuda"), "cuda"
 
     return torch.device("cpu"), "cpu"
+
+
+def resolve_torch_runtime_options(model_params: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve configured runtime options for PyTorch-backed models."""
+
+    runtime_params = dict(model_params.get("runtime", {}))
+    return {
+        "prefer_directml": bool(runtime_params.get("prefer_directml", True)),
+        "adam_foreach": runtime_params.get("adam_foreach"),
+    }
+
+
+def resolve_torch_adam_options(*, device_label: str, foreach: Any = None) -> dict[str, Any]:
+    """Resolve Adam keyword arguments that avoid backend fallbacks when possible."""
+
+    if foreach is None:
+        if device_label == "directml":
+            return {"foreach": False}
+        return {}
+
+    return {"foreach": bool(foreach)}
 
 
 def render_ml_artifact_paths(
@@ -111,14 +128,16 @@ def load_model_bundle(path: str | Path) -> Any:
     return load_pickle_file(path)
 
 
-def resolve_model_tuning_profile(model_params: Mapping[str, Any], tuning_profile: str | None) -> dict[str, Any]:
-    """Resolve a configured tuning profile for one model family."""
+def resolve_model_hyperparameters(
+    model_params: Mapping[str, Any],
+    model_hyperparameters: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve the explicit or default hyperparameters for one model family."""
 
-    profile_name = tuning_profile or str(model_params["hyperparameters"]["default_tuning_profile"])
-    tuning_profiles = dict(model_params["tuning_profiles"])
-    if profile_name not in tuning_profiles:
-        raise KeyError(f"Unknown tuning profile: {profile_name}")
-    return dict(tuning_profiles[profile_name])
+    resolved_hyperparameters = dict(model_params["training_defaults"])
+    if model_hyperparameters is not None:
+        resolved_hyperparameters.update(dict(model_hyperparameters))
+    return resolved_hyperparameters
 
 
 def serialize_report_frames(report: Mapping[str, pd.DataFrame]) -> dict[str, Any]:
@@ -187,19 +206,27 @@ def predict_tabular_regressor_split(
 def tune_tabular_regressor_hyperparameters(
     model_name: str,
     estimator_factory: TabularEstimatorFactory,
-    train_split: DatasetSplit,
-    validation_split: DatasetSplit,
+    tuning_train_split: DatasetSplit,
+    tuning_test_split: DatasetSplit,
     *,
-    scaling_bundle: ScalingBundle,
     A_matrix: np.ndarray,
     model_params: Mapping[str, Any],
-    tuning_profile: str | None = None,
+    n_trials: int,
+    timeout: int | None = None,
+    show_progress_bar: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Tune a scikit-compatible tabular regressor with Optuna."""
 
-    profile = resolve_model_tuning_profile(model_params, tuning_profile)
     base_hyperparameters = dict(model_params["training_defaults"])
-    seed = int(model_params["hyperparameters"]["random_seed"])
+    split_params = model_params["hyperparameters"]
+    seed = int(split_params["random_seed"])
+    scaling_bundle = fit_scalers(
+        tuning_train_split,
+        scale_features=bool(split_params["scale_features"]),
+        scale_targets=bool(split_params["scale_targets"]),
+    )
+    scaled_tuning_train_split = transform_dataset_split(tuning_train_split, scaling_bundle)
+    scaled_tuning_test_split = transform_dataset_split(tuning_test_split, scaling_bundle)
 
     study = create_optuna_study(
         model_name,
@@ -212,26 +239,101 @@ def tune_tabular_regressor_hyperparameters(
         hyperparameters.update(suggest_parameters(trial, model_params["search_space"]))
         training_result = train_tabular_regressor(
             {
-                "features": train_split.features,
-                "targets": train_split.targets,
+                "features": scaled_tuning_train_split.features,
+                "targets": scaled_tuning_train_split.targets,
             },
             estimator_factory,
             hyperparameters,
         )
         projected_predictions, _ = predict_tabular_regressor_split(
             training_result["model"],
-            validation_split,
+            scaled_tuning_test_split,
             scaling_bundle=scaling_bundle,
             A_matrix=A_matrix,
         )
-        validation_targets = inverse_transform_targets(validation_split.targets, scaling_bundle)
-        return float(mean_squared_error(validation_targets, projected_predictions))
+        tuning_targets = inverse_transform_targets(scaled_tuning_test_split.targets, scaling_bundle)
+        return float(mean_squared_error(tuning_targets, projected_predictions))
 
     optimize_study(
         study,
         objective,
-        n_trials=int(profile["n_trials"]),
-        timeout=profile.get("timeout_seconds"),
+        n_trials=int(n_trials),
+        timeout=timeout,
+        show_progress_bar=show_progress_bar,
+    )
+    best_hyperparameters = dict(base_hyperparameters)
+    best_hyperparameters.update(study.best_trial.params)
+    return best_hyperparameters, make_study_summary(study)
+
+
+def tune_pibre_hyperparameters(
+    tuning_train_split: DatasetSplit,
+    tuning_test_split: DatasetSplit,
+    *,
+    A_matrix: np.ndarray,
+    model_params: Mapping[str, Any],
+    tuning_epochs: int,
+    n_trials: int,
+    timeout: int | None = None,
+    show_progress_bar: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Tune PIBRe with notebook-managed tuning splits."""
+
+    from src.models.ml.pibre import train_pibre_model
+
+    params = dict(model_params)
+    split_params = params["hyperparameters"]
+    runtime_options = resolve_torch_runtime_options(params)
+    seed = int(split_params["random_seed"])
+    scaling_bundle = fit_scalers(
+        tuning_train_split,
+        scale_features=bool(split_params["scale_features"]),
+        scale_targets=bool(split_params["scale_targets"]),
+    )
+    scaled_tuning_train_split = transform_dataset_split(tuning_train_split, scaling_bundle)
+    scaled_tuning_test_split = transform_dataset_split(tuning_test_split, scaling_bundle)
+    base_hyperparameters = dict(params["training_defaults"])
+
+    study = create_optuna_study(
+        "pibre",
+        seed=seed,
+        pruner_config=params.get("pruner"),
+    )
+
+    def objective(trial: Any) -> float:
+        hyperparameters = dict(base_hyperparameters)
+        hyperparameters.update(suggest_parameters(trial, params["search_space"]))
+        result = train_pibre_model(
+            {
+                "features": scaled_tuning_train_split.features,
+                "targets": scaled_tuning_train_split.targets,
+                "constraint_reference": scaled_tuning_train_split.constraint_reference,
+            },
+            hyperparameters,
+            A_matrix=A_matrix,
+            training_options={
+                "epochs": int(tuning_epochs),
+                "batch_size": int(split_params["batch_size"]),
+                "random_seed": seed + int(trial.number),
+                "log_interval": int(split_params["log_interval"]),
+                "prefer_directml": runtime_options["prefer_directml"],
+                "adam_foreach": runtime_options["adam_foreach"],
+                "validation_dataset": {
+                    "features": scaled_tuning_test_split.features,
+                    "targets": scaled_tuning_test_split.targets,
+                    "constraint_reference": scaled_tuning_test_split.constraint_reference,
+                },
+            },
+            trial=trial,
+        )
+        return float(result["best_validation_loss"])
+
+    optimize_study(
+        study,
+        objective,
+        n_trials=int(n_trials),
+        timeout=timeout,
+        show_progress_bar=show_progress_bar,
     )
     best_hyperparameters = dict(base_hyperparameters)
     best_hyperparameters.update(study.best_trial.params)
@@ -323,110 +425,84 @@ def predict_tabular_regressor_model(
 def run_tabular_regressor_pipeline(
     model_name: str,
     estimator_factory: TabularEstimatorFactory,
-    dataset: pd.DataFrame,
-    metadata: Mapping[str, Any],
-    composition_matrix: np.ndarray,
+    training_split: DatasetSplit,
+    test_split: DatasetSplit,
     A_matrix: np.ndarray,
     *,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
-    tuning_profile: str | None = None,
+    model_hyperparameters: Mapping[str, Any] | None = None,
+    optuna_summary: Mapping[str, Any] | None = None,
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Tune, fit, evaluate, and optionally persist one measured-space tabular regressor."""
+    """Train, evaluate, and optionally persist one measured-space tabular regressor."""
 
     params = dict(model_params) if model_params is not None else load_model_params(model_name, repo_root)
-    measured_dataset: SupervisedDatasetFrames = build_measured_supervised_dataset(
-        dataset,
-        dict(metadata),
-        np.asarray(composition_matrix, dtype=float),
-    )
     split_params = params["hyperparameters"]
-    dataset_splits = make_train_validation_test_splits(
-        measured_dataset,
-        test_fraction=float(split_params["test_fraction"]),
-        validation_fraction=float(split_params["validation_fraction"]),
-        random_seed=int(split_params["random_seed"]),
-    )
+    selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
     scaling_bundle = fit_scalers(
-        dataset_splits.train,
+        training_split,
         scale_features=bool(split_params["scale_features"]),
         scale_targets=bool(split_params["scale_targets"]),
     )
-    scaled_splits = transform_dataset_splits(dataset_splits, scaling_bundle)
-    best_hyperparameters, optuna_summary = tune_tabular_regressor_hyperparameters(
-        model_name,
-        estimator_factory,
-        scaled_splits.train,
-        scaled_splits.validation,
-        scaling_bundle=scaling_bundle,
-        A_matrix=np.asarray(A_matrix, dtype=float),
-        model_params=params,
-        tuning_profile=tuning_profile,
-    )
-
-    final_training_split = combine_dataset_splits(dataset_splits.train, dataset_splits.validation)
-    final_scaling_bundle = fit_scalers(
-        final_training_split,
-        scale_features=bool(split_params["scale_features"]),
-        scale_targets=bool(split_params["scale_targets"]),
-    )
-    scaled_final_training_split = transform_dataset_split(final_training_split, final_scaling_bundle)
-    scaled_test_split = transform_dataset_split(dataset_splits.test, final_scaling_bundle)
+    scaled_training_split = transform_dataset_split(training_split, scaling_bundle)
+    scaled_test_split = transform_dataset_split(test_split, scaling_bundle)
 
     final_training_result = train_tabular_regressor(
         {
-            "features": scaled_final_training_split.features,
-            "targets": scaled_final_training_split.targets,
+            "features": scaled_training_split.features,
+            "targets": scaled_training_split.targets,
         },
         estimator_factory,
-        best_hyperparameters,
+        selected_hyperparameters,
     )
 
     final_model = final_training_result["model"]
     train_projected, train_raw = predict_tabular_regressor_split(
         final_model,
-        scaled_final_training_split,
-        scaling_bundle=final_scaling_bundle,
+        scaled_training_split,
+        scaling_bundle=scaling_bundle,
         A_matrix=np.asarray(A_matrix, dtype=float),
     )
     test_projected, test_raw = predict_tabular_regressor_split(
         final_model,
         scaled_test_split,
-        scaling_bundle=final_scaling_bundle,
+        scaling_bundle=scaling_bundle,
         A_matrix=np.asarray(A_matrix, dtype=float),
     )
 
     train_report = evaluate_prediction_bundle(
-        final_training_split.targets.to_numpy(dtype=float),
+        training_split.targets.to_numpy(dtype=float),
         train_raw,
         train_projected,
-        final_training_split.constraint_reference.to_numpy(dtype=float),
+        training_split.constraint_reference.to_numpy(dtype=float),
         np.asarray(A_matrix, dtype=float),
-        final_training_split.targets.columns,
-        index=final_training_split.targets.index,
+        training_split.targets.columns,
+        index=training_split.targets.index,
     )
     test_report = evaluate_prediction_bundle(
-        dataset_splits.test.targets.to_numpy(dtype=float),
+        test_split.targets.to_numpy(dtype=float),
         test_raw,
         test_projected,
-        dataset_splits.test.constraint_reference.to_numpy(dtype=float),
+        test_split.constraint_reference.to_numpy(dtype=float),
         np.asarray(A_matrix, dtype=float),
-        dataset_splits.test.targets.columns,
-        index=dataset_splits.test.targets.index,
+        test_split.targets.columns,
+        index=test_split.targets.index,
     )
 
     model_bundle = build_tabular_model_bundle(
         model_name,
         final_model,
-        final_scaling_bundle,
-        feature_columns=list(final_training_split.features.columns),
-        target_columns=list(final_training_split.targets.columns),
-        constraint_columns=list(final_training_split.constraint_reference.columns),
+        scaling_bundle,
+        feature_columns=list(training_split.features.columns),
+        target_columns=list(training_split.targets.columns),
+        constraint_columns=list(training_split.constraint_reference.columns),
         A_matrix=np.asarray(A_matrix, dtype=float),
-        model_hyperparameters=best_hyperparameters,
+        model_hyperparameters=selected_hyperparameters,
     )
+
+    dataset_splits = TrainTestDatasetSplits(train=training_split, test=test_split)
 
     artifact_paths: dict[str, Path | None] = {
         "model_bundle": None,
@@ -440,11 +516,10 @@ def run_tabular_regressor_pipeline(
             "test": serialize_report_frames(test_report),
             "split_sizes": {
                 "train": int(len(dataset_splits.train.features)),
-                "validation": int(len(dataset_splits.validation.features)),
                 "test": int(len(dataset_splits.test.features)),
             },
         }
-        optuna_payload = optuna_summary if bool(artifact_options.get("persist_optuna", True)) else None
+        optuna_payload = dict(optuna_summary) if optuna_summary is not None and bool(artifact_options.get("persist_optuna", True)) else None
         metrics_summary = metrics_payload if bool(artifact_options.get("persist_metrics", True)) else None
         artifact_paths = persist_training_artifacts(
             model_name,
@@ -456,7 +531,7 @@ def run_tabular_regressor_pipeline(
         )
 
     return {
-        "best_hyperparameters": best_hyperparameters,
+        "best_hyperparameters": selected_hyperparameters,
         "optuna_summary": optuna_summary,
         "artifact_paths": artifact_paths,
         "train_report": train_report,
@@ -475,9 +550,12 @@ __all__ = [
     "predict_tabular_regressor_split",
     "persist_training_artifacts",
     "render_ml_artifact_paths",
-    "resolve_model_tuning_profile",
+    "resolve_model_hyperparameters",
+    "resolve_torch_adam_options",
+    "resolve_torch_runtime_options",
     "run_tabular_regressor_pipeline",
     "serialize_report_frames",
+    "tune_pibre_hyperparameters",
     "train_tabular_regressor",
     "transform_feature_frame",
     "tune_tabular_regressor_hyperparameters",

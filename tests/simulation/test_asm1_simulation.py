@@ -85,6 +85,21 @@ class Asm1SimulationTests(unittest.TestCase):
         self.assertTrue((dataset["Out_NO3_N"] >= 0.0).all())
         self.assertTrue((dataset["Out_PO4_P"] >= 0.0).all())
 
+    def test_generate_asm1_dataset_parallel_path_keeps_contract(self) -> None:
+        dataset, metadata, matrix_bundle = generate_asm1_dataset(
+            n_samples=8,
+            random_seed=7,
+            parallel_workers=2,
+            parallel_chunk_size=2,
+        )
+
+        self.assertEqual(dataset.shape, (8, 32))
+        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (7, 11))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (8, 11))
+        self.assertEqual(metadata["n_samples"], 8)
+        self.assertFalse(dataset.isna().any().any())
+        self.assertEqual(list(dataset.columns), metadata["independent_columns"] + metadata["dependent_columns"])
+
     def test_explicit_matrices_capture_aeration_and_output_mapping(self) -> None:
         params = load_asm1_simulation_params()
         matrix_bundle = get_asm1_matrices(params)
@@ -251,7 +266,13 @@ class Asm1SimulationTests(unittest.TestCase):
             self.assertEqual(stored_metadata["dataset_file"], persisted_metadata["dataset_file"])
 
     def test_run_asm1_simulation_without_artifacts_keeps_paths_empty(self) -> None:
-        result = run_asm1_simulation(save_artifacts=False, n_samples=8, random_seed=11)
+        result = run_asm1_simulation(
+            save_artifacts=False,
+            n_samples=8,
+            random_seed=11,
+            parallel_workers=2,
+            parallel_chunk_size=2,
+        )
 
         self.assertEqual(result["dataset"].shape[0], 8)
         self.assertEqual(result["dataset"].shape[1], 32)

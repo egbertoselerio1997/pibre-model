@@ -47,10 +47,10 @@ Implementation is in src/models/ml/xgboost_regressor.py.
 The exact repository workflow is:
 
 1. build the measured-space supervised dataset with shared preprocessing helpers
-2. split the data into train, validation, and test partitions with shared split utilities
+2. in main.ipynb, create the final train-test split and, when tuning is enabled, a separate Optuna-only subset drawn from the training pool
 3. optionally scale the features according to config/params.json
-4. run Optuna hyperparameter tuning on the wrapped XGBRegressor
-5. refit the best model on the combined train and validation subset
+4. optionally run external Optuna on the wrapped XGBRegressor from main.ipynb
+5. train the selected model on the notebook-provided training split
 6. evaluate both raw and projected predictions with the shared metric and report helpers
 7. optionally persist a pickle model bundle and JSON summaries under the configured results paths
 
@@ -64,7 +64,7 @@ This is not a shared multi-task tree model. The coupling among targets is introd
 
 ## 7. Training or optimization notes
 
-The Optuna search space tunes the number of trees, learning rate, maximum tree depth, child-weight control, subsampling, column subsampling, and L1 and L2 regularization strengths. Fixed implementation choices such as the squared-error objective and histogram tree method are stored in config/params.json rather than hardcoded in the source module.
+The Optuna search space tunes the number of trees, learning rate, maximum tree depth, child-weight control, subsampling, column subsampling, and L1 and L2 regularization strengths. Fixed implementation choices such as the squared-error objective and histogram tree method are stored in config/params.json rather than hardcoded in the source module, while the global Optuna trial budget is defined in the shared notebook orchestration block.
 
 ## 8. Prediction workflow
 

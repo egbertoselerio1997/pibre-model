@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -12,21 +13,19 @@ import pandas as pd
 import torch
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.adam import Adam
+from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.utils.optuna import create_optuna_study, make_study_summary, optimize_study, suggest_parameters
 from src.utils.process import (
     DatasetSplit,
     ScalingBundle,
-    SupervisedDatasetFrames,
+    TrainTestDatasetSplits,
     build_projection_operator,
     build_measured_supervised_dataset,
-    combine_dataset_splits,
     fit_scalers,
-    make_train_validation_test_splits,
     project_to_mass_balance,
     transform_dataset_split,
-    transform_dataset_splits,
 )
 from src.utils.simulation import load_model_params
 from src.utils.test import evaluate_prediction_bundle
@@ -34,7 +33,9 @@ from src.utils.train import (
     get_training_device,
     load_model_bundle,
     persist_training_artifacts,
-    resolve_model_tuning_profile,
+    resolve_model_hyperparameters,
+    resolve_torch_adam_options,
+    resolve_torch_runtime_options,
     serialize_report_frames,
     transform_feature_frame,
 )
@@ -55,6 +56,112 @@ def _project_tensor_predictions(
     projection_operator: torch.Tensor,
 ) -> torch.Tensor:
     return raw_predictions - torch.matmul(raw_predictions - constraint_reference, projection_operator.T)
+
+
+class DirectMLAdam(Optimizer):
+    """Adam variant that avoids DirectML-unsupported lerp updates."""
+
+    def __init__(
+        self,
+        params: Any,
+        *,
+        lr: float,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0.0,
+        amsgrad: bool = False,
+    ) -> None:
+        defaults = {
+            "lr": lr,
+            "betas": betas,
+            "eps": eps,
+            "weight_decay": weight_decay,
+            "amsgrad": amsgrad,
+        }
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure: Any = None) -> Any:
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            beta1, beta2 = group["betas"]
+            lr = float(group["lr"])
+            eps = float(group["eps"])
+            weight_decay = float(group["weight_decay"])
+            amsgrad = bool(group["amsgrad"])
+
+            for parameter in group["params"]:
+                if parameter.grad is None:
+                    continue
+
+                gradient = parameter.grad
+                if gradient.is_sparse:
+                    raise RuntimeError("DirectMLAdam does not support sparse gradients.")
+
+                state = self.state[parameter]
+                if len(state) == 0:
+                    state["step"] = 0
+                    state["exp_avg"] = torch.zeros_like(parameter, memory_format=torch.preserve_format)
+                    state["exp_avg_sq"] = torch.zeros_like(parameter, memory_format=torch.preserve_format)
+                    if amsgrad:
+                        state["max_exp_avg_sq"] = torch.zeros_like(parameter, memory_format=torch.preserve_format)
+
+                exp_avg = state["exp_avg"]
+                exp_avg_sq = state["exp_avg_sq"]
+                state["step"] += 1
+                step = int(state["step"])
+
+                if weight_decay != 0.0:
+                    gradient = gradient.add(parameter, alpha=weight_decay)
+
+                exp_avg.mul_(beta1).add_(gradient, alpha=1.0 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(gradient, gradient, value=1.0 - beta2)
+
+                denom_base = exp_avg_sq
+                if amsgrad:
+                    max_exp_avg_sq = state["max_exp_avg_sq"]
+                    torch.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+                    denom_base = max_exp_avg_sq
+
+                bias_correction1 = 1.0 - beta1**step
+                bias_correction2 = 1.0 - beta2**step
+                step_size = lr / bias_correction1
+                denom = denom_base.sqrt().div_(math.sqrt(bias_correction2)).add_(eps)
+                parameter.addcdiv_(exp_avg, denom, value=-step_size)
+
+        return loss
+
+
+def _build_optimizer(
+    model: ProjectedPIBRe,
+    model_hyperparameters: Mapping[str, float],
+    *,
+    device_label: str,
+    adam_foreach: Any,
+) -> Optimizer:
+    learning_rate = float(model_hyperparameters["learning_rate"])
+    weight_decay = float(model_hyperparameters["weight_decay"])
+
+    if device_label == "directml" and adam_foreach is not True:
+        return DirectMLAdam(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
+
+    return Adam(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+        **resolve_torch_adam_options(
+            device_label=device_label,
+            foreach=adam_foreach,
+        ),
+    )
 
 
 class ProjectedPIBRe(nn.Module):
@@ -183,6 +290,7 @@ def _resolve_training_options(
     options.setdefault("random_seed", default_random_seed)
     options.setdefault("log_interval", default_log_interval)
     options.setdefault("prefer_directml", True)
+    options.setdefault("adam_foreach", None)
     options.setdefault("validation_dataset", None)
     return options
 
@@ -233,10 +341,11 @@ def train_pibre_model(
     ).to(device)
     model.set_output_bias(target_frame.mean(axis=0).to_numpy(dtype=float))
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=float(model_hyperparameters["learning_rate"]),
-        weight_decay=float(model_hyperparameters["weight_decay"]),
+    optimizer = _build_optimizer(
+        model,
+        model_hyperparameters,
+        device_label=device_label,
+        adam_foreach=options["adam_foreach"],
     )
     criterion = nn.MSELoss()
     loader = _make_loader(
@@ -308,65 +417,6 @@ def train_pibre_model(
     }
 
 
-def tune_pibre_hyperparameters(
-    train_split: DatasetSplit,
-    validation_split: DatasetSplit,
-    *,
-    A_matrix: np.ndarray,
-    model_params: Mapping[str, Any] | None = None,
-    tuning_profile: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run Optuna hyperparameter tuning for PIBRe."""
-
-    params = dict(model_params) if model_params is not None else load_pibre_params()
-    profile = resolve_model_tuning_profile(params, tuning_profile)
-    base_hyperparameters = dict(params["training_defaults"])
-    seed = int(params["hyperparameters"]["random_seed"])
-
-    study = create_optuna_study(
-        MODEL_NAME,
-        seed=seed,
-        pruner_config=params.get("pruner"),
-    )
-
-    def objective(trial: optuna.Trial) -> float:
-        hyperparameters = dict(base_hyperparameters)
-        hyperparameters.update(suggest_parameters(trial, params["search_space"]))
-        result = train_pibre_model(
-            {
-                "features": train_split.features,
-                "targets": train_split.targets,
-                "constraint_reference": train_split.constraint_reference,
-            },
-            hyperparameters,
-            A_matrix=A_matrix,
-            training_options={
-                "epochs": int(profile["tuning_epochs"]),
-                "batch_size": int(params["hyperparameters"]["batch_size"]),
-                "random_seed": seed + trial.number,
-                "log_interval": int(params["hyperparameters"]["log_interval"]),
-                "validation_dataset": {
-                    "features": validation_split.features,
-                    "targets": validation_split.targets,
-                    "constraint_reference": validation_split.constraint_reference,
-                },
-            },
-            trial=trial,
-        )
-        return float(result["best_validation_loss"])
-
-    optimize_study(
-        study,
-        objective,
-        n_trials=int(profile["n_trials"]),
-        timeout=profile["timeout_seconds"],
-    )
-    best_hyperparameters = dict(base_hyperparameters)
-    best_hyperparameters.update(study.best_trial.params)
-
-    return best_hyperparameters, make_study_summary(study)
-
-
 def _build_model_bundle(
     training_result: Mapping[str, Any],
     scaling_bundle: ScalingBundle,
@@ -414,6 +464,7 @@ def predict_pibre_model(
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
+    runtime_options = dict(model_bundle.get("training_options", {}))
 
     if isinstance(test_dataset, pd.DataFrame):
         if metadata is None or composition_matrix is None:
@@ -429,13 +480,14 @@ def predict_pibre_model(
         feature_frame = pd.DataFrame(test_dataset["features"], columns=scaling_bundle.feature_columns)
         constraint_reference = pd.DataFrame(test_dataset["constraint_reference"], columns=model_bundle["constraint_columns"])
 
+    constraint_columns = list(model_bundle["constraint_columns"])
     transformed_features = transform_feature_frame(feature_frame, scaling_bundle)
-    device, _ = get_training_device()
+    device, _ = get_training_device(prefer_directml=bool(runtime_options.get("prefer_directml", True)))
     model = _load_model_from_bundle(model_bundle, device=device)
     prediction_split = DatasetSplit(
         features=transformed_features,
         targets=pd.DataFrame(np.zeros((len(feature_frame), len(model_bundle["target_columns"]))), columns=model_bundle["target_columns"]),
-        constraint_reference=constraint_reference.loc[:, model_bundle["constraint_columns"]],
+        constraint_reference=constraint_reference.loc[:, constraint_columns],
     )
     projected_predictions, raw_predictions = _evaluate_model_predictions(model, prediction_split, device=device)
 
@@ -446,112 +498,91 @@ def predict_pibre_model(
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
-        "constraint_reference": constraint_reference.loc[:, model_bundle["constraint_columns"]].copy(),
+        "constraint_reference": constraint_reference.loc[:, constraint_columns].copy(),
     }
 
 
 def run_pibre_pipeline(
-    dataset: pd.DataFrame,
-    metadata: Mapping[str, Any],
-    composition_matrix: np.ndarray,
+    training_split: DatasetSplit,
+    test_split: DatasetSplit,
     A_matrix: np.ndarray,
     *,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
-    tuning_profile: str | None = None,
+    model_hyperparameters: Mapping[str, Any] | None = None,
+    optuna_summary: Mapping[str, Any] | None = None,
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Tune, train, evaluate, and optionally persist a PIBRe model bundle."""
+    """Train, evaluate, and optionally persist a PIBRe model bundle."""
 
     params = dict(model_params) if model_params is not None else load_pibre_params(repo_root)
-    measured_dataset: SupervisedDatasetFrames = build_measured_supervised_dataset(
-        dataset,
-        dict(metadata),
-        np.asarray(composition_matrix, dtype=float),
-    )
     split_params = params["hyperparameters"]
-    dataset_splits = make_train_validation_test_splits(
-        measured_dataset,
-        test_fraction=float(split_params["test_fraction"]),
-        validation_fraction=float(split_params["validation_fraction"]),
-        random_seed=int(split_params["random_seed"]),
-    )
+    runtime_options = resolve_torch_runtime_options(params)
+    selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
     scaling_bundle = fit_scalers(
-        dataset_splits.train,
+        training_split,
         scale_features=bool(split_params["scale_features"]),
         scale_targets=bool(split_params["scale_targets"]),
     )
-    scaled_splits = transform_dataset_splits(dataset_splits, scaling_bundle)
-    best_hyperparameters, optuna_summary = tune_pibre_hyperparameters(
-        scaled_splits.train,
-        scaled_splits.validation,
-        A_matrix=np.asarray(A_matrix, dtype=float),
-        model_params=params,
-        tuning_profile=tuning_profile,
-    )
-
-    profile = resolve_model_tuning_profile(params, tuning_profile)
-    final_training_split = combine_dataset_splits(dataset_splits.train, dataset_splits.validation)
-    final_scaling_bundle = fit_scalers(
-        final_training_split,
-        scale_features=bool(split_params["scale_features"]),
-        scale_targets=bool(split_params["scale_targets"]),
-    )
-    scaled_final_training_split = transform_dataset_split(final_training_split, final_scaling_bundle)
-    scaled_test_split = transform_dataset_split(dataset_splits.test, final_scaling_bundle)
+    scaled_training_split = transform_dataset_split(training_split, scaling_bundle)
+    scaled_test_split = transform_dataset_split(test_split, scaling_bundle)
 
     final_training_options = {
-        "epochs": int(profile["final_epochs"]),
+        "epochs": int(split_params["training_epochs"]),
         "batch_size": int(split_params["batch_size"]),
         "random_seed": int(split_params["random_seed"]),
         "log_interval": int(split_params["log_interval"]),
+        "prefer_directml": runtime_options["prefer_directml"],
+        "adam_foreach": runtime_options["adam_foreach"],
     }
     final_training_result = train_pibre_model(
         {
-            "features": scaled_final_training_split.features,
-            "targets": scaled_final_training_split.targets,
-            "constraint_reference": scaled_final_training_split.constraint_reference,
+            "features": scaled_training_split.features,
+            "targets": scaled_training_split.targets,
+            "constraint_reference": scaled_training_split.constraint_reference,
         },
-        best_hyperparameters,
+        selected_hyperparameters,
         A_matrix=np.asarray(A_matrix, dtype=float),
         training_options=final_training_options,
     )
 
     final_model: ProjectedPIBRe = final_training_result["model"]
-    device, _ = get_training_device()
-    train_projected, train_raw = _evaluate_model_predictions(final_model, scaled_final_training_split, device=device)
+    device, _ = get_training_device(prefer_directml=bool(runtime_options["prefer_directml"]))
+    train_projected, train_raw = _evaluate_model_predictions(final_model, scaled_training_split, device=device)
     test_projected, test_raw = _evaluate_model_predictions(final_model, scaled_test_split, device=device)
 
     train_report = evaluate_prediction_bundle(
-        final_training_split.targets.to_numpy(dtype=float),
+        training_split.targets.to_numpy(dtype=float),
         train_raw,
         train_projected,
-        final_training_split.constraint_reference.to_numpy(dtype=float),
+        training_split.constraint_reference.to_numpy(dtype=float),
         np.asarray(A_matrix, dtype=float),
-        final_training_split.targets.columns,
-        index=final_training_split.targets.index,
+        training_split.targets.columns,
+        index=training_split.targets.index,
     )
     test_report = evaluate_prediction_bundle(
-        dataset_splits.test.targets.to_numpy(dtype=float),
+        test_split.targets.to_numpy(dtype=float),
         test_raw,
         test_projected,
-        dataset_splits.test.constraint_reference.to_numpy(dtype=float),
+        test_split.constraint_reference.to_numpy(dtype=float),
         np.asarray(A_matrix, dtype=float),
-        dataset_splits.test.targets.columns,
-        index=dataset_splits.test.targets.index,
+        test_split.targets.columns,
+        index=test_split.targets.index,
     )
 
     model_bundle = _build_model_bundle(
         final_training_result,
-        final_scaling_bundle,
-        feature_columns=list(final_training_split.features.columns),
-        target_columns=list(final_training_split.targets.columns),
-        constraint_columns=list(final_training_split.constraint_reference.columns),
+        scaling_bundle,
+        feature_columns=list(training_split.features.columns),
+        target_columns=list(training_split.targets.columns),
+        constraint_columns=list(training_split.constraint_reference.columns),
         A_matrix=np.asarray(A_matrix, dtype=float),
-        model_hyperparameters=best_hyperparameters,
+        model_hyperparameters=selected_hyperparameters,
         training_options=final_training_options,
     )
+
+    dataset_splits = TrainTestDatasetSplits(train=training_split, test=test_split)
 
     artifact_paths: dict[str, Path | None] = {
         "model_bundle": None,
@@ -565,11 +596,10 @@ def run_pibre_pipeline(
             "test": serialize_report_frames(test_report),
             "split_sizes": {
                 "train": int(len(dataset_splits.train.features)),
-                "validation": int(len(dataset_splits.validation.features)),
                 "test": int(len(dataset_splits.test.features)),
             },
         }
-        optuna_payload = optuna_summary if bool(artifact_options.get("persist_optuna", True)) else None
+        optuna_payload = dict(optuna_summary) if optuna_summary is not None and bool(artifact_options.get("persist_optuna", True)) else None
         metrics_summary = metrics_payload if bool(artifact_options.get("persist_metrics", True)) else None
         artifact_paths = persist_training_artifacts(
             MODEL_NAME,
@@ -581,7 +611,7 @@ def run_pibre_pipeline(
         )
 
     return {
-        "best_hyperparameters": best_hyperparameters,
+        "best_hyperparameters": selected_hyperparameters,
         "optuna_summary": optuna_summary,
         "artifact_paths": artifact_paths,
         "train_report": train_report,
@@ -600,5 +630,4 @@ __all__ = [
     "project_to_mass_balance",
     "run_pibre_pipeline",
     "train_pibre_model",
-    "tune_pibre_hyperparameters",
 ]

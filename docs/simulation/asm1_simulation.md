@@ -129,11 +129,13 @@ Main implementation blocks:
 
 1. Load the parameter namespace from `config/params.json`.
 2. Construct the explicit Petersen matrix and composition matrix from the configured stoichiometric and observation factors.
-3. Sample mechanistic influent state variables and operating variables from configured ranges.
-4. Solve the steady-state nonlinear CSTR balances for each sampled operating point using dilution plus matrix-based process contributions.
-5. Map the solved outlet state to measured analyte summaries through the composition matrix.
-6. Build metadata describing the state-based schema and matrix shapes.
-7. Persist the dataset and metadata using the shared simulation utilities.
+3. Resolve the configured chunk size and worker count for dataset generation.
+4. Sample mechanistic influent state variables and operating variables from configured ranges.
+5. Solve the steady-state nonlinear CSTR balances for each sampled operating point using dilution plus matrix-based process contributions.
+6. Execute those solves in chunked parallel batches while still reusing the previous solution as a warm start inside each chunk.
+7. Map the solved outlet state to measured analyte summaries through the composition matrix.
+8. Build metadata describing the state-based schema and matrix shapes.
+9. Persist the dataset and metadata using the shared simulation utilities.
 
 ## 6. Architecture, orchestration, or adopted approach details and standard name, when relevant
 
@@ -143,12 +145,12 @@ Execution architecture:
 
 1. configuration load
 2. Petersen/composition matrix construction
-3. influent-state and operating-point sampling
-4. single-point nonlinear steady-state solve
+3. chunked influent-state and operating-point sampling
+4. per-chunk nonlinear steady-state solving with local warm starts
 5. analyte observation mapping
 6. dataset assembly and artifact persistence
 
-The simulation remains deterministic when the random seed is fixed.
+The simulation remains deterministic when the random seed and chunk configuration are fixed.
 
 ## 7. Dataset-generation or execution workflow
 
@@ -156,10 +158,11 @@ The workflow is:
 
 1. Import and call `run_asm1_simulation` from the simulation package.
 2. Generate a table of sampled influent states, solved outlet states, and mapped analyte outputs.
-3. Save outputs under the repository simulation artifact contract:
+3. Optionally distribute chunk solves across multiple worker processes using the configured `parallel_workers` and `parallel_chunk_size` settings.
+4. Save outputs under the repository simulation artifact contract:
    - `data/asm1_simulation/data_{date_time}.csv`
    - `data/asm1_simulation/metadata_{date_time}.json`
-4. Use the metadata file as the contract for downstream loading.
+5. Use the metadata file as the contract for downstream loading.
 
 ## 8. Limitations and expected failure modes
 

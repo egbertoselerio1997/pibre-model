@@ -10,13 +10,12 @@ import pandas as pd
 from lightgbm import LGBMRegressor
 from sklearn.multioutput import MultiOutputRegressor
 
-from src.utils.process import DatasetSplit, ScalingBundle
+from src.utils.process import DatasetSplit
 from src.utils.simulation import load_model_params
 from src.utils.train import (
     predict_tabular_regressor_model,
     run_tabular_regressor_pipeline,
     train_tabular_regressor,
-    tune_tabular_regressor_hyperparameters,
 )
 
 
@@ -44,30 +43,6 @@ def train_lightgbm_regressor_model(
     return train_tabular_regressor(training_dataset, build_lightgbm_regressor_model, model_hyperparameters)
 
 
-def tune_lightgbm_regressor_hyperparameters(
-    train_split: DatasetSplit,
-    validation_split: DatasetSplit,
-    *,
-    scaling_bundle: ScalingBundle,
-    A_matrix: np.ndarray,
-    model_params: Mapping[str, Any] | None = None,
-    tuning_profile: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Tune the LightGBM regressor with Optuna."""
-
-    params = dict(model_params) if model_params is not None else load_lightgbm_regressor_params()
-    return tune_tabular_regressor_hyperparameters(
-        MODEL_NAME,
-        build_lightgbm_regressor_model,
-        train_split,
-        validation_split,
-        scaling_bundle=scaling_bundle,
-        A_matrix=A_matrix,
-        model_params=params,
-        tuning_profile=tuning_profile,
-    )
-
-
 def predict_lightgbm_regressor_model(
     test_dataset: pd.DataFrame | Mapping[str, pd.DataFrame | np.ndarray],
     model_path: str | Path,
@@ -86,30 +61,30 @@ def predict_lightgbm_regressor_model(
 
 
 def run_lightgbm_regressor_pipeline(
-    dataset: pd.DataFrame,
-    metadata: Mapping[str, Any],
-    composition_matrix: np.ndarray,
+    training_split: DatasetSplit,
+    test_split: DatasetSplit,
     A_matrix: np.ndarray,
     *,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
-    tuning_profile: str | None = None,
+    model_hyperparameters: Mapping[str, Any] | None = None,
+    optuna_summary: Mapping[str, Any] | None = None,
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Tune, fit, evaluate, and optionally persist the LightGBM regressor."""
+    """Train, evaluate, and optionally persist the LightGBM regressor."""
 
     params = dict(model_params) if model_params is not None else load_lightgbm_regressor_params(repo_root)
     return run_tabular_regressor_pipeline(
         MODEL_NAME,
         build_lightgbm_regressor_model,
-        dataset,
-        metadata,
-        composition_matrix,
+        training_split,
+        test_split,
         A_matrix,
         repo_root=repo_root,
         model_params=params,
-        tuning_profile=tuning_profile,
+        model_hyperparameters=model_hyperparameters,
+        optuna_summary=optuna_summary,
         persist_artifacts=persist_artifacts,
         timestamp=timestamp,
     )
@@ -122,5 +97,4 @@ __all__ = [
     "predict_lightgbm_regressor_model",
     "run_lightgbm_regressor_pipeline",
     "train_lightgbm_regressor_model",
-    "tune_lightgbm_regressor_hyperparameters",
 ]

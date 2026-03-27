@@ -34,7 +34,7 @@ The implementation assumes that the surrogate target space remains the same meas
 
 Implementation is in src/models/ml/adaboost_regressor.py.
 
-The repository uses reusable helpers for measured-space dataset construction, train-validation-test splitting, optional scaling, Optuna tuning, projection-aware evaluation, and artifact persistence. The model module provides the AdaBoost estimator builder and the common train, tune, predict, and run wrappers.
+The repository uses reusable helpers for measured-space dataset construction, notebook-managed splitting, optional scaling, external Optuna tuning, projection-aware evaluation, and artifact persistence. The model module provides the AdaBoost estimator builder and the common train, predict, and run wrappers.
 
 ## 6. Architecture details and adopted standard architecture name
 
@@ -42,7 +42,7 @@ The adopted architecture is adaptive boosting for regression, using the AdaBoost
 
 ## 7. Training or optimization notes
 
-Optuna tunes the number of weak learners, the boosting learning rate, and the selected AdaBoost loss formulation. The repository keeps these choices in config/params.json so the source module remains free of hardcoded parameter values.
+Optuna tunes the number of weak learners, the boosting learning rate, and the selected AdaBoost loss formulation. The repository keeps these choices in config/params.json so the source module remains free of hardcoded parameter values, while main.ipynb controls the shared Optuna trial budget and tuning subset.
 
 ## 8. Prediction workflow
 

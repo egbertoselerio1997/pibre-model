@@ -36,7 +36,7 @@ The method assumes that the training dataset is representative of the operating 
 
 Implementation is in src/models/ml/random_forest_regressor.py.
 
-The exact workflow mirrors the shared machine-learning contract in this repository: measured-space preprocessing, reproducible train-validation-test splitting, optional feature scaling, Optuna tuning, final refit on train plus validation data, projection-aware evaluation, and optional artifact persistence.
+The exact workflow mirrors the shared machine-learning contract in this repository: measured-space preprocessing, notebook-managed train-test splitting, optional feature scaling, optional external Optuna tuning on a notebook-managed subset, training on the provided training split, projection-aware evaluation, and optional artifact persistence.
 
 ## 6. Architecture details and adopted standard architecture name
 
@@ -44,7 +44,7 @@ The adopted architecture is bootstrap-aggregated decision-tree regression, speci
 
 ## 7. Training or optimization notes
 
-The Optuna search space tunes the number of trees, maximum tree depth, minimum split size, minimum leaf size, and the fraction of features considered at each split. Bootstrap sampling and the random seed are configured through config/params.json.
+The Optuna search space tunes the number of trees, maximum tree depth, minimum split size, minimum leaf size, and the fraction of features considered at each split. Bootstrap sampling and the random seed are configured through config/params.json, while the shared Optuna trial count is controlled from the notebook orchestration block.
 
 ## 8. Prediction workflow
 

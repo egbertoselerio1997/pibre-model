@@ -30,11 +30,27 @@ def load_paths_config(repo_root: str | Path | None = None) -> dict[str, Any]:
 	return load_json_file(root / "config" / "paths.json")
 
 
+def load_params_config(repo_root: str | Path | None = None) -> dict[str, Any]:
+	"""Load the repository parameter configuration."""
+
+	root = get_repo_root(repo_root)
+	return load_json_file(root / "config" / "params.json")
+
+
+def load_ml_orchestration_params(repo_root: str | Path | None = None) -> dict[str, Any]:
+	"""Load the shared notebook orchestration parameters."""
+
+	params = load_params_config(repo_root)
+	if "ml_orchestration" not in params:
+		raise KeyError("Machine-learning orchestration parameters not found.")
+
+	return params["ml_orchestration"]
+
+
 def load_model_params(model_name: str, repo_root: str | Path | None = None) -> dict[str, Any]:
 	"""Load the parameter namespace for a specific model."""
 
-	root = get_repo_root(repo_root)
-	params = load_json_file(root / "config" / "params.json")
+	params = load_params_config(repo_root)
 	if model_name not in params:
 		raise KeyError(f"Model parameters not found for '{model_name}'.")
 
@@ -109,7 +125,9 @@ def save_simulation_artifacts(
 
 __all__ = [
 	"get_repo_root",
+	"load_ml_orchestration_params",
 	"load_model_params",
+	"load_params_config",
 	"load_paths_config",
 	"make_simulation_timestamp",
 	"render_simulation_artifact_paths",
