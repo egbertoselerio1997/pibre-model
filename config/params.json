@@ -433,7 +433,7 @@
       "timeout_seconds": null
     }
   },
-  "pibre": {
+  "cobre": {
     "hyperparameters": {
       "random_seed": 42,
       "batch_size": 64,
@@ -497,7 +497,7 @@
       "persist_optuna": true
     }
   },
-  "pibre_unconstrained": {
+  "uncobre": {
     "hyperparameters": {
       "random_seed": 42,
       "scale_features": true,

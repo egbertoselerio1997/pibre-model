@@ -299,7 +299,7 @@ def tune_tabular_regressor_hyperparameters(
     return best_hyperparameters, make_study_summary(study)
 
 
-def tune_pibre_hyperparameters(
+def tune_cobre_hyperparameters(
     tuning_train_split: DatasetSplit,
     tuning_test_split: DatasetSplit,
     *,
@@ -310,9 +310,9 @@ def tune_pibre_hyperparameters(
     timeout: int | None = None,
     show_progress_bar: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Tune PIBRe with notebook-managed tuning splits."""
+    """Tune COBRE with notebook-managed tuning splits."""
 
-    from src.models.ml.pibre import train_pibre_model
+    from src.models.ml.cobre import train_cobre_model
 
     params = dict(model_params)
     split_params = params["hyperparameters"]
@@ -328,7 +328,7 @@ def tune_pibre_hyperparameters(
     base_hyperparameters = dict(params["training_defaults"])
 
     study = create_optuna_study(
-        "pibre",
+        "cobre",
         seed=seed,
         pruner_config=params.get("pruner"),
     )
@@ -336,7 +336,7 @@ def tune_pibre_hyperparameters(
     def objective(trial: Any) -> float:
         hyperparameters = dict(base_hyperparameters)
         hyperparameters.update(suggest_parameters(trial, params["search_space"]))
-        result = train_pibre_model(
+        result = train_cobre_model(
             {
                 "features": scaled_tuning_train_split.features,
                 "targets": scaled_tuning_train_split.targets,
@@ -375,7 +375,7 @@ def tune_pibre_hyperparameters(
     return best_hyperparameters, make_study_summary(study)
 
 
-def tune_pibre_unconstrained_hyperparameters(
+def tune_uncobre_hyperparameters(
     tuning_train_split: DatasetSplit,
     tuning_test_split: DatasetSplit,
     *,
@@ -385,9 +385,9 @@ def tune_pibre_unconstrained_hyperparameters(
     timeout: int | None = None,
     show_progress_bar: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Tune unconstrained PIBRe with notebook-managed tuning splits."""
+    """Tune UNCOBRE with notebook-managed tuning splits."""
 
-    from src.models.ml.pibre_unconstrained import train_pibre_unconstrained_model
+    from src.models.ml.uncobre import train_uncobre_model
 
     params = dict(model_params)
     split_params = params["hyperparameters"]
@@ -402,7 +402,7 @@ def tune_pibre_unconstrained_hyperparameters(
     base_hyperparameters = dict(params["training_defaults"])
 
     study = create_optuna_study(
-        "pibre_unconstrained",
+        "uncobre",
         seed=seed,
         pruner_config=params.get("pruner"),
     )
@@ -411,7 +411,7 @@ def tune_pibre_unconstrained_hyperparameters(
         hyperparameters = dict(base_hyperparameters)
         hyperparameters.update(suggest_parameters(trial, params["search_space"]))
 
-        training_result = train_pibre_unconstrained_model(
+        training_result = train_uncobre_model(
             {
                 "features": scaled_tuning_train_split.features,
                 "targets": scaled_tuning_train_split.targets,
@@ -419,7 +419,7 @@ def tune_pibre_unconstrained_hyperparameters(
             hyperparameters,
             training_options={
                 "show_progress": False,
-                "progress_description": "Train PIBRe Unconstrained",
+                "progress_description": "Train UNCOBRE",
                 "objective_name": str(hyperparameters.get("regression_mode", "ridge")),
             },
         )
@@ -693,8 +693,8 @@ __all__ = [
     "resolve_torch_runtime_options",
     "run_tabular_regressor_pipeline",
     "serialize_report_frames",
-    "tune_pibre_hyperparameters",
-    "tune_pibre_unconstrained_hyperparameters",
+    "tune_cobre_hyperparameters",
+    "tune_uncobre_hyperparameters",
     "train_tabular_regressor",
     "transform_feature_frame",
     "tune_tabular_regressor_hyperparameters",

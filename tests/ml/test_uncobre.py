@@ -1,4 +1,4 @@
-"""Minimal end-to-end tests for the unconstrained measured-space PIBRe model."""
+"""Minimal end-to-end tests for the UNCOBRE measured-space model."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from scipy.linalg import null_space
 
-from src.models.ml.pibre_unconstrained import (
-    predict_pibre_unconstrained_model,
-    run_pibre_unconstrained_pipeline,
-    train_pibre_unconstrained_model,
+from src.models.ml.uncobre import (
+    predict_uncobre_model,
+    run_uncobre_pipeline,
+    train_uncobre_model,
 )
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.io import save_pickle_file
@@ -38,7 +38,7 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
     return a_matrix
 
 
-class PibreUnconstrainedModelTests(unittest.TestCase):
+class UncobreModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=36, random_seed=31)
@@ -61,7 +61,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        result = run_pibre_unconstrained_pipeline(
+        result = run_uncobre_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -89,7 +89,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
             test_fraction=0.2,
             random_seed=11,
         )
-        result = run_pibre_unconstrained_pipeline(
+        result = run_uncobre_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -99,16 +99,17 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir_name:
-            model_path = Path(temp_dir_name) / "pibre_unconstrained_model.pkl"
+            model_path = Path(temp_dir_name) / "uncobre_model.pkl"
             save_pickle_file(model_path, result["model_bundle"])
-            prediction_result = predict_pibre_unconstrained_model(
+            prediction_result = predict_uncobre_model(
                 self.dataset.iloc[:8].copy(),
                 model_path,
                 metadata=self.metadata,
                 composition_matrix=self.composition_matrix,
             )
 
-        self.assertEqual(prediction_result["projected_predictions"].shape, (8, 8))
+        expected_output_dim = len(self.metadata["measured_output_columns"])
+        self.assertEqual(prediction_result["projected_predictions"].shape, (8, expected_output_dim))
         summary = summarize_mass_balance_residuals(
             prediction_result["projected_predictions"].to_numpy(dtype=float),
             prediction_result["constraint_reference"].to_numpy(dtype=float),
@@ -130,7 +131,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        result = run_pibre_unconstrained_pipeline(
+        result = run_uncobre_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -141,7 +142,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
 
         self.assertEqual(result["best_hyperparameters"]["regression_mode"], "ols")
 
-    @patch("src.models.ml.pibre_unconstrained.create_progress_bar")
+    @patch("src.models.ml.uncobre.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         measured_dataset = build_measured_supervised_dataset(
@@ -155,7 +156,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        train_pibre_unconstrained_model(
+        train_uncobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -166,7 +167,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertTrue(progress_factory.call_args.kwargs["enabled"])
 
-    @patch("src.models.ml.pibre_unconstrained.create_progress_bar")
+    @patch("src.models.ml.uncobre.create_progress_bar")
     def test_train_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         measured_dataset = build_measured_supervised_dataset(
@@ -180,7 +181,7 @@ class PibreUnconstrainedModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        train_pibre_unconstrained_model(
+        train_uncobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,

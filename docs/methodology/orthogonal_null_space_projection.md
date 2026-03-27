@@ -12,8 +12,8 @@ It answers two implementation questions:
 The short answer is:
 
 - for the classical regressors (`adaboost_regressor`, `catboost_regressor`, `lightgbm_regressor`, `random_forest_regressor`, `svr_regressor`, `xgboost_regressor`), projection is external to estimator fitting and is applied after the model produces raw predictions
-- for `pibre_unconstrained`, projection is also external to estimator fitting and is applied after the model produces raw predictions
-- for `pibre`, projection is embedded in the PyTorch model's forward pass and the training loss is computed on projected predictions
+- for `uncobre`, projection is also external to estimator fitting and is applied after the model produces raw predictions
+- for `cobre`, projection is embedded in the PyTorch model's forward pass and the training loss is computed on projected predictions
 
 ## 2. Measured-space constraint construction in the notebook
 
@@ -254,24 +254,24 @@ Prediction proceeds as follows:
 
 This confirms that even after persistence, the projection remains an explicit downstream step applied to raw predictions.
 
-## 9. `pibre_unconstrained`: same external projection pattern
+## 9. `uncobre`: same external projection pattern
 
-`src/models/ml/pibre_unconstrained.py` behaves differently from the classical regressors in model form, but not in its projection placement.
+`src/models/ml/uncobre.py` behaves differently from the classical regressors in model form, but not in its projection placement.
 
 Its estimator is a degree-2 feature expansion followed by OLS or Ridge regression. Training occurs on unconstrained targets. Projection is applied afterwards in `_predict_unconstrained_split(...)` using the same `project_to_mass_balance(...)` helper.
 
-So `pibre_unconstrained` follows the same projection placement pattern as the classical regressors:
+So `uncobre` follows the same projection placement pattern as the classical regressors:
 
 - fit unconstrained model
 - predict raw outputs
 - project raw outputs externally
 - report both raw and projected metrics
 
-## 10. `pibre`: projection embedded inside training
+## 10. `cobre`: projection embedded inside training
 
-`src/models/ml/pibre.py` is the one model family where the projection is not merely external post-processing.
+`src/models/ml/cobre.py` is the one model family where the projection is not merely external post-processing.
 
-The class `ProjectedPIBRe` constructs and stores the projection operator as a fixed buffer during initialization. In the `forward(...)` method it:
+The class `ProjectedCOBRE` constructs and stores the projection operator as a fixed buffer during initialization. In the `forward(...)` method it:
 
 1. computes raw bilinear predictions
 2. immediately projects those predictions using the stored operator and the batch-specific `constraint_reference`
@@ -283,9 +283,9 @@ $$
 \mathcal{L} = \operatorname{MSE}(\hat{y}_{proj}, y) + \lambda_{L1} \lVert w \rVert_1
 $$
 
-That makes `pibre` fundamentally different from the other regressors.
+That makes `cobre` fundamentally different from the other regressors.
 
-For `pibre`:
+For `cobre`:
 
 - the projection is part of the model graph
 - gradients flow through the projected outputs used in the loss
@@ -322,7 +322,7 @@ Reported notebook outputs:
 
 - both raw and projected metrics and residuals
 
-### 11.2 PIBRe unconstrained
+### 11.2 UNCOBRE
 
 Model:
 
@@ -344,7 +344,7 @@ Reported notebook outputs:
 
 - both raw and projected metrics and residuals
 
-### 11.3 PIBRe constrained
+### 11.3 COBRE
 
 Model:
 
@@ -376,7 +376,7 @@ When reading the classical-regressor outputs in `main.ipynb`, keep the following
 
 Therefore, if the projected metrics improve or the projected constraint residuals collapse toward zero, that does not mean the estimator itself learned the invariants. It means the repository's post-processing projection successfully corrected the raw outputs.
 
-For `pibre`, the interpretation is different: projected outputs are not just a post-hoc correction. They are the outputs the model was explicitly trained to optimize.
+For `cobre`, the interpretation is different: projected outputs are not just a post-hoc correction. They are the outputs the model was explicitly trained to optimize.
 
 ## 13. Why the pseudoinverse form is used
 
@@ -425,14 +425,14 @@ Classical regressor wrappers:
 
 External-projection bilinear baseline:
 
-- `src/models/ml/pibre_unconstrained.py`
+- `src/models/ml/uncobre.py`
 
 Embedded differentiable projection model:
 
-- `src/models/ml/pibre.py`
+- `src/models/ml/cobre.py`
 
 ## 15. Final answer to the implementation question
 
 For `src/models/ml/adaboost_regressor.py`, `src/models/ml/catboost_regressor.py`, and the other classical regressors, the orthogonal null-space projection is not embedded within model training. The estimator is trained first, raw predictions are generated, and those raw predictions are then projected to produce the projected outputs shown in `main.ipynb`.
 
-The only model in this repository where the projection is embedded into training is `src/models/ml/pibre.py`.
+The only model in this repository where the projection is embedded into training is `src/models/ml/cobre.py`.

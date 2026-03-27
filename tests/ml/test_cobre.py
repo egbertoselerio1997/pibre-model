@@ -1,4 +1,4 @@
-"""Minimal end-to-end tests for the PIBRe measured-space model."""
+"""Minimal end-to-end tests for the COBRE measured-space model."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from scipy.linalg import null_space
 
-from src.models.ml.pibre import predict_pibre_model, project_to_mass_balance, run_pibre_pipeline, train_pibre_model
+from src.models.ml.cobre import predict_cobre_model, project_to_mass_balance, run_cobre_pipeline, train_cobre_model
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.metrics import summarize_mass_balance_residuals
 from src.utils.process import build_measured_supervised_dataset, make_train_test_split
@@ -36,7 +36,7 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
     return a_matrix
 
 
-class PibreModelTests(unittest.TestCase):
+class CobreModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=36, random_seed=17)
@@ -53,28 +53,10 @@ class PibreModelTests(unittest.TestCase):
             self.composition_matrix,
         )
 
-        expected_feature_columns = [
-            "HRT",
-            "Aeration",
-            "In_COD",
-            "In_TSS",
-            "In_TN",
-            "In_TP",
-            "In_NH4_N",
-            "In_NO3_N",
-            "In_PO4_P",
-            "In_Alkalinity",
+        expected_feature_columns = list(self.metadata["operational_columns"]) + [
+            f"In_{column_name}" for column_name in self.metadata["measured_output_columns"]
         ]
-        expected_target_columns = [
-            "Out_COD",
-            "Out_TSS",
-            "Out_TN",
-            "Out_TP",
-            "Out_NH4_N",
-            "Out_NO3_N",
-            "Out_PO4_P",
-            "Out_Alkalinity",
-        ]
+        expected_target_columns = [f"Out_{column_name}" for column_name in self.metadata["measured_output_columns"]]
 
         self.assertEqual(list(supervised_dataset.features.columns), expected_feature_columns)
         self.assertEqual(list(supervised_dataset.targets.columns), expected_target_columns)
@@ -101,7 +83,7 @@ class PibreModelTests(unittest.TestCase):
         self.assertEqual(resolve_torch_adam_options(device_label="cuda"), {})
         self.assertEqual(resolve_torch_adam_options(device_label="directml", foreach=True), {"foreach": True})
 
-    def test_run_pibre_pipeline_returns_metrics_and_zero_projected_residuals(self) -> None:
+    def test_run_cobre_pipeline_returns_metrics_and_zero_projected_residuals(self) -> None:
         params = self._tiny_params()
         measured_dataset = build_measured_supervised_dataset(
             self.dataset,
@@ -118,7 +100,7 @@ class PibreModelTests(unittest.TestCase):
         _, device_label = get_training_device(prefer_directml=bool(runtime_params["prefer_directml"]))
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
-            result = run_pibre_pipeline(
+            result = run_cobre_pipeline(
                 dataset_splits.train,
                 dataset_splits.test,
                 self.a_matrix,
@@ -130,7 +112,7 @@ class PibreModelTests(unittest.TestCase):
         if device_label == "directml":
             self.assertFalse(
                 any("lerp.Scalar_out" in str(warning.message) for warning in caught_warnings),
-                "PIBRe DirectML training should avoid Adam CPU fallback warnings.",
+                "COBRE DirectML training should avoid Adam CPU fallback warnings.",
             )
 
         aggregate_metrics = result["test_report"]["aggregate_metrics"]
@@ -139,7 +121,7 @@ class PibreModelTests(unittest.TestCase):
         self.assertLess(float(projected_row["constraint_max_abs"]), 5e-4)
         self.assertLess(float(projected_row["constraint_mean_l2"]), 5e-4)
 
-    def test_predict_pibre_model_roundtrip_from_saved_bundle(self) -> None:
+    def test_predict_cobre_model_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()
         measured_dataset = build_measured_supervised_dataset(
             self.dataset,
@@ -151,7 +133,7 @@ class PibreModelTests(unittest.TestCase):
             test_fraction=0.2,
             random_seed=11,
         )
-        result = run_pibre_pipeline(
+        result = run_cobre_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -161,16 +143,17 @@ class PibreModelTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir_name:
-            model_path = Path(temp_dir_name) / "pibre_model.pkl"
+            model_path = Path(temp_dir_name) / "cobre_model.pkl"
             save_pickle_file(model_path, result["model_bundle"])
-            prediction_result = predict_pibre_model(
+            prediction_result = predict_cobre_model(
                 self.dataset.iloc[:8].copy(),
                 model_path,
                 metadata=self.metadata,
                 composition_matrix=self.composition_matrix,
             )
 
-        self.assertEqual(prediction_result["projected_predictions"].shape, (8, 8))
+        expected_output_dim = len(self.metadata["measured_output_columns"])
+        self.assertEqual(prediction_result["projected_predictions"].shape, (8, expected_output_dim))
         summary = summarize_mass_balance_residuals(
             prediction_result["projected_predictions"].to_numpy(dtype=float),
             prediction_result["constraint_reference"].to_numpy(dtype=float),
@@ -178,8 +161,8 @@ class PibreModelTests(unittest.TestCase):
         )
         self.assertLess(summary["constraint_max_abs"], 5e-4)
 
-    @patch("src.models.ml.pibre.create_progress_bar")
-    def test_train_pibre_model_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
+    @patch("src.models.ml.cobre.create_progress_bar")
+    def test_train_cobre_model_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         params = self._tiny_params()
         measured_dataset = build_measured_supervised_dataset(
@@ -193,7 +176,7 @@ class PibreModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        train_pibre_model(
+        train_cobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -214,8 +197,8 @@ class PibreModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertTrue(progress_factory.call_args.kwargs["enabled"])
 
-    @patch("src.models.ml.pibre.create_progress_bar")
-    def test_train_pibre_model_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
+    @patch("src.models.ml.cobre.create_progress_bar")
+    def test_train_cobre_model_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         params = self._tiny_params()
         measured_dataset = build_measured_supervised_dataset(
@@ -229,7 +212,7 @@ class PibreModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        train_pibre_model(
+        train_cobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,

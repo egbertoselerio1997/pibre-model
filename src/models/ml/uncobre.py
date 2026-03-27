@@ -34,11 +34,11 @@ from src.utils.train import (
 )
 
 
-MODEL_NAME = "pibre_unconstrained"
+MODEL_NAME = "uncobre"
 
 
-def load_pibre_unconstrained_params(repo_root: str | Path | None = None) -> dict[str, Any]:
-    """Load the configured parameters for the unconstrained PIBRe model."""
+def load_uncobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
+    """Load the configured parameters for the UNCOBRE model."""
 
     return load_model_params(MODEL_NAME, repo_root)
 
@@ -57,12 +57,12 @@ def _resolve_training_options(
 ) -> dict[str, Any]:
     options = dict(training_options or {})
     options.setdefault("show_progress", True)
-    options.setdefault("progress_description", "Training PIBRe Unconstrained")
+    options.setdefault("progress_description", "Training UNCOBRE")
     options.setdefault("objective_name", objective_name)
     return options
 
 
-def build_pibre_unconstrained_feature_expander(
+def build_uncobre_feature_expander(
     model_hyperparameters: Mapping[str, Any],
 ) -> PolynomialFeatures:
     """Build the configured degree-2 bilinear feature expander."""
@@ -74,7 +74,7 @@ def build_pibre_unconstrained_feature_expander(
     )
 
 
-def build_pibre_unconstrained_model(model_hyperparameters: Mapping[str, Any]) -> LinearRegression | Ridge:
+def build_uncobre_model(model_hyperparameters: Mapping[str, Any]) -> LinearRegression | Ridge:
     """Build one unconstrained estimator from configured OLS or Ridge hyperparameters."""
 
     regression_mode = str(model_hyperparameters.get("regression_mode", "ridge")).strip().lower()
@@ -96,13 +96,13 @@ def build_pibre_unconstrained_model(model_hyperparameters: Mapping[str, Any]) ->
     raise ValueError("regression_mode must be either 'ols' or 'ridge'.")
 
 
-def train_pibre_unconstrained_model(
+def train_uncobre_model(
     training_dataset: Mapping[str, pd.DataFrame | np.ndarray],
     model_hyperparameters: Mapping[str, Any],
     *,
     training_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fit the unconstrained bilinear estimator on a prepared dataset."""
+    """Fit the UNCOBRE estimator on a prepared dataset."""
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
@@ -115,8 +115,8 @@ def train_pibre_unconstrained_model(
         objective_name=objective_label,
     )
 
-    feature_expander = build_pibre_unconstrained_feature_expander(model_hyperparameters)
-    model = build_pibre_unconstrained_model(model_hyperparameters)
+    feature_expander = build_uncobre_feature_expander(model_hyperparameters)
+    model = build_uncobre_model(model_hyperparameters)
 
     progress_bar = create_progress_bar(
         total=2,
@@ -198,7 +198,7 @@ def _build_model_bundle(
     }
 
 
-def predict_pibre_unconstrained_model(
+def predict_uncobre_model(
     test_dataset: pd.DataFrame | Mapping[str, pd.DataFrame | np.ndarray],
     model_path: str | Path,
     *,
@@ -259,7 +259,7 @@ def predict_pibre_unconstrained_model(
     }
 
 
-def run_pibre_unconstrained_pipeline(
+def run_uncobre_pipeline(
     training_split: DatasetSplit,
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
@@ -272,9 +272,9 @@ def run_pibre_unconstrained_pipeline(
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Train, evaluate, and optionally persist one unconstrained PIBRe bundle."""
+    """Train, evaluate, and optionally persist one UNCOBRE bundle."""
 
-    params = dict(model_params) if model_params is not None else load_pibre_unconstrained_params(repo_root)
+    params = dict(model_params) if model_params is not None else load_uncobre_params(repo_root)
     split_params = params["hyperparameters"]
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
     objective_label = resolve_training_objective_label(
@@ -284,7 +284,7 @@ def run_pibre_unconstrained_pipeline(
 
     progress_bar = create_progress_bar(
         total=5,
-        desc="Training PIBRe Unconstrained",
+        desc="Training UNCOBRE",
         enabled=show_progress,
         unit="stage",
     )
@@ -301,7 +301,7 @@ def run_pibre_unconstrained_pipeline(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="fit", objective=objective_label)
-        training_result = train_pibre_unconstrained_model(
+        training_result = train_uncobre_model(
             {
                 "features": scaled_training_split.features,
                 "targets": scaled_training_split.targets,
@@ -309,7 +309,7 @@ def run_pibre_unconstrained_pipeline(
             selected_hyperparameters,
             training_options={
                 "show_progress": False,
-                "progress_description": "Training PIBRe Unconstrained",
+                "progress_description": "Training UNCOBRE",
                 "objective_name": objective_label,
             },
         )
@@ -418,11 +418,11 @@ def run_pibre_unconstrained_pipeline(
 
 __all__ = [
     "MODEL_NAME",
-    "build_pibre_unconstrained_feature_expander",
-    "build_pibre_unconstrained_model",
-    "load_pibre_unconstrained_params",
-    "predict_pibre_unconstrained_model",
+    "build_uncobre_feature_expander",
+    "build_uncobre_model",
+    "load_uncobre_params",
+    "predict_uncobre_model",
     "project_to_mass_balance",
-    "run_pibre_unconstrained_pipeline",
-    "train_pibre_unconstrained_model",
+    "run_uncobre_pipeline",
+    "train_uncobre_model",
 ]

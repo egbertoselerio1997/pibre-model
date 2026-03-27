@@ -1,7 +1,7 @@
 [project]
-name = "pibre-model"
+name = "cobre-model"
 version = "0.1.0"
-description = "Simulation-driven and ML-oriented modeling workspace for pibre-model."
+description = "Simulation-driven and ML-oriented modeling workspace for cobre-model."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [

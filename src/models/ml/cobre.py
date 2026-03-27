@@ -42,11 +42,11 @@ from src.utils.train import (
 from src.utils.optuna import create_progress_bar
 
 
-MODEL_NAME = "pibre"
+MODEL_NAME = "cobre"
 
 
-def load_pibre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
-    """Load the configured parameters for the PIBRe model."""
+def load_cobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
+    """Load the configured parameters for the COBRE model."""
 
     return load_model_params(MODEL_NAME, repo_root)
 
@@ -138,7 +138,7 @@ class DirectMLAdam(Optimizer):
 
 
 def _build_optimizer(
-    model: ProjectedPIBRe,
+    model: ProjectedCOBRE,
     model_hyperparameters: Mapping[str, float],
     *,
     device_label: str,
@@ -165,7 +165,7 @@ def _build_optimizer(
     )
 
 
-class ProjectedPIBRe(nn.Module):
+class ProjectedCOBRE(nn.Module):
     """Bilinear regressor with a differentiable measured-space projection layer."""
 
     def __init__(
@@ -226,7 +226,7 @@ def _build_tensor_dataset(dataset_split: DatasetSplit) -> TensorDataset:
 
 
 def _evaluate_model_predictions(
-    model: ProjectedPIBRe,
+    model: ProjectedCOBRE,
     dataset_split: DatasetSplit,
     *,
     device: Any,
@@ -250,13 +250,13 @@ def _evaluate_model_predictions(
     )
 
 
-def _projected_mse(model: ProjectedPIBRe, dataset_split: DatasetSplit, *, device: Any) -> float:
+def _projected_mse(model: ProjectedCOBRE, dataset_split: DatasetSplit, *, device: Any) -> float:
     projected_predictions, _ = _evaluate_model_predictions(model, dataset_split, device=device)
     targets = np.asarray(dataset_split.targets, dtype=float)
     return float(np.mean((projected_predictions - targets) ** 2))
 
 
-def _l1_penalty(model: ProjectedPIBRe) -> torch.Tensor:
+def _l1_penalty(model: ProjectedCOBRE) -> torch.Tensor:
     return model.linear_layer.weight.abs().sum() + model.bilinear_weight.abs().sum()
 
 
@@ -293,13 +293,13 @@ def _resolve_training_options(
     options.setdefault("prefer_directml", True)
     options.setdefault("adam_foreach", None)
     options.setdefault("show_progress", True)
-    options.setdefault("progress_description", "Training PIBRe")
+    options.setdefault("progress_description", "Training COBRE")
     options.setdefault("objective_name", "projected_mse_plus_l1")
     options.setdefault("validation_dataset", None)
     return options
 
 
-def train_pibre_model(
+def train_cobre_model(
     training_dataset: Mapping[str, pd.DataFrame | np.ndarray],
     model_hyperparameters: Mapping[str, float],
     *,
@@ -307,7 +307,7 @@ def train_pibre_model(
     training_options: Mapping[str, Any] | None = None,
     trial: optuna.Trial | None = None,
 ) -> dict[str, Any]:
-    """Train PIBRe on a prepared dataset and return the model and aligned predictions."""
+    """Train COBRE on a prepared dataset and return the model and aligned predictions."""
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
@@ -337,7 +337,7 @@ def train_pibre_model(
         )
 
     device, device_label = get_training_device(prefer_directml=bool(options["prefer_directml"]))
-    model = ProjectedPIBRe(
+    model = ProjectedCOBRE(
         input_dim=feature_frame.shape[1],
         output_dim=target_frame.shape[1],
         A_matrix=A_matrix,
@@ -464,8 +464,8 @@ def _build_model_bundle(
     }
 
 
-def _load_model_from_bundle(model_bundle: Mapping[str, Any], *, device: Any) -> ProjectedPIBRe:
-    model = ProjectedPIBRe(
+def _load_model_from_bundle(model_bundle: Mapping[str, Any], *, device: Any) -> ProjectedCOBRE:
+    model = ProjectedCOBRE(
         input_dim=len(model_bundle["feature_columns"]),
         output_dim=len(model_bundle["target_columns"]),
         A_matrix=np.asarray(model_bundle["A_matrix"], dtype=float),
@@ -476,14 +476,14 @@ def _load_model_from_bundle(model_bundle: Mapping[str, Any], *, device: Any) -> 
     return model
 
 
-def predict_pibre_model(
+def predict_cobre_model(
     test_dataset: pd.DataFrame | Mapping[str, pd.DataFrame | np.ndarray],
     model_path: str | Path,
     *,
     metadata: Mapping[str, Any] | None = None,
     composition_matrix: np.ndarray | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Generate raw and projected PIBRe predictions aligned to the supplied test dataset."""
+    """Generate raw and projected COBRE predictions aligned to the supplied test dataset."""
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
@@ -525,7 +525,7 @@ def predict_pibre_model(
     }
 
 
-def run_pibre_pipeline(
+def run_cobre_pipeline(
     training_split: DatasetSplit,
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
@@ -538,9 +538,9 @@ def run_pibre_pipeline(
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Train, evaluate, and optionally persist a PIBRe model bundle."""
+    """Train, evaluate, and optionally persist a COBRE model bundle."""
 
-    params = dict(model_params) if model_params is not None else load_pibre_params(repo_root)
+    params = dict(model_params) if model_params is not None else load_cobre_params(repo_root)
     split_params = params["hyperparameters"]
     runtime_options = resolve_torch_runtime_options(params)
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
@@ -560,10 +560,10 @@ def run_pibre_pipeline(
         "prefer_directml": runtime_options["prefer_directml"],
         "adam_foreach": runtime_options["adam_foreach"],
         "show_progress": show_progress,
-        "progress_description": "Training PIBRe",
+        "progress_description": "Training COBRE",
         "objective_name": "projected_mse_plus_l1",
     }
-    final_training_result = train_pibre_model(
+    final_training_result = train_cobre_model(
         {
             "features": scaled_training_split.features,
             "targets": scaled_training_split.targets,
@@ -574,7 +574,7 @@ def run_pibre_pipeline(
         training_options=final_training_options,
     )
 
-    final_model: ProjectedPIBRe = final_training_result["model"]
+    final_model: ProjectedCOBRE = final_training_result["model"]
     device, _ = get_training_device(prefer_directml=bool(runtime_options["prefer_directml"]))
     train_projected, train_raw = _evaluate_model_predictions(final_model, scaled_training_split, device=device)
     test_projected, test_raw = _evaluate_model_predictions(final_model, scaled_test_split, device=device)
@@ -650,11 +650,11 @@ def run_pibre_pipeline(
 
 __all__ = [
     "MODEL_NAME",
-    "ProjectedPIBRe",
+    "ProjectedCOBRE",
     "build_projection_operator",
-    "load_pibre_params",
-    "predict_pibre_model",
+    "load_cobre_params",
+    "predict_cobre_model",
     "project_to_mass_balance",
-    "run_pibre_pipeline",
-    "train_pibre_model",
+    "run_cobre_pipeline",
+    "train_cobre_model",
 ]

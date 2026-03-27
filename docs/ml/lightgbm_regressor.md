@@ -8,7 +8,7 @@ The lightgbm_regressor module implements a measured-space surrogate based on lig
 
 LightGBM is a gradient-boosting framework built around histogram-based tree learning and leaf-wise tree growth. It is designed for efficient training on structured tabular data and can model strong nonlinear behavior without explicit feature engineering.
 
-In this repository it serves as an alternative surrogate model to compare against PIBRe and other regressors on ASM1-derived measured outputs. The statistical learner approximates the input-output map, while a separate projection step restores compliance with the measured conservation relations.
+In this repository it serves as an alternative surrogate model to compare against COBRE and other regressors on ASM1-derived measured outputs. The statistical learner approximates the input-output map, while a separate projection step restores compliance with the measured conservation relations.
 
 ## 3. Mathematical definition
 

@@ -176,7 +176,8 @@ class TabularRegressorTests(unittest.TestCase):
                         composition_matrix=self.composition_matrix,
                     )
 
-                self.assertEqual(prediction_result["projected_predictions"].shape, (6, 8))
+                expected_output_dim = len(self.metadata["measured_output_columns"])
+                self.assertEqual(prediction_result["projected_predictions"].shape, (6, expected_output_dim))
                 summary = summarize_mass_balance_residuals(
                     prediction_result["projected_predictions"].to_numpy(dtype=float),
                     prediction_result["constraint_reference"].to_numpy(dtype=float),

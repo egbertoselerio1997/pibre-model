@@ -1,14 +1,14 @@
-# PIBRe Unconstrained Model Summary
+# UNCOBRE Model Summary
 
 ## 1. Title and model summary
 
-The pibre_unconstrained module implements a decoupled measured-space bilinear surrogate. It first trains an unconstrained predictor and only afterwards applies the measured-space projection as a post-processing step when physically consistent outputs are needed.
+The uncobre module implements an Unconstrained Bilinear Regression surrogate in measured-output space. It first trains an unconstrained predictor and only afterwards applies the measured-space projection as a post-processing step when physically consistent outputs are needed.
 
 In this repository, the model remains in the same measured-output basis used by ASM1-derived targets: COD, TSS, TN, TP, NH4-N, NO3-N, PO4-P, and alkalinity.
 
 ## 2. Background and use case
 
-The original PIBRe workflow combines a learned predictor and a projection layer in one training graph. The unconstrained variant separates these concerns so that:
+The original COBRE workflow combines a learned predictor and a projection layer in one training graph. The unconstrained variant separates these concerns so that:
 
 1. the regression step can use standard closed-form or convex estimators such as OLS and Ridge
 2. physical projection can be switched on or off at inference time without retraining the predictor
@@ -81,7 +81,7 @@ Assumptions:
 
 ## 5. Implementation used in this repository
 
-Implementation is in src/models/ml/pibre_unconstrained.py.
+Implementation is in src/models/ml/uncobre.py.
 
 Repository workflow:
 
