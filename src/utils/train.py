@@ -11,7 +11,7 @@ import torch
 from sklearn.metrics import mean_squared_error
 
 from .io import load_pickle_file, save_json_file, save_pickle_file
-from .optuna import create_optuna_study, make_study_summary, optimize_study, suggest_parameters
+from .optuna import create_optuna_study, create_progress_bar, make_study_summary, optimize_study, suggest_parameters
 from .process import (
     DatasetSplit,
     ScalingBundle,
@@ -27,6 +27,20 @@ from .test import evaluate_prediction_bundle
 
 
 TabularEstimatorFactory = Callable[[Mapping[str, Any]], Any]
+
+
+def resolve_training_objective_label(
+    model_hyperparameters: Mapping[str, Any],
+    *,
+    default: str = "fit",
+) -> str:
+    """Resolve a human-readable training objective label for progress output."""
+
+    for key in ("objective", "loss_function", "loss", "criterion"):
+        value = model_hyperparameters.get(key)
+        if value is not None:
+            return str(value)
+    return default
 
 
 def get_training_device(*, prefer_directml: bool = True) -> tuple[Any, str]:
@@ -171,13 +185,30 @@ def train_tabular_regressor(
     training_dataset: Mapping[str, pd.DataFrame | np.ndarray],
     estimator_factory: TabularEstimatorFactory,
     model_hyperparameters: Mapping[str, Any],
+    *,
+    show_progress: bool = True,
+    progress_description: str | None = None,
 ) -> dict[str, Any]:
     """Fit a scikit-compatible tabular regressor on the provided dataset."""
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
     estimator = estimator_factory(model_hyperparameters)
-    estimator.fit(feature_frame, target_frame)
+
+    objective_label = resolve_training_objective_label(model_hyperparameters)
+    progress_bar = create_progress_bar(
+        total=1,
+        desc=progress_description or f"Train {estimator.__class__.__name__}",
+        enabled=show_progress,
+        unit="fit",
+    )
+    progress_bar.set_postfix(objective=objective_label)
+    try:
+        estimator.fit(feature_frame, target_frame)
+        progress_bar.update(1)
+        progress_bar.set_postfix(objective=objective_label, status="complete")
+    finally:
+        progress_bar.close()
 
     return {
         "model": estimator,
@@ -213,7 +244,7 @@ def tune_tabular_regressor_hyperparameters(
     model_params: Mapping[str, Any],
     n_trials: int,
     timeout: int | None = None,
-    show_progress_bar: bool = False,
+    show_progress_bar: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Tune a scikit-compatible tabular regressor with Optuna."""
 
@@ -244,6 +275,7 @@ def tune_tabular_regressor_hyperparameters(
             },
             estimator_factory,
             hyperparameters,
+            show_progress=False,
         )
         projected_predictions, _ = predict_tabular_regressor_split(
             training_result["model"],
@@ -260,6 +292,7 @@ def tune_tabular_regressor_hyperparameters(
         n_trials=int(n_trials),
         timeout=timeout,
         show_progress_bar=show_progress_bar,
+        objective_name="validation_mse",
     )
     best_hyperparameters = dict(base_hyperparameters)
     best_hyperparameters.update(study.best_trial.params)
@@ -275,7 +308,7 @@ def tune_pibre_hyperparameters(
     tuning_epochs: int,
     n_trials: int,
     timeout: int | None = None,
-    show_progress_bar: bool = False,
+    show_progress_bar: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Tune PIBRe with notebook-managed tuning splits."""
 
@@ -318,6 +351,7 @@ def tune_pibre_hyperparameters(
                 "log_interval": int(split_params["log_interval"]),
                 "prefer_directml": runtime_options["prefer_directml"],
                 "adam_foreach": runtime_options["adam_foreach"],
+                "show_progress": False,
                 "validation_dataset": {
                     "features": scaled_tuning_test_split.features,
                     "targets": scaled_tuning_test_split.targets,
@@ -334,6 +368,7 @@ def tune_pibre_hyperparameters(
         n_trials=int(n_trials),
         timeout=timeout,
         show_progress_bar=show_progress_bar,
+        objective_name="validation_loss",
     )
     best_hyperparameters = dict(base_hyperparameters)
     best_hyperparameters.update(study.best_trial.params)
@@ -433,6 +468,7 @@ def run_tabular_regressor_pipeline(
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
     optuna_summary: Mapping[str, Any] | None = None,
+    show_progress: bool = True,
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
@@ -441,94 +477,117 @@ def run_tabular_regressor_pipeline(
     params = dict(model_params) if model_params is not None else load_model_params(model_name, repo_root)
     split_params = params["hyperparameters"]
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
-    scaling_bundle = fit_scalers(
-        training_split,
-        scale_features=bool(split_params["scale_features"]),
-        scale_targets=bool(split_params["scale_targets"]),
-    )
-    scaled_training_split = transform_dataset_split(training_split, scaling_bundle)
-    scaled_test_split = transform_dataset_split(test_split, scaling_bundle)
-
-    final_training_result = train_tabular_regressor(
-        {
-            "features": scaled_training_split.features,
-            "targets": scaled_training_split.targets,
-        },
-        estimator_factory,
-        selected_hyperparameters,
+    objective_label = resolve_training_objective_label(selected_hyperparameters)
+    progress_bar = create_progress_bar(
+        total=5,
+        desc=f"Training {model_name}",
+        enabled=show_progress,
+        unit="stage",
     )
 
-    final_model = final_training_result["model"]
-    train_projected, train_raw = predict_tabular_regressor_split(
-        final_model,
-        scaled_training_split,
-        scaling_bundle=scaling_bundle,
-        A_matrix=np.asarray(A_matrix, dtype=float),
-    )
-    test_projected, test_raw = predict_tabular_regressor_split(
-        final_model,
-        scaled_test_split,
-        scaling_bundle=scaling_bundle,
-        A_matrix=np.asarray(A_matrix, dtype=float),
-    )
-
-    train_report = evaluate_prediction_bundle(
-        training_split.targets.to_numpy(dtype=float),
-        train_raw,
-        train_projected,
-        training_split.constraint_reference.to_numpy(dtype=float),
-        np.asarray(A_matrix, dtype=float),
-        training_split.targets.columns,
-        index=training_split.targets.index,
-    )
-    test_report = evaluate_prediction_bundle(
-        test_split.targets.to_numpy(dtype=float),
-        test_raw,
-        test_projected,
-        test_split.constraint_reference.to_numpy(dtype=float),
-        np.asarray(A_matrix, dtype=float),
-        test_split.targets.columns,
-        index=test_split.targets.index,
-    )
-
-    model_bundle = build_tabular_model_bundle(
-        model_name,
-        final_model,
-        scaling_bundle,
-        feature_columns=list(training_split.features.columns),
-        target_columns=list(training_split.targets.columns),
-        constraint_columns=list(training_split.constraint_reference.columns),
-        A_matrix=np.asarray(A_matrix, dtype=float),
-        model_hyperparameters=selected_hyperparameters,
-    )
-
-    dataset_splits = TrainTestDatasetSplits(train=training_split, test=test_split)
-
-    artifact_paths: dict[str, Path | None] = {
-        "model_bundle": None,
-        "metrics": None,
-        "optuna": None,
-    }
-    artifact_options = dict(params.get("artifact_options", {}))
-    if persist_artifacts and bool(artifact_options.get("persist_model", True)):
-        metrics_payload = {
-            "train": serialize_report_frames(train_report),
-            "test": serialize_report_frames(test_report),
-            "split_sizes": {
-                "train": int(len(dataset_splits.train.features)),
-                "test": int(len(dataset_splits.test.features)),
-            },
-        }
-        optuna_payload = dict(optuna_summary) if optuna_summary is not None and bool(artifact_options.get("persist_optuna", True)) else None
-        metrics_summary = metrics_payload if bool(artifact_options.get("persist_metrics", True)) else None
-        artifact_paths = persist_training_artifacts(
-            model_name,
-            model_bundle,
-            metrics_summary=metrics_summary,
-            optuna_summary=optuna_payload,
-            repo_root=repo_root,
-            timestamp=timestamp,
+    try:
+        progress_bar.set_postfix(stage="scaling", objective=objective_label)
+        scaling_bundle = fit_scalers(
+            training_split,
+            scale_features=bool(split_params["scale_features"]),
+            scale_targets=bool(split_params["scale_targets"]),
         )
+        scaled_training_split = transform_dataset_split(training_split, scaling_bundle)
+        scaled_test_split = transform_dataset_split(test_split, scaling_bundle)
+        progress_bar.update(1)
+
+        progress_bar.set_postfix(stage="fit", objective=objective_label)
+        final_training_result = train_tabular_regressor(
+            {
+                "features": scaled_training_split.features,
+                "targets": scaled_training_split.targets,
+            },
+            estimator_factory,
+            selected_hyperparameters,
+            show_progress=False,
+            progress_description=f"Train {model_name}",
+        )
+        progress_bar.update(1)
+
+        final_model = final_training_result["model"]
+        progress_bar.set_postfix(stage="evaluate_train", objective=objective_label)
+        train_projected, train_raw = predict_tabular_regressor_split(
+            final_model,
+            scaled_training_split,
+            scaling_bundle=scaling_bundle,
+            A_matrix=np.asarray(A_matrix, dtype=float),
+        )
+        train_report = evaluate_prediction_bundle(
+            training_split.targets.to_numpy(dtype=float),
+            train_raw,
+            train_projected,
+            training_split.constraint_reference.to_numpy(dtype=float),
+            np.asarray(A_matrix, dtype=float),
+            training_split.targets.columns,
+            index=training_split.targets.index,
+        )
+        progress_bar.update(1)
+
+        progress_bar.set_postfix(stage="evaluate_test", objective=objective_label)
+        test_projected, test_raw = predict_tabular_regressor_split(
+            final_model,
+            scaled_test_split,
+            scaling_bundle=scaling_bundle,
+            A_matrix=np.asarray(A_matrix, dtype=float),
+        )
+        test_report = evaluate_prediction_bundle(
+            test_split.targets.to_numpy(dtype=float),
+            test_raw,
+            test_projected,
+            test_split.constraint_reference.to_numpy(dtype=float),
+            np.asarray(A_matrix, dtype=float),
+            test_split.targets.columns,
+            index=test_split.targets.index,
+        )
+        progress_bar.update(1)
+
+        model_bundle = build_tabular_model_bundle(
+            model_name,
+            final_model,
+            scaling_bundle,
+            feature_columns=list(training_split.features.columns),
+            target_columns=list(training_split.targets.columns),
+            constraint_columns=list(training_split.constraint_reference.columns),
+            A_matrix=np.asarray(A_matrix, dtype=float),
+            model_hyperparameters=selected_hyperparameters,
+        )
+
+        dataset_splits = TrainTestDatasetSplits(train=training_split, test=test_split)
+
+        artifact_paths: dict[str, Path | None] = {
+            "model_bundle": None,
+            "metrics": None,
+            "optuna": None,
+        }
+        progress_bar.set_postfix(stage="persist", objective=objective_label)
+        artifact_options = dict(params.get("artifact_options", {}))
+        if persist_artifacts and bool(artifact_options.get("persist_model", True)):
+            metrics_payload = {
+                "train": serialize_report_frames(train_report),
+                "test": serialize_report_frames(test_report),
+                "split_sizes": {
+                    "train": int(len(dataset_splits.train.features)),
+                    "test": int(len(dataset_splits.test.features)),
+                },
+            }
+            optuna_payload = dict(optuna_summary) if optuna_summary is not None and bool(artifact_options.get("persist_optuna", True)) else None
+            metrics_summary = metrics_payload if bool(artifact_options.get("persist_metrics", True)) else None
+            artifact_paths = persist_training_artifacts(
+                model_name,
+                model_bundle,
+                metrics_summary=metrics_summary,
+                optuna_summary=optuna_payload,
+                repo_root=repo_root,
+                timestamp=timestamp,
+            )
+        progress_bar.update(1)
+    finally:
+        progress_bar.close()
 
     return {
         "best_hyperparameters": selected_hyperparameters,
@@ -551,6 +610,7 @@ __all__ = [
     "persist_training_artifacts",
     "render_ml_artifact_paths",
     "resolve_model_hyperparameters",
+    "resolve_training_objective_label",
     "resolve_torch_adam_options",
     "resolve_torch_runtime_options",
     "run_tabular_regressor_pipeline",

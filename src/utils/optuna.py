@@ -9,6 +9,33 @@ from optuna.pruners import MedianPruner, NopPruner
 from optuna.samplers import TPESampler
 from optuna.study import Study
 from optuna.trial import TrialState
+from tqdm.auto import tqdm
+
+
+def create_progress_bar(
+	*,
+	total: int | None,
+	desc: str,
+	enabled: bool = True,
+	unit: str = "step",
+	leave: bool = False,
+) -> Any:
+	"""Create a notebook-friendly tqdm progress bar."""
+
+	return tqdm(
+		total=total,
+		desc=desc,
+		unit=unit,
+		leave=leave,
+		dynamic_ncols=True,
+		disable=not enabled,
+	)
+
+
+def _format_progress_value(value: float | None) -> str:
+	if value is None:
+		return "n/a"
+	return f"{float(value):.6g}"
 
 
 def build_pruner(pruner_config: Mapping[str, Any] | None) -> optuna.pruners.BasePruner:
@@ -83,15 +110,40 @@ def optimize_study(
 	n_trials: int,
 	timeout: int | None = None,
 	show_progress_bar: bool = False,
+	objective_name: str = "objective",
 ) -> Study:
 	"""Run an Optuna study and return the completed study."""
 
-	study.optimize(
-		objective,
-		n_trials=n_trials,
-		timeout=timeout,
-		show_progress_bar=show_progress_bar,
+	progress_bar = create_progress_bar(
+		total=int(n_trials),
+		desc=f"{study.study_name} [{objective_name}]",
+		enabled=show_progress_bar,
+		unit="trial",
 	)
+
+	def update_progress(completed_study: Study, trial: optuna.Trial) -> None:
+		trial_value = float(trial.value) if trial.value is not None else None
+		try:
+			best_value = float(completed_study.best_value)
+		except ValueError:
+			best_value = None
+
+		progress_bar.update(1)
+		progress_bar.set_postfix(
+			objective=_format_progress_value(trial_value),
+			best=_format_progress_value(best_value),
+		)
+
+	try:
+		study.optimize(
+			objective,
+			n_trials=n_trials,
+			timeout=timeout,
+			show_progress_bar=False,
+			callbacks=[update_progress],
+		)
+	finally:
+		progress_bar.close()
 	return study
 
 
@@ -116,6 +168,7 @@ def make_study_summary(study: Study) -> dict[str, Any]:
 
 __all__ = [
 	"build_pruner",
+	"create_progress_bar",
 	"create_optuna_study",
 	"make_study_summary",
 	"optimize_study",

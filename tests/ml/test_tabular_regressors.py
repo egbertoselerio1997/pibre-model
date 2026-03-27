@@ -6,6 +6,7 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from scipy.linalg import null_space
@@ -152,6 +153,7 @@ class TabularRegressorTests(unittest.TestCase):
                     dataset_splits.test,
                     self.a_matrix,
                     model_params=params,
+                    show_progress=False,
                     persist_artifacts=False,
                 )
 
@@ -181,6 +183,59 @@ class TabularRegressorTests(unittest.TestCase):
                     self.a_matrix,
                 )
                 self.assertLess(summary["constraint_max_abs"], 1e-7)
+
+    @patch("src.utils.train.create_progress_bar")
+    def test_tabular_pipeline_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
+        progress_factory.return_value = MagicMock()
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        params = _build_tiny_params(load_adaboost_regressor_params(), iteration_key="n_estimators")
+
+        run_adaboost_regressor_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            model_params=params,
+            persist_artifacts=False,
+        )
+
+        self.assertTrue(progress_factory.called)
+        self.assertTrue(any(call.kwargs["enabled"] for call in progress_factory.call_args_list))
+
+    @patch("src.utils.train.create_progress_bar")
+    def test_tabular_pipeline_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
+        progress_factory.return_value = MagicMock()
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        params = _build_tiny_params(load_adaboost_regressor_params(), iteration_key="n_estimators")
+
+        run_adaboost_regressor_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        self.assertTrue(progress_factory.called)
+        self.assertTrue(all(not call.kwargs["enabled"] for call in progress_factory.call_args_list))
 
 
 if __name__ == "__main__":

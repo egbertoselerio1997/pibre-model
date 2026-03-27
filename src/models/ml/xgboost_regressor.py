@@ -69,6 +69,7 @@ def run_xgboost_regressor_pipeline(
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
     optuna_summary: Mapping[str, Any] | None = None,
+    show_progress: bool = True,
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
@@ -85,6 +86,7 @@ def run_xgboost_regressor_pipeline(
         model_params=params,
         model_hyperparameters=model_hyperparameters,
         optuna_summary=optuna_summary,
+        show_progress=show_progress,
         persist_artifacts=persist_artifacts,
         timestamp=timestamp,
     )

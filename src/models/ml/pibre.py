@@ -39,6 +39,7 @@ from src.utils.train import (
     serialize_report_frames,
     transform_feature_frame,
 )
+from src.utils.optuna import create_progress_bar
 
 
 MODEL_NAME = "pibre"
@@ -291,6 +292,9 @@ def _resolve_training_options(
     options.setdefault("log_interval", default_log_interval)
     options.setdefault("prefer_directml", True)
     options.setdefault("adam_foreach", None)
+    options.setdefault("show_progress", True)
+    options.setdefault("progress_description", "Training PIBRe")
+    options.setdefault("objective_name", "projected_mse_plus_l1")
     options.setdefault("validation_dataset", None)
     return options
 
@@ -358,50 +362,69 @@ def train_pibre_model(
     best_validation_loss = np.inf
     best_state_dict = copy.deepcopy(model.state_dict())
 
-    for epoch in range(int(options["epochs"])):
-        model.train()
-        running_loss = 0.0
-        sample_count = 0
-        for batch_features, batch_targets, batch_constraints in loader:
-            batch_features = batch_features.to(device)
-            batch_targets = batch_targets.to(device)
-            batch_constraints = batch_constraints.to(device)
+    progress_bar = create_progress_bar(
+        total=int(options["epochs"]),
+        desc=str(options["progress_description"]),
+        enabled=bool(options["show_progress"]),
+        unit="epoch",
+    )
+    progress_bar.set_postfix(objective=str(options["objective_name"]))
+    try:
+        for epoch in range(int(options["epochs"])):
+            model.train()
+            running_loss = 0.0
+            sample_count = 0
+            for batch_features, batch_targets, batch_constraints in loader:
+                batch_features = batch_features.to(device)
+                batch_targets = batch_targets.to(device)
+                batch_constraints = batch_constraints.to(device)
 
-            optimizer.zero_grad(set_to_none=True)
-            projected_predictions, _ = model(batch_features, batch_constraints)
-            penalty = float(model_hyperparameters["lambda_l1"]) * _l1_penalty(model)
-            loss = criterion(projected_predictions, batch_targets) + penalty
-            loss.backward()
-            clip_grad_norm_(model.parameters(), max_norm=float(model_hyperparameters["clip_max_norm"]))
-            optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                projected_predictions, _ = model(batch_features, batch_constraints)
+                penalty = float(model_hyperparameters["lambda_l1"]) * _l1_penalty(model)
+                loss = criterion(projected_predictions, batch_targets) + penalty
+                loss.backward()
+                clip_grad_norm_(model.parameters(), max_norm=float(model_hyperparameters["clip_max_norm"]))
+                optimizer.step()
 
-            batch_size = int(batch_features.shape[0])
-            running_loss += float(loss.detach().cpu()) * batch_size
-            sample_count += batch_size
+                batch_size = int(batch_features.shape[0])
+                running_loss += float(loss.detach().cpu()) * batch_size
+                sample_count += batch_size
 
-        train_loss = running_loss / max(sample_count, 1)
-        validation_loss = None
-        should_record = ((epoch + 1) % int(options["log_interval"]) == 0) or epoch == 0 or epoch == int(options["epochs"]) - 1
-        if validation_dataset is not None:
-            validation_loss = _projected_mse(model, validation_dataset, device=device)
-            if validation_loss < best_validation_loss:
-                best_validation_loss = validation_loss
-                best_state_dict = copy.deepcopy(model.state_dict())
+            train_loss = running_loss / max(sample_count, 1)
+            validation_loss = None
+            should_record = ((epoch + 1) % int(options["log_interval"]) == 0) or epoch == 0 or epoch == int(options["epochs"]) - 1
+            if validation_dataset is not None:
+                validation_loss = _projected_mse(model, validation_dataset, device=device)
+                if validation_loss < best_validation_loss:
+                    best_validation_loss = validation_loss
+                    best_state_dict = copy.deepcopy(model.state_dict())
 
-            if trial is not None:
-                trial.report(validation_loss, step=epoch + 1)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-        else:
-            if train_loss < best_validation_loss:
-                best_validation_loss = train_loss
-                best_state_dict = copy.deepcopy(model.state_dict())
+                if trial is not None:
+                    trial.report(validation_loss, step=epoch + 1)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned()
+            else:
+                if train_loss < best_validation_loss:
+                    best_validation_loss = train_loss
+                    best_state_dict = copy.deepcopy(model.state_dict())
 
-        if should_record:
-            history_row: dict[str, float | int] = {"epoch": epoch + 1, "train_loss": float(train_loss)}
+            if should_record:
+                history_row: dict[str, float | int] = {"epoch": epoch + 1, "train_loss": float(train_loss)}
+                if validation_loss is not None:
+                    history_row["validation_loss"] = float(validation_loss)
+                history.append(history_row)
+
+            progress_kwargs: dict[str, str] = {
+                "objective": str(options["objective_name"]),
+                "train_loss": f"{train_loss:.6g}",
+            }
             if validation_loss is not None:
-                history_row["validation_loss"] = float(validation_loss)
-            history.append(history_row)
+                progress_kwargs["validation_loss"] = f"{validation_loss:.6g}"
+            progress_bar.set_postfix(**progress_kwargs)
+            progress_bar.update(1)
+    finally:
+        progress_bar.close()
 
     model.load_state_dict(best_state_dict)
     training_projected, training_raw = _evaluate_model_predictions(model, dataset_split, device=device)
@@ -511,6 +534,7 @@ def run_pibre_pipeline(
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
     optuna_summary: Mapping[str, Any] | None = None,
+    show_progress: bool = True,
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
@@ -535,6 +559,9 @@ def run_pibre_pipeline(
         "log_interval": int(split_params["log_interval"]),
         "prefer_directml": runtime_options["prefer_directml"],
         "adam_foreach": runtime_options["adam_foreach"],
+        "show_progress": show_progress,
+        "progress_description": "Training PIBRe",
+        "objective_name": "projected_mse_plus_l1",
     }
     final_training_result = train_pibre_model(
         {

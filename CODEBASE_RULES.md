@@ -164,6 +164,16 @@ Minimum predict-module requirements:
 
 Models may define additional inputs or outputs when required by the specific algorithm.
 
+### 14.1 Training Progress Visibility
+
+All machine learning model training paths must display TQDM progress bars while training is running.
+
+The progress display must include the current optimization objective name and, whenever a live objective value is naturally available, the latest objective value.
+
+Progress display must be enabled by default.
+
+An explicit opt-out may be provided only for tests or other non-interactive automation contexts.
+
 ## 15. Standard Metrics
 
 All machine learning models must calculate the following metrics:
@@ -281,6 +291,7 @@ Document command strategy outcomes here.
 - Case: measured-space classical regressor validation on Windows. Strategy: run uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm1_simulation tests.ml.test_pibre tests.ml.test_tabular_regressors, and when the command returns no transcript in the terminal tool, confirm success with Write-Output $LASTEXITCODE. Result: effective for validating the repository contract, preserving the ASM1 and PIBRe paths, and exercising XGBoost, LightGBM, CatBoost, AdaBoost, Random Forest, and SVR end-to-end under the shared measured-space helper pipeline.
 - Case: PIBRe DirectML optimizer regression validation on Windows. Strategy: run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_pibre after replacing the DirectML optimizer path, then run a PowerShell here-string Python smoke command with single-quoted Python literals to train a tiny PIBRe model and capture warnings. Result: effective for confirming the DirectML training path executes without the previous Adam `lerp.Scalar_out` CPU-fallback warning and for checking the projected metrics on a small run.
 - Case: ASM1 process-backed parallel generation validation on Windows. Strategy: run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm1_simulation after switching the dataset generator to chunked ProcessPoolExecutor workers, then run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c "import time; from src.models.simulation.asm1_simulation import run_asm1_simulation; start = time.perf_counter(); result = run_asm1_simulation(save_artifacts=False, n_samples=240, random_seed=13); elapsed = time.perf_counter() - start; print({'shape': result['dataset'].shape, 'seconds': round(elapsed, 3)})". Result: effective for confirming the Windows process-worker path, the public API, and the shipped default parallel settings without writing artifacts.
+- Case: TQDM dependency refresh and ML progress validation on Windows. Strategy: run uv sync after adding tqdm to pyproject.toml, then run uv run python -m unittest tests.bootstrap.test_repo_contract and PowerShell-safe direct unittest runners via uv run python -c "import sys, unittest; ..." for tests.ml.test_pibre, tests.ml.test_tabular_regressors, and tests.ml.test_ml_orchestration. Result: effective for installing tqdm into the project environment, validating the new repository rule, and confirming default-on plus opt-out ML progress behavior across PIBRe, tabular regressors, and notebook-managed tuning.
 
 ### Ineffective
 
@@ -290,4 +301,6 @@ Document command strategy outcomes here.
 - Case: PIBRe DirectML smoke validation through PowerShell on Windows. Strategy: embed Python in a PowerShell here-string but keep Python output statements in double-quoted literals or nested f-strings. Result: ineffective because PowerShell stripped or distorted the Python quoting and produced `SyntaxError` failures before the validation code ran.
 - Case: first-pass ASM1 process-worker probe on Windows. Strategy: call ProcessPoolExecutor.map from c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c against the keyword-only _generate_asm1_dataset_chunk worker. Result: ineffective because map passed a positional payload and raised a TypeError; executor.submit with keyword arguments worked.
 - Case: small-batch ASM1 parallel timing check on Windows. Strategy: compare run_asm1_simulation(save_artifacts=False, n_samples=24, random_seed=13, parallel_workers=1, parallel_chunk_size=4) against the same call with parallel_workers=4 from c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c. Result: ineffective for judging throughput because process startup dominated the workload and the parallel run was slower than serial on that batch size.
+- Case: combined ML unittest transcript capture through the terminal tool on Windows. Strategy: run uv run python -m unittest tests.ml.test_pibre tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration directly from the terminal tool. Result: ineffective for logging because the tool returned only progress dots or truncated output even when the tests completed.
+- Case: direct unittest runner with a single-quoted Python payload through PowerShell on Windows. Strategy: run uv run python -c 'import sys, unittest; ...'. Result: ineffective because PowerShell mangled the quoting and raised a `SyntaxError`; a double-quoted PowerShell command with single-quoted Python strings worked.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -88,6 +89,22 @@ class BootstrapContractTests(unittest.TestCase):
             self.assertIsInstance(model_name, str)
             self.assertIsInstance(params, dict)
             self.assertIn("hyperparameters", params)
+
+    def test_rules_require_training_progress_visibility(self) -> None:
+        rules_path = REPO_ROOT / "CODEBASE_RULES.md"
+        rules_text = rules_path.read_text(encoding="utf-8")
+
+        self.assertIn("### 14.1 Training Progress Visibility", rules_text)
+        self.assertIn("TQDM progress bars", rules_text)
+        self.assertIn("enabled by default", rules_text)
+
+    def test_pyproject_declares_tqdm_dependency(self) -> None:
+        pyproject_path = REPO_ROOT / "pyproject.toml"
+        with pyproject_path.open("rb") as handle:
+            data = tomllib.load(handle)
+
+        dependencies = data["project"]["dependencies"]
+        self.assertTrue(any(str(dependency).startswith("tqdm>=") for dependency in dependencies))
 
 
 if __name__ == "__main__":

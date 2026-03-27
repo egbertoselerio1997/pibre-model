@@ -880,6 +880,7 @@ dependencies = [
     { name = "torch-directml", marker = "sys_platform == 'win32'" },
     { name = "torchaudio" },
     { name = "torchvision" },
+    { name = "tqdm" },
     { name = "xgboost" },
 ]
 
@@ -898,6 +899,7 @@ requires-dist = [
     { name = "torch-directml", marker = "sys_platform == 'win32'", specifier = "==0.2.5.dev240914" },
     { name = "torchaudio", specifier = "==2.4.1", index = "https://download.pytorch.org/whl/cu124" },
     { name = "torchvision", specifier = "==0.19.1", index = "https://download.pytorch.org/whl/cu124" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "xgboost", specifier = ">=3.2.0" },
 ]
 

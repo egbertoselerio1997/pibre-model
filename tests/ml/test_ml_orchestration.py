@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import unittest
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from scipy.linalg import null_space
@@ -98,6 +99,7 @@ class MlOrchestrationTests(unittest.TestCase):
             model_params=params,
             tuning_epochs=3,
             n_trials=1,
+            show_progress_bar=False,
         )
 
         self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
@@ -117,10 +119,55 @@ class MlOrchestrationTests(unittest.TestCase):
             A_matrix=self.a_matrix,
             model_params=params,
             n_trials=1,
+            show_progress_bar=False,
         )
 
         self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
         self.assertEqual(optuna_summary["n_trials"], 1)
+
+    @patch("src.utils.optuna.create_progress_bar")
+    def test_tabular_tuning_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
+        progress_factory.return_value = MagicMock()
+        params = _build_tiny_adaboost_params()
+        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
+        tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
+        tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
+
+        tune_tabular_regressor_hyperparameters(
+            "adaboost_regressor",
+            build_adaboost_regressor_model,
+            tuning_splits.train,
+            tuning_splits.test,
+            A_matrix=self.a_matrix,
+            model_params=params,
+            n_trials=1,
+        )
+
+        self.assertTrue(progress_factory.called)
+        self.assertTrue(progress_factory.call_args.kwargs["enabled"])
+        self.assertIn("validation_mse", progress_factory.call_args.kwargs["desc"])
+
+    @patch("src.utils.optuna.create_progress_bar")
+    def test_pibre_tuning_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
+        progress_factory.return_value = MagicMock()
+        params = _build_tiny_pibre_params()
+        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
+        tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
+        tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
+
+        tune_pibre_hyperparameters(
+            tuning_splits.train,
+            tuning_splits.test,
+            A_matrix=self.a_matrix,
+            model_params=params,
+            tuning_epochs=3,
+            n_trials=1,
+            show_progress_bar=False,
+        )
+
+        self.assertTrue(progress_factory.called)
+        self.assertFalse(progress_factory.call_args.kwargs["enabled"])
+        self.assertIn("validation_loss", progress_factory.call_args.kwargs["desc"])
 
 
 if __name__ == "__main__":

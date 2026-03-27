@@ -8,11 +8,12 @@ import unittest
 import warnings
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from scipy.linalg import null_space
 
-from src.models.ml.pibre import predict_pibre_model, project_to_mass_balance, run_pibre_pipeline
+from src.models.ml.pibre import predict_pibre_model, project_to_mass_balance, run_pibre_pipeline, train_pibre_model
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.metrics import summarize_mass_balance_residuals
 from src.utils.process import build_measured_supervised_dataset, make_train_test_split
@@ -122,6 +123,7 @@ class PibreModelTests(unittest.TestCase):
                 dataset_splits.test,
                 self.a_matrix,
                 model_params=params,
+                show_progress=False,
                 persist_artifacts=False,
             )
 
@@ -154,6 +156,7 @@ class PibreModelTests(unittest.TestCase):
             dataset_splits.test,
             self.a_matrix,
             model_params=params,
+            show_progress=False,
             persist_artifacts=False,
         )
 
@@ -174,6 +177,79 @@ class PibreModelTests(unittest.TestCase):
             self.a_matrix,
         )
         self.assertLess(summary["constraint_max_abs"], 5e-4)
+
+    @patch("src.models.ml.pibre.create_progress_bar")
+    def test_train_pibre_model_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
+        progress_factory.return_value = MagicMock()
+        params = self._tiny_params()
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        train_pibre_model(
+            {
+                "features": dataset_splits.train.features,
+                "targets": dataset_splits.train.targets,
+                "constraint_reference": dataset_splits.train.constraint_reference,
+            },
+            cast(dict[str, float], params["training_defaults"]),
+            A_matrix=self.a_matrix,
+            training_options={
+                "epochs": 2,
+                "batch_size": 8,
+                "random_seed": 11,
+                "log_interval": 1,
+                "prefer_directml": True,
+                "adam_foreach": None,
+            },
+        )
+
+        self.assertTrue(progress_factory.called)
+        self.assertTrue(progress_factory.call_args.kwargs["enabled"])
+
+    @patch("src.models.ml.pibre.create_progress_bar")
+    def test_train_pibre_model_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
+        progress_factory.return_value = MagicMock()
+        params = self._tiny_params()
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        train_pibre_model(
+            {
+                "features": dataset_splits.train.features,
+                "targets": dataset_splits.train.targets,
+                "constraint_reference": dataset_splits.train.constraint_reference,
+            },
+            cast(dict[str, float], params["training_defaults"]),
+            A_matrix=self.a_matrix,
+            training_options={
+                "epochs": 2,
+                "batch_size": 8,
+                "random_seed": 11,
+                "log_interval": 1,
+                "prefer_directml": True,
+                "adam_foreach": None,
+                "show_progress": False,
+            },
+        )
+
+        self.assertTrue(progress_factory.called)
+        self.assertFalse(progress_factory.call_args.kwargs["enabled"])
 
     def _tiny_params(self) -> dict[str, object]:
         params: dict[str, object] = copy.deepcopy(
