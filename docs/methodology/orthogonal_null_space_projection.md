@@ -12,7 +12,7 @@ It answers two implementation questions:
 The short answer is:
 
 - for the classical regressors (`adaboost_regressor`, `catboost_regressor`, `lightgbm_regressor`, `random_forest_regressor`, `svr_regressor`, `xgboost_regressor`), projection is external to estimator fitting and is applied after the model produces raw predictions
-- for `collapsed_cobre`, projection is folded analytically into the least-squares solution, and the repository still reports both raw and projected predictions derived from the fitted parameter matrices
+- for `cobre`, projection is integrated analytically into the least-squares solution, and the repository still reports both raw and projected predictions derived from the fitted parameter matrices
 
 ## 2. Measured-space constraint construction in the notebook
 
@@ -253,9 +253,9 @@ Prediction proceeds as follows:
 
 This confirms that even after persistence, the projection remains an explicit downstream step applied to raw predictions.
 
-## 9. `collapsed_cobre`: projection collapsed into the OLS solve
+## 9. `cobre`: projection integrated into the OLS solve
 
-`src/models/ml/collapsed_cobre.py` does not train an unconstrained predictor and then project it afterwards. It analytically folds the measured-space projector into the least-squares problem.
+`src/models/ml/cobre.py` does not train an unconstrained predictor and then project it afterwards. It analytically folds the measured-space projector into the least-squares problem.
 
 The training path:
 
@@ -269,7 +269,7 @@ The stored bundle therefore contains both:
 - `raw_parameter_matrix` for the unconstrained bilinear response
 - `effective_parameter_matrix` for the projected measured-space response
 
-Prediction then evaluates both parameter matrices on the same design frame. So `collapsed_cobre` is different from the classical regressors:
+Prediction then evaluates both parameter matrices on the same design frame. So `cobre` is different from the classical regressors:
 
 - projection is not a post-hoc call to `project_to_mass_balance(...)` at evaluation time
 - projection is not a differentiable training loop inside a neural network
@@ -304,7 +304,7 @@ Reported notebook outputs:
 
 - both raw and projected metrics and residuals
 
-### 11.2 Collapsed COBRE
+### 11.2 COBRE
 
 Model:
 
@@ -336,7 +336,7 @@ When reading the classical-regressor outputs in `main.ipynb`, keep the following
 
 Therefore, if the projected metrics improve or the projected constraint residuals collapse toward zero, that does not mean the estimator itself learned the invariants. It means the repository's post-processing projection successfully corrected the raw outputs.
 
-For `collapsed_cobre`, the interpretation is different: projected outputs are not just a post-hoc correction. They come from the effective parameter matrix obtained by analytically incorporating the projection into the regression solve.
+For `cobre`, the interpretation is different: projected outputs are not just a post-hoc correction. They come from the effective parameter matrix obtained by analytically incorporating the projection into the regression solve.
 
 ## 13. Why the pseudoinverse form is used
 
@@ -385,10 +385,10 @@ Classical regressor wrappers:
 
 Projected least-squares bilinear model:
 
-- `src/models/ml/collapsed_cobre.py`
+- `src/models/ml/cobre.py`
 
 ## 15. Final answer to the implementation question
 
 For `src/models/ml/adaboost_regressor.py`, `src/models/ml/catboost_regressor.py`, and the other classical regressors, the orthogonal null-space projection is not embedded within model training. The estimator is trained first, raw predictions are generated, and those raw predictions are then projected to produce the projected outputs shown in `main.ipynb`.
 
-For `src/models/ml/collapsed_cobre.py`, the projection is not a separate prediction-time correction step. It is incorporated analytically into the least-squares formulation that produces the effective projected parameter matrix.
+For `src/models/ml/cobre.py`, the projection is not a separate prediction-time correction step. It is incorporated analytically into the least-squares formulation that produces the effective projected parameter matrix.

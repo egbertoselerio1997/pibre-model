@@ -1,4 +1,4 @@
-"""Minimal end-to-end tests for the Collapsed COBRE projected OLS model."""
+"""Minimal end-to-end tests for the COBRE projected OLS model."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from scipy.linalg import null_space
 
-from src.models.ml.collapsed_cobre import (
-    build_collapsed_cobre_design_frame,
-    predict_collapsed_cobre_model,
-    run_collapsed_cobre_pipeline,
-    train_collapsed_cobre_model,
+from src.models.ml.cobre import (
+    build_cobre_design_frame,
+    predict_cobre_model,
+    run_cobre_pipeline,
+    train_cobre_model,
 )
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.io import save_pickle_file
@@ -39,7 +39,7 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
     return a_matrix
 
 
-class CollapsedCobreModelTests(unittest.TestCase):
+class CobreModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=36, random_seed=29)
@@ -62,7 +62,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        result = run_collapsed_cobre_pipeline(
+        result = run_cobre_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -95,7 +95,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             test_fraction=0.2,
             random_seed=11,
         )
-        result = run_collapsed_cobre_pipeline(
+        result = run_cobre_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -105,9 +105,9 @@ class CollapsedCobreModelTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir_name:
-            model_path = Path(temp_dir_name) / "collapsed_cobre_model.pkl"
+            model_path = Path(temp_dir_name) / "cobre_model.pkl"
             save_pickle_file(model_path, result["model_bundle"])
-            prediction_result = predict_collapsed_cobre_model(
+            prediction_result = predict_cobre_model(
                 self.dataset.iloc[:8].copy(),
                 model_path,
                 metadata=self.metadata,
@@ -137,7 +137,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
         )
         train_split = dataset_splits.train
 
-        training_result = train_collapsed_cobre_model(
+        training_result = train_cobre_model(
             {
                 "features": train_split.features,
                 "targets": train_split.targets,
@@ -148,7 +148,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             training_options={"show_progress": False},
         )
 
-        design_frame, _ = build_collapsed_cobre_design_frame(
+        design_frame, _ = build_cobre_design_frame(
             train_split.features,
             list(train_split.constraint_reference.columns),
             include_bias_term=True,
@@ -178,7 +178,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             rtol=1e-8,
         )
 
-    @patch("src.models.ml.collapsed_cobre.get_training_device")
+    @patch("src.models.ml.cobre.get_training_device")
     def test_auto_backend_falls_back_to_numpy_when_directml_unavailable(self, get_training_device_mock: MagicMock) -> None:
         get_training_device_mock.return_value = (object(), "cpu")
         measured_dataset = build_measured_supervised_dataset(
@@ -192,7 +192,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        training_result = train_collapsed_cobre_model(
+        training_result = train_cobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -209,8 +209,8 @@ class CollapsedCobreModelTests(unittest.TestCase):
         self.assertEqual(training_result["ols_metadata"]["device_label"], "cpu")
         self.assertIn("DirectML device unavailable", str(training_result["ols_metadata"]["fallback_reason"]))
 
-    @patch("src.models.ml.collapsed_cobre._compute_ols_cross_products_with_torch")
-    @patch("src.models.ml.collapsed_cobre.get_training_device")
+    @patch("src.models.ml.cobre._compute_ols_cross_products_with_torch")
+    @patch("src.models.ml.cobre.get_training_device")
     def test_auto_backend_prefers_directml_when_available(
         self,
         get_training_device_mock: MagicMock,
@@ -227,7 +227,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             test_fraction=0.2,
             random_seed=11,
         )
-        design_frame, _ = build_collapsed_cobre_design_frame(
+        design_frame, _ = build_cobre_design_frame(
             dataset_splits.train.features,
             list(dataset_splits.train.constraint_reference.columns),
             include_bias_term=True,
@@ -243,7 +243,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             "float32",
         )
 
-        training_result = train_collapsed_cobre_model(
+        training_result = train_cobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -260,7 +260,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
         self.assertIsNone(training_result["ols_metadata"]["fallback_reason"])
         self.assertEqual(training_result["ols_metadata"]["matrix_multiplication_dtype"], "float32")
 
-    @patch("src.models.ml.collapsed_cobre.create_progress_bar")
+    @patch("src.models.ml.cobre.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         measured_dataset = build_measured_supervised_dataset(
@@ -274,7 +274,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        train_collapsed_cobre_model(
+        train_cobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -287,7 +287,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertTrue(progress_factory.call_args.kwargs["enabled"])
 
-    @patch("src.models.ml.collapsed_cobre.create_progress_bar")
+    @patch("src.models.ml.cobre.create_progress_bar")
     def test_train_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         measured_dataset = build_measured_supervised_dataset(
@@ -301,7 +301,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
             random_seed=11,
         )
 
-        train_collapsed_cobre_model(
+        train_cobre_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,

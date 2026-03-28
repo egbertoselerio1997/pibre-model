@@ -1,18 +1,18 @@
-# Collapsed COBRE Model Summary
+# COBRE Model Summary
 
 ## 1. Title and model summary
 
-The collapsed_cobre module implements a closed-form projected ordinary least squares surrogate in measured-output space. It starts from the partitioned bilinear formulation
+The cobre module implements a closed-form projected ordinary least squares surrogate in measured-output space for Constrained Bilinear Regression. It starts from the partitioned bilinear formulation
 
 $$
 C_{raw} = W_u u + W_{in} C_{in} + b + u^T \Theta_{uu} u + C_{in}^T \Theta_{cc} C_{in} + u^T \Theta_{uc} C_{in}
 $$
 
-and solves for the coefficients after analytically collapsing the orthogonal projection into the regression problem. The repository implementation therefore trains a single projected least-squares model rather than first fitting an unconstrained model and then correcting it afterward.
+and solves for the coefficients after analytically integrating the orthogonal projection into the regression problem. The repository implementation therefore trains a single projected least-squares model rather than first fitting an unconstrained model and then correcting it afterward.
 
 ## 2. Background and use case
 
-Collapsed COBRE provides a bilinear measured-space surrogate whose projection is handled analytically inside the regression formulation itself rather than by a separate post-processing step.
+COBRE provides a bilinear measured-space surrogate whose projection is handled analytically inside the regression formulation itself rather than by a separate post-processing step.
 
 It uses the same measured-space feature contract and the same stoichiometric projection matrix, but the parameters are computed analytically by projected multivariate least squares. This is useful when:
 
@@ -54,7 +54,7 @@ $$
 P_{\perp} = I - P
 $$
 
-Then the collapsed model becomes
+Then the constrained model becomes
 
 $$
 C^* = W_{u,eff} u + W_{in,eff} C_{in} + b_{eff} + u^T \Theta_{uu,eff} u + C_{in}^T \Theta_{cc,eff} C_{in} + u^T \Theta_{uc,eff} C_{in}
@@ -119,11 +119,11 @@ Assumptions:
 
 - the feature order remains `[operational_columns, In_* measured composites]`
 - the influent measured columns and `constraint_reference` columns describe the same measured basis and order
-- feature and target scaling are disabled for this model because the exact collapsed equations are expressed in physical measured-space coordinates
+- feature and target scaling are disabled for this model because the exact constrained equations are expressed in physical measured-space coordinates
 
 ## 5. Implementation used in this repository
 
-Implementation is in `src/models/ml/collapsed_cobre.py`.
+Implementation is in `src/models/ml/cobre.py`.
 
 The exact repository workflow is:
 
@@ -135,7 +135,7 @@ The exact repository workflow is:
 6. compute $P$ and $P_{\perp}$ from the supplied $A$ matrix
 7. resolve the configured OLS backend and try the DirectML matrix-multiplication path first when available
 8. otherwise solve the projected multivariate least-squares system directly with `numpy.linalg.lstsq`
-9. recover raw coefficient blocks for one minimum-norm representative of the unconstrained model and then construct the effective collapsed coefficients by adding the $P$ pass-through contribution to the linear influent block
+9. recover raw coefficient blocks for one minimum-norm representative of the unconstrained model and then construct the effective constrained coefficients by adding the $P$ pass-through contribution to the linear influent block
 10. evaluate both raw and projected predictions with the shared reporting utilities
 11. optionally persist a pickle bundle and metrics JSON under the configured results paths
 
@@ -145,7 +145,7 @@ The saved bundle includes the design-schema metadata, raw and effective paramete
 
 The adopted architecture is a projected second-order polynomial regression in measured-output space. It is not a neural network.
 
-In machine-learning terms, the implementation is a multivariate ordinary least squares model over a hand-built second-order feature map, with the physics constraints embedded analytically through the collapsed projection algebra.
+In machine-learning terms, the implementation is a multivariate ordinary least squares model over a hand-built second-order feature map, with the physics constraints embedded analytically through the integrated projection algebra.
 
 The repository deliberately keeps the quadratic blocks unsymmetrized. In other words, the operational, influent, and interaction tensors are stored over the full ordered outer-product basis rather than a deduplicated symmetric basis. This makes the mapping between the design matrix and the persisted coefficient tensors mechanically exact.
 
@@ -158,7 +158,7 @@ Training is fully deterministic once the notebook-managed dataset split is fixed
 Because the raw coefficient matrix is only identifiable up to components annihilated by $P_{\perp}$, the repository stores both:
 
 - a minimum-norm raw representative used for reporting raw predictions
-- the effective collapsed coefficients used for direct interpretation of the physically compliant model
+- the effective constrained coefficients used for direct interpretation of the physically compliant model
 
 The effective coefficients are the physically meaningful quantities.
 
@@ -166,7 +166,7 @@ The effective coefficients are the physically meaningful quantities.
 
 Prediction in this repository follows the contract below:
 
-1. load the persisted Collapsed COBRE bundle
+1. load the persisted COBRE bundle
 2. rebuild measured-space features if a raw simulation dataframe is supplied
 3. align the feature frame to the saved measured-space column order
 4. rebuild the partitioned second-order design matrix from the saved schema
@@ -181,7 +181,7 @@ Important limitations:
 - the model is exact only for the current measured-space basis and column contract used by the repository
 - coefficient interpretation assumes features remain in physical coordinates, so feature scaling is intentionally disabled
 - the full second-order feature map can become large if the measured basis is expanded substantially
-- the minimum-norm raw coefficients are not unique in a physical sense; the effective collapsed coefficients are the quantities that should be interpreted
+- the minimum-norm raw coefficients are not unique in a physical sense; the effective constrained coefficients are the quantities that should be interpreted
 
 Expected failure modes:
 

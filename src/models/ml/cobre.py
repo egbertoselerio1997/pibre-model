@@ -1,4 +1,4 @@
-"""Collapsed COBRE solved by projected ordinary least squares in measured-output space."""
+"""COBRE (Constrained Bilinear Regression) solved by projected ordinary least squares in measured-output space."""
 
 from __future__ import annotations
 
@@ -34,12 +34,12 @@ from src.utils.train import (
 )
 
 
-MODEL_NAME = "collapsed_cobre"
+MODEL_NAME = "cobre"
 VALID_OLS_BACKENDS = {"auto", "numpy_lstsq", "directml_normal_equations"}
 
 
-def load_collapsed_cobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
-    """Load the configured parameters for the Collapsed COBRE model."""
+def load_cobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
+    """Load the configured parameters for the COBRE model."""
 
     return load_model_params(MODEL_NAME, repo_root)
 
@@ -51,7 +51,7 @@ def _resolve_training_options(
 ) -> dict[str, Any]:
     options = dict(training_options or {})
     options.setdefault("show_progress", True)
-    options.setdefault("progress_description", "Training Collapsed COBRE")
+    options.setdefault("progress_description", "Training COBRE")
     options.setdefault("objective_name", objective_name)
     return options
 
@@ -66,15 +66,15 @@ def _resolve_ols_backend(model_hyperparameters: Mapping[str, Any]) -> str:
     backend_name = str(model_hyperparameters.get("ols_backend", "auto")).strip().lower()
     if backend_name not in VALID_OLS_BACKENDS:
         valid_values = ", ".join(sorted(VALID_OLS_BACKENDS))
-        raise ValueError(f"Collapsed COBRE requires ols_backend to be one of: {valid_values}.")
+        raise ValueError(f"COBRE requires ols_backend to be one of: {valid_values}.")
     return backend_name
 
 
 def _validate_scaling_configuration(hyperparameters: Mapping[str, Any]) -> None:
     if bool(hyperparameters.get("scale_features", False)):
-        raise ValueError("Collapsed COBRE requires scale_features=False so C_in remains in physical coordinates.")
+        raise ValueError("COBRE requires scale_features=False so C_in remains in physical coordinates.")
     if bool(hyperparameters.get("scale_targets", False)):
-        raise ValueError("Collapsed COBRE requires scale_targets=False because the projected OLS target lives in measured-output space.")
+        raise ValueError("COBRE requires scale_targets=False because the projected OLS target lives in measured-output space.")
 
 
 def _predict_from_bundle(
@@ -85,10 +85,11 @@ def _predict_from_bundle(
     scaling_bundle: ScalingBundle,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     transformed_features = transform_feature_frame(feature_frame, scaling_bundle)
-    selected_constraint_reference = constraint_reference.loc[:, model_bundle["constraint_columns"]].copy()
-    design_frame, _ = build_collapsed_cobre_design_frame(
+    constraint_columns = list(model_bundle["constraint_columns"])
+    selected_constraint_reference = constraint_reference.loc[:, constraint_columns].copy()
+    design_frame, _ = build_cobre_design_frame(
         transformed_features,
-        list(model_bundle["constraint_columns"]),
+        constraint_columns,
         include_bias_term=bool(model_bundle["design_schema"]["include_bias_term"]),
     )
     raw_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["raw_parameter_matrix"])
@@ -121,10 +122,10 @@ def _resolve_feature_partition(
     expected_influent_columns = [f"In_{column_name}" for column_name in constraint_columns]
 
     if not operational_columns:
-        raise ValueError("Collapsed COBRE requires at least one operational feature column.")
+        raise ValueError("COBRE requires at least one operational feature column.")
     if influent_columns != expected_influent_columns:
         raise ValueError(
-            "Collapsed COBRE requires influent measured columns to match constraint_reference columns in order."
+            "COBRE requires influent measured columns to match constraint_reference columns in order."
         )
 
     return operational_columns, influent_columns
@@ -145,13 +146,13 @@ def _build_outer_product_block(
     return block_values, block_columns
 
 
-def build_collapsed_cobre_design_frame(
+def build_cobre_design_frame(
     feature_frame: pd.DataFrame,
     constraint_columns: list[str],
     *,
     include_bias_term: bool,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Build the partitioned second-order design matrix used by Collapsed COBRE."""
+    """Build the partitioned second-order design matrix used by COBRE."""
 
     feature_column_list = list(feature_frame.columns)
     operational_columns, influent_columns = _resolve_feature_partition(feature_column_list, constraint_columns)
@@ -463,7 +464,7 @@ def _build_model_bundle(
     }
 
 
-def train_collapsed_cobre_model(
+def train_cobre_model(
     training_dataset: Mapping[str, pd.DataFrame | np.ndarray],
     model_hyperparameters: Mapping[str, Any],
     *,
@@ -471,7 +472,7 @@ def train_collapsed_cobre_model(
     training_options: Mapping[str, Any] | None = None,
     runtime_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fit the projected OLS Collapsed COBRE estimator on a prepared dataset."""
+    """Fit the projected OLS COBRE estimator on a prepared dataset."""
 
     _validate_scaling_configuration(model_hyperparameters)
 
@@ -483,7 +484,7 @@ def train_collapsed_cobre_model(
     options = _resolve_training_options(training_options, objective_name=objective_label)
     projection_matrix, projection_complement = _compute_projection_matrices(np.asarray(A_matrix, dtype=float))
 
-    design_frame, design_schema = build_collapsed_cobre_design_frame(
+    design_frame, design_schema = build_cobre_design_frame(
         feature_frame,
         list(constraint_frame.columns),
         include_bias_term=bool(model_hyperparameters.get("include_bias_term", True)),
@@ -563,14 +564,14 @@ def train_collapsed_cobre_model(
     }
 
 
-def predict_collapsed_cobre_model(
+def predict_cobre_model(
     test_dataset: pd.DataFrame | Mapping[str, pd.DataFrame | np.ndarray],
     model_path: str | Path,
     *,
     metadata: Mapping[str, Any] | None = None,
     composition_matrix: np.ndarray | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Load a persisted Collapsed COBRE bundle and generate aligned predictions."""
+    """Load a persisted COBRE bundle and generate aligned predictions."""
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
@@ -610,7 +611,7 @@ def predict_collapsed_cobre_model(
     }
 
 
-def run_collapsed_cobre_pipeline(
+def run_cobre_pipeline(
     training_split: DatasetSplit,
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
@@ -623,9 +624,9 @@ def run_collapsed_cobre_pipeline(
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Train, evaluate, and optionally persist one Collapsed COBRE bundle."""
+    """Train, evaluate, and optionally persist one COBRE bundle."""
 
-    params = dict(model_params) if model_params is not None else load_collapsed_cobre_params(repo_root)
+    params = dict(model_params) if model_params is not None else load_cobre_params(repo_root)
     split_params = dict(params["hyperparameters"])
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
     runtime_options = resolve_torch_runtime_options(params)
@@ -634,7 +635,7 @@ def run_collapsed_cobre_pipeline(
 
     progress_bar = create_progress_bar(
         total=5,
-        desc="Training Collapsed COBRE",
+        desc="Training COBRE",
         enabled=show_progress,
         unit="stage",
     )
@@ -651,7 +652,7 @@ def run_collapsed_cobre_pipeline(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="fit", objective=objective_label)
-        training_result = train_collapsed_cobre_model(
+        training_result = train_cobre_model(
             {
                 "features": scaled_training_split.features,
                 "targets": scaled_training_split.targets,
@@ -661,7 +662,7 @@ def run_collapsed_cobre_pipeline(
             A_matrix=np.asarray(A_matrix, dtype=float),
             training_options={
                 "show_progress": False,
-                "progress_description": "Training Collapsed COBRE",
+                "progress_description": "Training COBRE",
                 "objective_name": objective_label,
             },
             runtime_options=runtime_options,
@@ -762,10 +763,10 @@ def run_collapsed_cobre_pipeline(
 
 __all__ = [
     "MODEL_NAME",
-    "build_collapsed_cobre_design_frame",
-    "load_collapsed_cobre_params",
-    "predict_collapsed_cobre_model",
+    "build_cobre_design_frame",
+    "load_cobre_params",
+    "predict_cobre_model",
     "project_to_mass_balance",
-    "run_collapsed_cobre_pipeline",
-    "train_collapsed_cobre_model",
+    "run_cobre_pipeline",
+    "train_cobre_model",
 ]

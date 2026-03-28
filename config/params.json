@@ -433,7 +433,7 @@
       "timeout_seconds": null
     }
   },
-  "collapsed_cobre": {
+  "cobre": {
     "hyperparameters": {
       "random_seed": 42,
       "scale_features": false,

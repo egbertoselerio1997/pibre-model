@@ -10,11 +10,11 @@ from .catboost_regressor import (
 	predict_catboost_regressor_model,
 	run_catboost_regressor_pipeline,
 )
-from .collapsed_cobre import (
-	load_collapsed_cobre_params,
-	predict_collapsed_cobre_model,
-	run_collapsed_cobre_pipeline,
-	train_collapsed_cobre_model,
+from .cobre import (
+	load_cobre_params,
+	predict_cobre_model,
+	run_cobre_pipeline,
+	train_cobre_model,
 )
 from .lightgbm_regressor import (
 	load_lightgbm_regressor_params,
@@ -36,24 +36,24 @@ from .xgboost_regressor import (
 __all__ = [
 	"load_adaboost_regressor_params",
 	"load_catboost_regressor_params",
-	"load_collapsed_cobre_params",
+	"load_cobre_params",
 	"load_lightgbm_regressor_params",
 	"load_random_forest_regressor_params",
 	"load_svr_regressor_params",
 	"load_xgboost_regressor_params",
 	"predict_adaboost_regressor_model",
 	"predict_catboost_regressor_model",
-	"predict_collapsed_cobre_model",
+	"predict_cobre_model",
 	"predict_lightgbm_regressor_model",
 	"predict_random_forest_regressor_model",
 	"predict_svr_regressor_model",
 	"predict_xgboost_regressor_model",
 	"run_adaboost_regressor_pipeline",
 	"run_catboost_regressor_pipeline",
-	"run_collapsed_cobre_pipeline",
+	"run_cobre_pipeline",
 	"run_lightgbm_regressor_pipeline",
 	"run_random_forest_regressor_pipeline",
 	"run_svr_regressor_pipeline",
 	"run_xgboost_regressor_pipeline",
-	"train_collapsed_cobre_model",
+	"train_cobre_model",
 ]
