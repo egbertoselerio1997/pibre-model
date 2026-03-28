@@ -284,12 +284,14 @@ def _resolve_training_options(
     default_random_seed: int,
     default_log_interval: int,
     default_batch_size: int,
+    default_early_stopping_patience_epochs: int,
 ) -> dict[str, Any]:
     options = dict(training_options or {})
     options.setdefault("epochs", 100)
     options.setdefault("batch_size", default_batch_size)
     options.setdefault("random_seed", default_random_seed)
     options.setdefault("log_interval", default_log_interval)
+    options.setdefault("early_stopping_patience_epochs", default_early_stopping_patience_epochs)
     options.setdefault("prefer_directml", True)
     options.setdefault("adam_foreach", None)
     options.setdefault("show_progress", True)
@@ -321,11 +323,15 @@ def train_cobre_model(
     default_random_seed = int(training_options.get("random_seed", 42)) if training_options else 42
     default_log_interval = int(training_options.get("log_interval", 25)) if training_options else 25
     default_batch_size = int(training_options.get("batch_size", 64)) if training_options else 64
+    default_early_stopping_patience_epochs = (
+        int(training_options.get("early_stopping_patience_epochs", 20)) if training_options else 20
+    )
     options = _resolve_training_options(
         training_options,
         default_random_seed=default_random_seed,
         default_log_interval=default_log_interval,
         default_batch_size=default_batch_size,
+        default_early_stopping_patience_epochs=default_early_stopping_patience_epochs,
     )
     validation_dataset_raw = options["validation_dataset"]
     validation_dataset = None
@@ -360,7 +366,11 @@ def train_cobre_model(
 
     history: list[dict[str, float | int]] = []
     best_validation_loss = np.inf
+    best_loss_epoch = 0
     best_state_dict = copy.deepcopy(model.state_dict())
+    epochs_completed = 0
+    stopped_early = False
+    early_stopping_patience = max(int(options["early_stopping_patience_epochs"]), 1)
 
     progress_bar = create_progress_bar(
         total=int(options["epochs"]),
@@ -371,6 +381,7 @@ def train_cobre_model(
     progress_bar.set_postfix(objective=str(options["objective_name"]))
     try:
         for epoch in range(int(options["epochs"])):
+            epochs_completed = epoch + 1
             model.train()
             running_loss = 0.0
             sample_count = 0
@@ -396,23 +407,25 @@ def train_cobre_model(
             should_record = ((epoch + 1) % int(options["log_interval"]) == 0) or epoch == 0 or epoch == int(options["epochs"]) - 1
             if validation_dataset is not None:
                 validation_loss = _projected_mse(model, validation_dataset, device=device)
-                if validation_loss < best_validation_loss:
-                    best_validation_loss = validation_loss
-                    best_state_dict = copy.deepcopy(model.state_dict())
-
                 if trial is not None:
                     trial.report(validation_loss, step=epoch + 1)
                     if trial.should_prune():
                         raise optuna.TrialPruned()
-            else:
-                if train_loss < best_validation_loss:
-                    best_validation_loss = train_loss
-                    best_state_dict = copy.deepcopy(model.state_dict())
+
+            monitored_loss = float(validation_loss) if validation_loss is not None else float(train_loss)
+            if monitored_loss < best_validation_loss:
+                best_validation_loss = monitored_loss
+                best_loss_epoch = epoch + 1
+                best_state_dict = copy.deepcopy(model.state_dict())
+
+            stale_epochs = (epoch + 1) - best_loss_epoch
 
             if should_record:
                 history_row: dict[str, float | int] = {"epoch": epoch + 1, "train_loss": float(train_loss)}
                 if validation_loss is not None:
                     history_row["validation_loss"] = float(validation_loss)
+                history_row["monitored_loss"] = monitored_loss
+                history_row["stale_epochs"] = int(stale_epochs)
                 history.append(history_row)
 
             progress_kwargs: dict[str, str] = {
@@ -423,6 +436,10 @@ def train_cobre_model(
                 progress_kwargs["validation_loss"] = f"{validation_loss:.6g}"
             progress_bar.set_postfix(**progress_kwargs)
             progress_bar.update(1)
+
+            if stale_epochs >= early_stopping_patience:
+                stopped_early = True
+                break
     finally:
         progress_bar.close()
 
@@ -436,6 +453,10 @@ def train_cobre_model(
         "training_raw_predictions": training_raw,
         "best_validation_loss": float(best_validation_loss),
         "history": history,
+        "best_loss_epoch": int(best_loss_epoch),
+        "epochs_completed": int(epochs_completed),
+        "stopped_early": bool(stopped_early),
+        "early_stopping_patience_epochs": int(early_stopping_patience),
         "device": device_label,
     }
 
@@ -558,6 +579,7 @@ def run_cobre_pipeline(
         "batch_size": selected_batch_size,
         "random_seed": int(split_params["random_seed"]),
         "log_interval": int(split_params["log_interval"]),
+        "early_stopping_patience_epochs": int(split_params["early_stopping_patience_epochs"]),
         "prefer_directml": runtime_options["prefer_directml"],
         "adam_foreach": runtime_options["adam_foreach"],
         "show_progress": show_progress,

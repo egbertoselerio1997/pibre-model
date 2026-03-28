@@ -426,8 +426,8 @@
     "hyperparameters": {
       "random_seed": 42,
       "test_fraction": 0.2,
-      "optuna_dataset_fraction": 0.1,
-      "optuna_test_fraction": 0.5,
+      "optuna_dataset_fraction": 0.5,
+      "optuna_test_fraction": 0.2,
       "tuning_epochs": 500,
       "n_trials": 30,
       "timeout_seconds": null
@@ -440,7 +440,8 @@
       "scale_features": true,
       "scale_targets": false,
       "log_interval": 25,
-      "training_epochs": 500
+      "training_epochs": 500,
+      "early_stopping_patience_epochs": 20
     },
     "runtime": {
       "prefer_directml": true,
@@ -486,8 +487,8 @@
       },
       "batch_size": {
         "type": "int",
-        "low": 32,
-        "high": 128,
+        "low": 500,
+        "high": 5000,
         "log": false
       }
     },

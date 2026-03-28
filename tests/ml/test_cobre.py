@@ -120,6 +120,10 @@ class CobreModelTests(unittest.TestCase):
         projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
         self.assertLess(float(projected_row["constraint_max_abs"]), 5e-4)
         self.assertLess(float(projected_row["constraint_mean_l2"]), 5e-4)
+        self.assertEqual(
+            int(result["model_bundle"]["training_options"]["early_stopping_patience_epochs"]),
+            int(cast(dict[str, Any], params["hyperparameters"])["early_stopping_patience_epochs"]),
+        )
 
     def test_predict_cobre_model_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()
@@ -234,6 +238,51 @@ class CobreModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertFalse(progress_factory.call_args.kwargs["enabled"])
 
+    @patch("src.models.ml.cobre._projected_mse")
+    def test_train_cobre_model_stops_early_when_loss_stalls(self, projected_mse: MagicMock) -> None:
+        projected_mse.side_effect = [1.0, 1.1, 1.2, 1.3, 1.4]
+        params = self._tiny_params()
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        training_result = train_cobre_model(
+            {
+                "features": dataset_splits.train.features,
+                "targets": dataset_splits.train.targets,
+                "constraint_reference": dataset_splits.train.constraint_reference,
+            },
+            cast(dict[str, float], params["training_defaults"]),
+            A_matrix=self.a_matrix,
+            training_options={
+                "epochs": 20,
+                "batch_size": 8,
+                "random_seed": 11,
+                "log_interval": 1,
+                "early_stopping_patience_epochs": 3,
+                "prefer_directml": True,
+                "adam_foreach": None,
+                "show_progress": False,
+                "validation_dataset": {
+                    "features": dataset_splits.test.features,
+                    "targets": dataset_splits.test.targets,
+                    "constraint_reference": dataset_splits.test.constraint_reference,
+                },
+            },
+        )
+
+        self.assertTrue(training_result["stopped_early"])
+        self.assertEqual(int(training_result["best_loss_epoch"]), 1)
+        self.assertEqual(int(training_result["epochs_completed"]), 4)
+        self.assertEqual(int(training_result["early_stopping_patience_epochs"]), 3)
+
     def _tiny_params(self) -> dict[str, object]:
         params: dict[str, object] = copy.deepcopy(
             {
@@ -244,6 +293,7 @@ class CobreModelTests(unittest.TestCase):
                     "scale_targets": False,
                     "log_interval": 5,
                     "training_epochs": 12,
+                    "early_stopping_patience_epochs": 20,
                 },
                 "runtime": {
                     "prefer_directml": True,

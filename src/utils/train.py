@@ -350,6 +350,7 @@ def tune_cobre_hyperparameters(
                 "batch_size": tuned_batch_size,
                 "random_seed": seed + int(trial.number),
                 "log_interval": int(split_params["log_interval"]),
+                "early_stopping_patience_epochs": int(split_params["early_stopping_patience_epochs"]),
                 "prefer_directml": runtime_options["prefer_directml"],
                 "adam_foreach": runtime_options["adam_foreach"],
                 "show_progress": False,
