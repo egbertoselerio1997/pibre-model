@@ -6,7 +6,7 @@ The svr_regressor module implements a measured-space surrogate based on sklearn.
 
 ## 2. Background and use case
 
-Support Vector Regression, or SVR, is a kernel-based method that seeks a function with controlled complexity while tolerating small prediction errors inside an epsilon-insensitive tube. It is valuable in this repository because it provides a fundamentally different nonlinear surrogate from tree ensembles and from COBRE.
+Support Vector Regression, or SVR, is a kernel-based method that seeks a function with controlled complexity while tolerating small prediction errors inside an epsilon-insensitive tube. It is valuable in this repository because it provides a fundamentally different nonlinear surrogate from the tree-based regressors and from the repository's projected least-squares baseline.
 
 ## 3. Mathematical definition
 

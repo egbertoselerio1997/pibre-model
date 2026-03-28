@@ -12,8 +12,7 @@ It answers two implementation questions:
 The short answer is:
 
 - for the classical regressors (`adaboost_regressor`, `catboost_regressor`, `lightgbm_regressor`, `random_forest_regressor`, `svr_regressor`, `xgboost_regressor`), projection is external to estimator fitting and is applied after the model produces raw predictions
-- for `uncobre`, projection is also external to estimator fitting and is applied after the model produces raw predictions
-- for `cobre`, projection is embedded in the PyTorch model's forward pass and the training loss is computed on projected predictions
+- for `collapsed_cobre`, projection is folded analytically into the least-squares solution, and the repository still reports both raw and projected predictions derived from the fitted parameter matrices
 
 ## 2. Measured-space constraint construction in the notebook
 
@@ -254,44 +253,27 @@ Prediction proceeds as follows:
 
 This confirms that even after persistence, the projection remains an explicit downstream step applied to raw predictions.
 
-## 9. `uncobre`: same external projection pattern
+## 9. `collapsed_cobre`: projection collapsed into the OLS solve
 
-`src/models/ml/uncobre.py` behaves differently from the classical regressors in model form, but not in its projection placement.
+`src/models/ml/collapsed_cobre.py` does not train an unconstrained predictor and then project it afterwards. It analytically folds the measured-space projector into the least-squares problem.
 
-Its estimator is a degree-2 feature expansion followed by OLS or Ridge regression. Training occurs on unconstrained targets. Projection is applied afterwards in `_predict_unconstrained_split(...)` using the same `project_to_mass_balance(...)` helper.
+The training path:
 
-So `uncobre` follows the same projection placement pattern as the classical regressors:
+1. builds a partitioned second-order design matrix over operational variables and influent measured composites
+2. computes the measured-space projection matrix and its complement
+3. projects the training targets into the feasible subspace during the OLS assembly step
+4. solves for one raw parameter matrix and one effective projected parameter matrix
 
-- fit unconstrained model
-- predict raw outputs
-- project raw outputs externally
-- report both raw and projected metrics
+The stored bundle therefore contains both:
 
-## 10. `cobre`: projection embedded inside training
+- `raw_parameter_matrix` for the unconstrained bilinear response
+- `effective_parameter_matrix` for the projected measured-space response
 
-`src/models/ml/cobre.py` is the one model family where the projection is not merely external post-processing.
+Prediction then evaluates both parameter matrices on the same design frame. So `collapsed_cobre` is different from the classical regressors:
 
-The class `ProjectedCOBRE` constructs and stores the projection operator as a fixed buffer during initialization. In the `forward(...)` method it:
-
-1. computes raw bilinear predictions
-2. immediately projects those predictions using the stored operator and the batch-specific `constraint_reference`
-3. returns both projected and raw predictions
-
-The training loop then computes its loss on the projected predictions:
-
-$$
-\mathcal{L} = \operatorname{MSE}(\hat{y}_{proj}, y) + \lambda_{L1} \lVert w \rVert_1
-$$
-
-That makes `cobre` fundamentally different from the other regressors.
-
-For `cobre`:
-
-- the projection is part of the model graph
-- gradients flow through the projected outputs used in the loss
-- training directly optimizes physically compliant predictions
-
-The repository still reports both raw and projected outputs for analysis, but the fitted parameters were learned through a projected objective.
+- projection is not a post-hoc call to `project_to_mass_balance(...)` at evaluation time
+- projection is not a differentiable training loop inside a neural network
+- projection is built directly into the closed-form linear-algebra solution used for fitting
 
 ## 11. Summary by model family
 
@@ -322,45 +304,23 @@ Reported notebook outputs:
 
 - both raw and projected metrics and residuals
 
-### 11.2 UNCOBRE
+### 11.2 Collapsed COBRE
 
 Model:
 
-- polynomial or bilinear feature expansion plus OLS or Ridge
+- partitioned bilinear design with projected multivariate least squares
 
 Projection placement:
 
-- external post-processing step
+- collapsed analytically into the fitted parameter matrices
 
 Training target:
 
-- unconstrained raw measured outputs
+- targets projected through the measured-space projector complement during the OLS solve
 
 Tuning objective:
 
-- projected validation MSE
-
-Reported notebook outputs:
-
-- both raw and projected metrics and residuals
-
-### 11.3 COBRE
-
-Model:
-
-- bilinear PyTorch model with fixed differentiable projection layer
-
-Projection placement:
-
-- embedded inside the model forward pass
-
-Training target:
-
-- projected outputs
-
-Tuning objective:
-
-- projected validation loss
+- none in the current repository workflow
 
 Reported notebook outputs:
 
@@ -376,7 +336,7 @@ When reading the classical-regressor outputs in `main.ipynb`, keep the following
 
 Therefore, if the projected metrics improve or the projected constraint residuals collapse toward zero, that does not mean the estimator itself learned the invariants. It means the repository's post-processing projection successfully corrected the raw outputs.
 
-For `cobre`, the interpretation is different: projected outputs are not just a post-hoc correction. They are the outputs the model was explicitly trained to optimize.
+For `collapsed_cobre`, the interpretation is different: projected outputs are not just a post-hoc correction. They come from the effective parameter matrix obtained by analytically incorporating the projection into the regression solve.
 
 ## 13. Why the pseudoinverse form is used
 
@@ -423,16 +383,12 @@ Classical regressor wrappers:
 - `src/models/ml/svr_regressor.py`
 - `src/models/ml/xgboost_regressor.py`
 
-External-projection bilinear baseline:
+Projected least-squares bilinear model:
 
-- `src/models/ml/uncobre.py`
-
-Embedded differentiable projection model:
-
-- `src/models/ml/cobre.py`
+- `src/models/ml/collapsed_cobre.py`
 
 ## 15. Final answer to the implementation question
 
 For `src/models/ml/adaboost_regressor.py`, `src/models/ml/catboost_regressor.py`, and the other classical regressors, the orthogonal null-space projection is not embedded within model training. The estimator is trained first, raw predictions are generated, and those raw predictions are then projected to produce the projected outputs shown in `main.ipynb`.
 
-The only model in this repository where the projection is embedded into training is `src/models/ml/cobre.py`.
+For `src/models/ml/collapsed_cobre.py`, the projection is not a separate prediction-time correction step. It is incorporated analytically into the least-squares formulation that produces the effective projected parameter matrix.

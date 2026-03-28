@@ -10,15 +10,9 @@ import numpy as np
 from scipy.linalg import null_space
 
 from src.models.ml.adaboost_regressor import build_adaboost_regressor_model, load_adaboost_regressor_params
-from src.models.ml.cobre import load_cobre_params
-from src.models.ml.uncobre import load_uncobre_params
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.process import build_measured_supervised_dataset, make_train_test_split, sample_dataset_fraction
-from src.utils.train import (
-    tune_cobre_hyperparameters,
-    tune_uncobre_hyperparameters,
-    tune_tabular_regressor_hyperparameters,
-)
+from src.utils.train import tune_tabular_regressor_hyperparameters
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -34,55 +28,6 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
             a_matrix[row_index, :] = a_matrix[row_index, :] / non_zero_entries[0]
 
     return a_matrix
-
-
-def _build_tiny_cobre_params() -> dict[str, object]:
-    params = copy.deepcopy(load_cobre_params())
-    params["hyperparameters"]["random_seed"] = 11
-    params["hyperparameters"]["batch_size"] = 8
-    params["hyperparameters"]["log_interval"] = 2
-    params["hyperparameters"]["training_epochs"] = 8
-    params["search_space"] = {
-        "learning_rate": {"type": "float", "low": 0.005, "high": 0.02, "log": True},
-        "lambda_l1": {"type": "float", "low": 0.00001, "high": 0.001, "log": True},
-        "weight_decay": {"type": "float", "low": 0.00000001, "high": 0.0001, "log": True},
-        "clip_max_norm": {"type": "float", "low": 0.5, "high": 2.0, "log": False},
-        "bilinear_init_scale": {"type": "float", "low": 0.001, "high": 0.02, "log": True},
-        "batch_size": {"type": "int", "low": 4, "high": 12, "log": False},
-    }
-    params["pruner"] = {
-        "type": "median",
-        "n_startup_trials": 1,
-        "n_warmup_steps": 1,
-        "interval_steps": 1,
-    }
-    return params
-
-
-def _build_tiny_uncobre_params() -> dict[str, object]:
-    params = copy.deepcopy(load_uncobre_params())
-    params["hyperparameters"]["random_seed"] = 11
-    params["training_defaults"] = {
-        "regression_mode": "ridge",
-        "ridge_alpha": 0.1,
-        "fit_intercept": True,
-        "include_bias": False,
-        "interaction_only": False,
-        "random_state": 11,
-    }
-    params["search_space"] = {
-        "regression_mode": {"type": "categorical", "choices": ["ols", "ridge"]},
-        "ridge_alpha": {"type": "float", "low": 0.001, "high": 1.0, "log": True},
-        "fit_intercept": {"type": "categorical", "choices": [True, False]},
-        "include_bias": {"type": "categorical", "choices": [False, True]},
-    }
-    params["pruner"] = {
-        "type": "median",
-        "n_startup_trials": 1,
-        "n_warmup_steps": 1,
-        "interval_steps": 1,
-    }
-    return params
 
 
 def _build_tiny_adaboost_params() -> dict[str, object]:
@@ -117,45 +62,6 @@ class MlOrchestrationTests(unittest.TestCase):
         self.assertTrue(set(main_splits.test.features.index).isdisjoint(tuning_splits.train.features.index))
         self.assertTrue(set(main_splits.test.features.index).isdisjoint(tuning_splits.test.features.index))
         self.assertLess(len(tuning_dataset.features), len(main_splits.train.features))
-
-    def test_external_cobre_tuning_returns_hyperparameters(self) -> None:
-        params = _build_tiny_cobre_params()
-        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
-        tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
-        tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
-
-        best_hyperparameters, optuna_summary = tune_cobre_hyperparameters(
-            tuning_splits.train,
-            tuning_splits.test,
-            A_matrix=self.a_matrix,
-            model_params=params,
-            tuning_epochs=3,
-            n_trials=1,
-            show_progress_bar=False,
-        )
-
-        self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
-        self.assertIn("batch_size", best_hyperparameters)
-        self.assertIn("batch_size", optuna_summary["best_params"])
-        self.assertEqual(optuna_summary["n_trials"], 1)
-
-    def test_external_uncobre_tuning_returns_hyperparameters(self) -> None:
-        params = _build_tiny_uncobre_params()
-        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
-        tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
-        tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
-
-        best_hyperparameters, optuna_summary = tune_uncobre_hyperparameters(
-            tuning_splits.train,
-            tuning_splits.test,
-            A_matrix=self.a_matrix,
-            model_params=params,
-            n_trials=1,
-            show_progress_bar=False,
-        )
-
-        self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
-        self.assertEqual(optuna_summary["n_trials"], 1)
 
     def test_external_tabular_tuning_returns_hyperparameters(self) -> None:
         params = _build_tiny_adaboost_params()
@@ -200,26 +106,27 @@ class MlOrchestrationTests(unittest.TestCase):
         self.assertIn("validation_mse", progress_factory.call_args.kwargs["desc"])
 
     @patch("src.utils.optuna.create_progress_bar")
-    def test_cobre_tuning_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
+    def test_tabular_tuning_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
-        params = _build_tiny_cobre_params()
+        params = _build_tiny_adaboost_params()
         main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
         tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
         tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
 
-        tune_cobre_hyperparameters(
+        tune_tabular_regressor_hyperparameters(
+            "adaboost_regressor",
+            build_adaboost_regressor_model,
             tuning_splits.train,
             tuning_splits.test,
             A_matrix=self.a_matrix,
             model_params=params,
-            tuning_epochs=3,
             n_trials=1,
             show_progress_bar=False,
         )
 
         self.assertTrue(progress_factory.called)
         self.assertFalse(progress_factory.call_args.kwargs["enabled"])
-        self.assertIn("validation_loss", progress_factory.call_args.kwargs["desc"])
+        self.assertIn("validation_mse", progress_factory.call_args.kwargs["desc"])
 
 
 if __name__ == "__main__":

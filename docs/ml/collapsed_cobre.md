@@ -12,7 +12,7 @@ and solves for the coefficients after analytically collapsing the orthogonal pro
 
 ## 2. Background and use case
 
-The neural COBRE model in this repository learns bilinear raw kinetics and enforces stoichiometric consistency through a projection layer during training. UNCOBRE instead trains an unconstrained surrogate and applies the projection only after prediction. Collapsed COBRE occupies a third point in that design space.
+Collapsed COBRE provides a bilinear measured-space surrogate whose projection is handled analytically inside the regression formulation itself rather than by a separate post-processing step.
 
 It uses the same measured-space feature contract and the same stoichiometric projection matrix, but the parameters are computed analytically by projected multivariate least squares. This is useful when:
 
