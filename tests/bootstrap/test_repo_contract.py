@@ -98,6 +98,16 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertIn("TQDM progress bars", rules_text)
         self.assertIn("enabled by default", rules_text)
 
+    def test_rules_require_common_plot_theme(self) -> None:
+        rules_path = REPO_ROOT / "CODEBASE_RULES.md"
+        rules_text = rules_path.read_text(encoding="utf-8")
+
+        self.assertIn("### 12.1 Common Plot Theme and Style", rules_text)
+        self.assertIn("Pibre Scientific theme", rules_text)
+        self.assertIn("default qualitative data cycle", rules_text)
+        self.assertIn("default sequential colormap: cividis", rules_text)
+        self.assertIn("blue-white-vermilion", rules_text)
+
     def test_pyproject_declares_tqdm_dependency(self) -> None:
         pyproject_path = REPO_ROOT / "pyproject.toml"
         with pyproject_path.open("rb") as handle:

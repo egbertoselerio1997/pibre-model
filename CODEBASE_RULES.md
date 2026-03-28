@@ -116,6 +116,50 @@ The src/utils folder must contain reusable helper modules with the following int
 
 These helpers must be designed for maximum reuse, especially optuna.py, train.py, test.py, metrics.py, plot.py, and analysis.py.
 
+### 12.1 Common Plot Theme and Style
+
+All generated plots, whether produced from Python modules, notebooks, tests that persist figures, or documentation-support scripts, must use one repository-wide plotting theme applied through shared helpers in src/utils/plot.py.
+
+The repository standard theme is the Pibre Scientific theme. It must be implemented as reusable semantic style tokens rather than ad hoc per-figure overrides so the same appearance can be reproduced across line plots, scatter plots, bar charts, histograms, box plots, violin plots, heatmaps, contour plots, parity plots, residual plots, time-series plots, pair plots, and future plot types.
+
+Minimum theme requirements:
+
+- figure or canvas background: off-white #F7F4EA
+- axes background: white #FFFFFF
+- primary text and primary spine color: charcoal #22303C
+- secondary text color: muted slate #5B6770
+- major grid color: #D8DEE6
+- minor grid color: #EEF2F5
+- default qualitative data cycle, in order: #0072B2, #E69F00, #009E73, #D55E00, #CC79A7, #56B4E9, #F0E442, #4D4D4D
+- default sequential colormap: cividis
+- default diverging colormap: a blue-white-vermilion scale anchored at #0072B2, #F7F7F7, and #D55E00, with the midpoint explicitly centered on the reference value
+- missing, masked, or out-of-domain values: neutral gray #B0B7BF that is visually distinct from active data colors
+
+Theme application requirements:
+
+- all plotting code must apply the repository theme from a shared entry point in src/utils/plot.py before drawing data
+- matplotlib, seaborn, and pandas plotting code must load repository rcParams or equivalent shared defaults from src/utils/plot.py
+- any plotting library that cannot consume those rcParams directly must map the same semantic colors, typography, backgrounds, line widths, marker defaults, and grid styling through an equivalent adapter in src/utils/plot.py
+- local style overrides are allowed only when required by the plot type, accessibility, or publication constraints, and the override must preserve the repository theme's semantic color roles
+
+Default style requirements for all plots:
+
+- use DejaVu Sans or an explicitly configured repository-wide sans-serif fallback
+- title text, axis labels, ticks, and legends must use the repository text colors
+- axis labels and legend labels must use clear sentence case, and units must be included whenever the plotted quantity has units
+- default line width must be 2.0 and default marker edge width must be 0.75 unless a plot type requires a different visual density
+- gridlines must remain visible but subordinate to the data, with a light visual weight and an effective alpha between 0.35 and 0.55
+- top and right spines should be removed unless they are necessary for interpretation, while left and bottom spines must remain subtle rather than heavy black borders
+- saved static figures must not use an export resolution below 120 dpi
+
+Color-consistency and accessibility rules:
+
+- categorical colors must be assigned by semantic meaning consistently across figures whenever a category recurs
+- when an observed and predicted pair, train and test pair, baseline and model pair, or measured and simulated pair recurs, the same colors must be reused across all figures in the repository
+- critical distinctions must not rely on color alone when line style, marker shape, annotation, hatching, or direct labeling can provide redundant interpretation support
+- rainbow or jet colormaps, saturated neon colors, and arbitrary per-figure palette changes are not allowed
+- heatmaps and other scalar-field plots must include a colorbar or another explicit scalar legend whenever color encodes magnitude
+
 ## 13. Simulation Dataset Output Contract
 
 All simulation-generated datasets for machine learning training must be saved under:
