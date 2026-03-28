@@ -485,8 +485,10 @@
         "log": true
       },
       "batch_size": {
-        "type": "categorical",
-        "choices": [32, 64, 96, 128]
+        "type": "int",
+        "low": 32,
+        "high": 128,
+        "log": false
       }
     },
     "pruner": {
