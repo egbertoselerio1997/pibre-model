@@ -550,9 +550,14 @@
       "scale_features": false,
       "scale_targets": false
     },
+    "runtime": {
+      "prefer_directml": false,
+      "adam_foreach": null
+    },
     "training_defaults": {
       "objective": "projected_ols",
       "solver": "multivariate_lstsq",
+      "ols_backend": "auto",
       "include_bias_term": true,
       "lstsq_rcond": null
     },

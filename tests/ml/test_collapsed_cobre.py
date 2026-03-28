@@ -124,7 +124,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
         self.assertLess(summary["constraint_max_abs"], 5e-7)
 
     def test_projected_ols_matches_explicit_kronecker_solution(self) -> None:
-        params = self._tiny_params()
+        params = self._tiny_params(ols_backend="numpy_lstsq")
         measured_dataset = build_measured_supervised_dataset(
             self.dataset,
             self.metadata,
@@ -177,6 +177,88 @@ class CollapsedCobreModelTests(unittest.TestCase):
             atol=1e-8,
             rtol=1e-8,
         )
+
+    @patch("src.models.ml.collapsed_cobre.get_training_device")
+    def test_auto_backend_falls_back_to_numpy_when_directml_unavailable(self, get_training_device_mock: MagicMock) -> None:
+        get_training_device_mock.return_value = (object(), "cpu")
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        training_result = train_collapsed_cobre_model(
+            {
+                "features": dataset_splits.train.features,
+                "targets": dataset_splits.train.targets,
+                "constraint_reference": dataset_splits.train.constraint_reference,
+            },
+            self._tiny_params(ols_backend="auto")["training_defaults"],
+            A_matrix=self.a_matrix,
+            training_options={"show_progress": False},
+            runtime_options={"prefer_directml": True},
+        )
+
+        self.assertEqual(training_result["ols_metadata"]["requested_backend"], "auto")
+        self.assertEqual(training_result["ols_metadata"]["backend_used"], "numpy_lstsq")
+        self.assertEqual(training_result["ols_metadata"]["device_label"], "cpu")
+        self.assertIn("DirectML device unavailable", str(training_result["ols_metadata"]["fallback_reason"]))
+
+    @patch("src.models.ml.collapsed_cobre._compute_ols_cross_products_with_torch")
+    @patch("src.models.ml.collapsed_cobre.get_training_device")
+    def test_auto_backend_prefers_directml_when_available(
+        self,
+        get_training_device_mock: MagicMock,
+        compute_cross_products_mock: MagicMock,
+    ) -> None:
+        get_training_device_mock.return_value = (object(), "directml")
+        measured_dataset = build_measured_supervised_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            measured_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        design_frame, _ = build_collapsed_cobre_design_frame(
+            dataset_splits.train.features,
+            list(dataset_splits.train.constraint_reference.columns),
+            include_bias_term=True,
+        )
+        projection_matrix = build_projection_operator(self.a_matrix)
+        projection_matrix = 0.5 * (projection_matrix + projection_matrix.T)
+        projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
+        projected_targets = dataset_splits.train.targets.to_numpy(dtype=float) @ projection_complement.T
+        design_values = design_frame.to_numpy(dtype=float)
+        compute_cross_products_mock.return_value = (
+            design_values.T @ design_values,
+            design_values.T @ projected_targets,
+            "float32",
+        )
+
+        training_result = train_collapsed_cobre_model(
+            {
+                "features": dataset_splits.train.features,
+                "targets": dataset_splits.train.targets,
+                "constraint_reference": dataset_splits.train.constraint_reference,
+            },
+            self._tiny_params(ols_backend="auto")["training_defaults"],
+            A_matrix=self.a_matrix,
+            training_options={"show_progress": False},
+            runtime_options={"prefer_directml": True},
+        )
+
+        self.assertEqual(training_result["ols_metadata"]["backend_used"], "directml_normal_equations")
+        self.assertEqual(training_result["ols_metadata"]["device_label"], "directml")
+        self.assertIsNone(training_result["ols_metadata"]["fallback_reason"])
+        self.assertEqual(training_result["ols_metadata"]["matrix_multiplication_dtype"], "float32")
 
     @patch("src.models.ml.collapsed_cobre.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
@@ -233,7 +315,7 @@ class CollapsedCobreModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertFalse(progress_factory.call_args.kwargs["enabled"])
 
-    def _tiny_params(self) -> dict[str, Any]:
+    def _tiny_params(self, *, ols_backend: str = "numpy_lstsq") -> dict[str, Any]:
         return copy.deepcopy(
             {
                 "hyperparameters": {
@@ -241,9 +323,14 @@ class CollapsedCobreModelTests(unittest.TestCase):
                     "scale_features": False,
                     "scale_targets": False,
                 },
+                "runtime": {
+                    "prefer_directml": True,
+                    "adam_foreach": None,
+                },
                 "training_defaults": {
                     "objective": "projected_ols",
                     "solver": "multivariate_lstsq",
+                    "ols_backend": ols_backend,
                     "include_bias_term": True,
                     "lstsq_rcond": None,
                 },

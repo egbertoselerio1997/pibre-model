@@ -99,6 +99,13 @@ $$
 
 This is algebraically equivalent to the Kronecker formulation of the projected OLS problem, but it is solved without explicitly materializing the dense Kronecker matrix.
 
+The implementation supports two numerical backends for this regression step:
+
+- a baseline NumPy backend that applies `numpy.linalg.lstsq` directly to $(\Phi, Y_{\perp})$
+- a DirectML-priority backend that offloads the matrix multiplications needed for the normal-equation terms $\Phi^T \Phi$ and $\Phi^T Y_{\perp}$ to a DirectML-backed torch device and then solves the resulting linear system on the CPU
+
+The configured default is `ols_backend = "auto"`, which tries the DirectML path first and falls back to the baseline NumPy least-squares solve whenever DirectML is unavailable or fails.
+
 ## 4. Inputs, outputs, and assumptions
 
 Inputs follow the existing measured-space repository contract:
@@ -126,12 +133,13 @@ The exact repository workflow is:
 4. partition the existing measured-space features into $u$ and $C_{in}$ using the column contract
 5. build the full second-order design matrix with explicit block ordering
 6. compute $P$ and $P_{\perp}$ from the supplied $A$ matrix
-7. solve the projected multivariate least-squares system with `numpy.linalg.lstsq`
-8. recover raw coefficient blocks for one minimum-norm representative of the unconstrained model and then construct the effective collapsed coefficients by adding the $P$ pass-through contribution to the linear influent block
-9. evaluate both raw and projected predictions with the shared reporting utilities
-10. optionally persist a pickle bundle and metrics JSON under the configured results paths
+7. resolve the configured OLS backend and try the DirectML matrix-multiplication path first when available
+8. otherwise solve the projected multivariate least-squares system directly with `numpy.linalg.lstsq`
+9. recover raw coefficient blocks for one minimum-norm representative of the unconstrained model and then construct the effective collapsed coefficients by adding the $P$ pass-through contribution to the linear influent block
+10. evaluate both raw and projected predictions with the shared reporting utilities
+11. optionally persist a pickle bundle and metrics JSON under the configured results paths
 
-The saved bundle includes the design-schema metadata, raw and effective parameter matrices, named coefficient blocks, the projection matrices, and the standard scaling and column-order metadata used elsewhere in the repository.
+The saved bundle includes the design-schema metadata, raw and effective parameter matrices, named coefficient blocks, the projection matrices, backend-selection metadata for the OLS solve, and the standard scaling and column-order metadata used elsewhere in the repository.
 
 ## 6. Architecture details and adopted standard architecture name
 
@@ -145,7 +153,7 @@ The repository deliberately keeps the quadratic blocks unsymmetrized. In other w
 
 There is no gradient descent, no early stopping, and no Optuna path for this model in the current repository implementation.
 
-Training is fully deterministic once the notebook-managed dataset split is fixed. The only numerical solver is the least-squares routine used to solve the projected multivariate regression system.
+Training is fully deterministic once the notebook-managed dataset split is fixed. The baseline numerical solver is the NumPy least-squares routine used to solve the projected multivariate regression system. When `ols_backend` is set to `auto`, the repository first attempts a DirectML-assisted normal-equations path that accelerates the cross-product matrix multiplications before falling back to the baseline NumPy solve.
 
 Because the raw coefficient matrix is only identifiable up to components annihilated by $P_{\perp}$, the repository stores both:
 
@@ -180,6 +188,7 @@ Expected failure modes:
 - inconsistent column ordering between features and constraint references will break the partitioned design assumptions
 - weak extrapolation outside the simulation envelope, as with any polynomial surrogate
 - numerical ill-conditioning if the design matrix becomes nearly rank-deficient for a particular dataset split
+- slightly different numerical answers between the baseline and DirectML-assisted paths because the DirectML matrix multiplications use torch tensors before the final CPU solve
 
 ## 10. References
 
