@@ -340,8 +340,11 @@ def _compute_ols_cross_products_with_torch(
     device_label: str,
 ) -> tuple[np.ndarray, np.ndarray, str]:
     matrix_dtype = torch.float32 if device_label == "directml" else torch.float64
-    design_tensor = torch.as_tensor(design_matrix, dtype=matrix_dtype, device=device)
-    target_tensor = torch.as_tensor(target_matrix, dtype=matrix_dtype, device=device)
+    # Ensure writable, contiguous host buffers before torch conversion.
+    design_values = np.array(design_matrix, dtype=float, copy=True)
+    target_values = np.array(target_matrix, dtype=float, copy=True)
+    design_tensor = torch.as_tensor(design_values, dtype=matrix_dtype, device=device)
+    target_tensor = torch.as_tensor(target_values, dtype=matrix_dtype, device=device)
     gram_matrix = (design_tensor.T @ design_tensor).detach().cpu().numpy().astype(float, copy=False)
     rhs_matrix = (design_tensor.T @ target_tensor).detach().cpu().numpy().astype(float, copy=False)
     return gram_matrix, rhs_matrix, str(matrix_dtype).replace("torch.", "")

@@ -325,7 +325,6 @@ class CobreModelTests(unittest.TestCase):
                 },
                 "runtime": {
                     "prefer_directml": True,
-                    "adam_foreach": None,
                 },
                 "training_defaults": {
                     "objective": "projected_ols",
@@ -337,7 +336,6 @@ class CobreModelTests(unittest.TestCase):
                 "artifact_options": {
                     "persist_model": True,
                     "persist_metrics": True,
-                    "persist_optuna": False,
                 },
             }
         )

@@ -440,8 +440,7 @@
       "scale_targets": false
     },
     "runtime": {
-      "prefer_directml": false,
-      "adam_foreach": null
+      "prefer_directml": true
     },
     "training_defaults": {
       "objective": "projected_ols",
@@ -452,8 +451,7 @@
     },
     "artifact_options": {
       "persist_model": true,
-      "persist_metrics": true,
-      "persist_optuna": false
+      "persist_metrics": true
     }
   },
   "xgboost_regressor": {
