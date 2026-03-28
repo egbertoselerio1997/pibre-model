@@ -43,16 +43,8 @@ def resolve_training_objective_label(
     return default
 
 
-def get_training_device(*, prefer_directml: bool = True) -> tuple[Any, str]:
+def get_training_device() -> tuple[Any, str]:
     """Return the best available PyTorch device and a human-readable label."""
-
-    if prefer_directml:
-        try:
-            import torch_directml
-
-            return torch_directml.device(), "directml"
-        except ImportError:
-            pass
 
     if torch.cuda.is_available():
         return torch.device("cuda"), "cuda"
@@ -65,7 +57,6 @@ def resolve_torch_runtime_options(model_params: Mapping[str, Any]) -> dict[str, 
 
     runtime_params = dict(model_params.get("runtime", {}))
     return {
-        "prefer_directml": bool(runtime_params.get("prefer_directml", True)),
         "adam_foreach": runtime_params.get("adam_foreach"),
     }
 
@@ -74,8 +65,6 @@ def resolve_torch_adam_options(*, device_label: str, foreach: Any = None) -> dic
     """Resolve Adam keyword arguments that avoid backend fallbacks when possible."""
 
     if foreach is None:
-        if device_label == "directml":
-            return {"foreach": False}
         return {}
 
     return {"foreach": bool(foreach)}

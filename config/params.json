@@ -439,13 +439,10 @@
       "scale_features": false,
       "scale_targets": false
     },
-    "runtime": {
-      "prefer_directml": true
-    },
     "training_defaults": {
       "objective": "projected_ols",
       "solver": "multivariate_lstsq",
-      "ols_backend": "auto",
+      "ols_backend": "numpy_lstsq",
       "include_bias_term": true,
       "lstsq_rcond": null
     },

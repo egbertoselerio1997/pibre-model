@@ -7,7 +7,6 @@ from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
-import torch
 
 from src.utils.optuna import create_progress_bar
 from src.utils.process import (
@@ -23,19 +22,17 @@ from src.utils.process import (
 from src.utils.simulation import load_model_params
 from src.utils.test import evaluate_prediction_bundle
 from src.utils.train import (
-    get_training_device,
     load_model_bundle,
     persist_training_artifacts,
     resolve_model_hyperparameters,
     resolve_training_objective_label,
-    resolve_torch_runtime_options,
     serialize_report_frames,
     transform_feature_frame,
 )
 
 
 MODEL_NAME = "cobre"
-VALID_OLS_BACKENDS = {"auto", "numpy_lstsq", "directml_normal_equations"}
+VALID_OLS_BACKENDS = {"numpy_lstsq"}
 
 
 def load_cobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
@@ -56,14 +53,8 @@ def _resolve_training_options(
     return options
 
 
-def _resolve_runtime_options(runtime_options: Mapping[str, Any] | None) -> dict[str, Any]:
-    options = dict(runtime_options or {})
-    options.setdefault("prefer_directml", True)
-    return options
-
-
 def _resolve_ols_backend(model_hyperparameters: Mapping[str, Any]) -> str:
-    backend_name = str(model_hyperparameters.get("ols_backend", "auto")).strip().lower()
+    backend_name = str(model_hyperparameters.get("ols_backend", "numpy_lstsq")).strip().lower()
     if backend_name not in VALID_OLS_BACKENDS:
         valid_values = ", ".join(sorted(VALID_OLS_BACKENDS))
         raise ValueError(f"COBRE requires ols_backend to be one of: {valid_values}.")
@@ -332,103 +323,20 @@ def _solve_with_numpy_lstsq(
     }
 
 
-def _compute_ols_cross_products_with_torch(
-    design_matrix: np.ndarray,
-    target_matrix: np.ndarray,
-    *,
-    device: Any,
-    device_label: str,
-) -> tuple[np.ndarray, np.ndarray, str]:
-    matrix_dtype = torch.float32 if device_label == "directml" else torch.float64
-    # Ensure writable, contiguous host buffers before torch conversion.
-    design_values = np.array(design_matrix, dtype=float, copy=True)
-    target_values = np.array(target_matrix, dtype=float, copy=True)
-    design_tensor = torch.as_tensor(design_values, dtype=matrix_dtype, device=device)
-    target_tensor = torch.as_tensor(target_values, dtype=matrix_dtype, device=device)
-    gram_matrix = (design_tensor.T @ design_tensor).detach().cpu().numpy().astype(float, copy=False)
-    rhs_matrix = (design_tensor.T @ target_tensor).detach().cpu().numpy().astype(float, copy=False)
-    return gram_matrix, rhs_matrix, str(matrix_dtype).replace("torch.", "")
-
-
-def _solve_with_directml_normal_equations(
-    design_matrix: np.ndarray,
-    target_matrix: np.ndarray,
-    *,
-    device: Any,
-    device_label: str,
-    rcond_value: Any,
-) -> dict[str, Any]:
-    gram_matrix, rhs_matrix, multiplication_dtype = _compute_ols_cross_products_with_torch(
-        design_matrix,
-        target_matrix,
-        device=device,
-        device_label=device_label,
-    )
-    parameter_matrix, _, _, _ = np.linalg.lstsq(
-        gram_matrix,
-        rhs_matrix,
-        rcond=None if rcond_value is None else float(rcond_value),
-    )
-    residuals, rank, singular_values = _summarize_linear_solve(
-        design_matrix,
-        target_matrix,
-        np.asarray(parameter_matrix, dtype=float),
-    )
-    return {
-        "parameter_matrix": np.asarray(parameter_matrix, dtype=float),
-        "residuals": residuals,
-        "rank": rank,
-        "singular_values": singular_values,
-        "backend_used": "directml_normal_equations",
-        "device_label": device_label,
-        "matrix_multiplication_dtype": multiplication_dtype,
-    }
-
-
 def _solve_projected_ols(
     design_matrix: np.ndarray,
     target_matrix: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
-    runtime_options: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     requested_backend = _resolve_ols_backend(model_hyperparameters)
-    resolved_runtime_options = _resolve_runtime_options(runtime_options)
     rcond_value = model_hyperparameters.get("lstsq_rcond")
-    fallback_reason: str | None = None
-    resolved_device_label = "cpu"
-
-    if requested_backend == "numpy_lstsq":
-        solve_result = _solve_with_numpy_lstsq(design_matrix, target_matrix, rcond_value=rcond_value)
-    else:
-        if not bool(resolved_runtime_options["prefer_directml"]):
-            fallback_reason = "DirectML preference is disabled in runtime options."
-            solve_result = _solve_with_numpy_lstsq(design_matrix, target_matrix, rcond_value=rcond_value)
-        else:
-            device, resolved_device_label = get_training_device(prefer_directml=True)
-            if resolved_device_label != "directml":
-                fallback_reason = (
-                    f"DirectML device unavailable; resolved device '{resolved_device_label}' instead."
-                )
-                solve_result = _solve_with_numpy_lstsq(design_matrix, target_matrix, rcond_value=rcond_value)
-            else:
-                try:
-                    solve_result = _solve_with_directml_normal_equations(
-                        design_matrix,
-                        target_matrix,
-                        device=device,
-                        device_label=resolved_device_label,
-                        rcond_value=rcond_value,
-                    )
-                except Exception as error:
-                    fallback_reason = f"DirectML backend failed during matrix multiplication: {error}"
-                    solve_result = _solve_with_numpy_lstsq(design_matrix, target_matrix, rcond_value=rcond_value)
+    solve_result = _solve_with_numpy_lstsq(design_matrix, target_matrix, rcond_value=rcond_value)
 
     solve_result["ols_metadata"] = {
         "requested_backend": requested_backend,
         "backend_used": str(solve_result["backend_used"]),
-        "device_label": resolved_device_label if requested_backend != "numpy_lstsq" else "cpu",
-        "fallback_reason": fallback_reason,
-        "prefer_directml": bool(resolved_runtime_options["prefer_directml"]),
+        "device_label": "cpu",
+        "fallback_reason": None,
         "matrix_multiplication_dtype": solve_result["matrix_multiplication_dtype"],
     }
     return solve_result
@@ -444,7 +352,6 @@ def _build_model_bundle(
     A_matrix: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
     training_options: Mapping[str, Any],
-    runtime_options: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
         "model_name": MODEL_NAME,
@@ -463,7 +370,6 @@ def _build_model_bundle(
         "scaling_bundle": scaling_bundle,
         "model_hyperparameters": dict(model_hyperparameters),
         "training_options": dict(training_options),
-        "runtime_options": dict(runtime_options),
     }
 
 
@@ -473,7 +379,6 @@ def train_cobre_model(
     *,
     A_matrix: np.ndarray,
     training_options: Mapping[str, Any] | None = None,
-    runtime_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fit the projected OLS COBRE estimator on a prepared dataset."""
 
@@ -510,7 +415,6 @@ def train_cobre_model(
             design_matrix,
             projected_target_values,
             model_hyperparameters,
-            runtime_options,
         )
         raw_parameter_matrix = np.asarray(solve_result["parameter_matrix"], dtype=float)
         residuals = np.asarray(solve_result["residuals"], dtype=float)
@@ -632,7 +536,6 @@ def run_cobre_pipeline(
     params = dict(model_params) if model_params is not None else load_cobre_params(repo_root)
     split_params = dict(params["hyperparameters"])
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
-    runtime_options = resolve_torch_runtime_options(params)
     _validate_scaling_configuration({**split_params, **selected_hyperparameters})
     objective_label = resolve_training_objective_label(selected_hyperparameters, default="projected_ols")
 
@@ -668,7 +571,6 @@ def run_cobre_pipeline(
                 "progress_description": "Training COBRE",
                 "objective_name": objective_label,
             },
-            runtime_options=runtime_options,
         )
         progress_bar.update(1)
 
@@ -684,7 +586,6 @@ def run_cobre_pipeline(
                 "objective_name": objective_label,
                 "show_progress": show_progress,
             },
-            runtime_options=runtime_options,
         )
 
         progress_bar.set_postfix(stage="evaluate_train", objective=objective_label)

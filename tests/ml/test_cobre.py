@@ -178,88 +178,6 @@ class CobreModelTests(unittest.TestCase):
             rtol=1e-8,
         )
 
-    @patch("src.models.ml.cobre.get_training_device")
-    def test_auto_backend_falls_back_to_numpy_when_directml_unavailable(self, get_training_device_mock: MagicMock) -> None:
-        get_training_device_mock.return_value = (object(), "cpu")
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
-        dataset_splits = make_train_test_split(
-            measured_dataset,
-            test_fraction=0.2,
-            random_seed=11,
-        )
-
-        training_result = train_cobre_model(
-            {
-                "features": dataset_splits.train.features,
-                "targets": dataset_splits.train.targets,
-                "constraint_reference": dataset_splits.train.constraint_reference,
-            },
-            self._tiny_params(ols_backend="auto")["training_defaults"],
-            A_matrix=self.a_matrix,
-            training_options={"show_progress": False},
-            runtime_options={"prefer_directml": True},
-        )
-
-        self.assertEqual(training_result["ols_metadata"]["requested_backend"], "auto")
-        self.assertEqual(training_result["ols_metadata"]["backend_used"], "numpy_lstsq")
-        self.assertEqual(training_result["ols_metadata"]["device_label"], "cpu")
-        self.assertIn("DirectML device unavailable", str(training_result["ols_metadata"]["fallback_reason"]))
-
-    @patch("src.models.ml.cobre._compute_ols_cross_products_with_torch")
-    @patch("src.models.ml.cobre.get_training_device")
-    def test_auto_backend_prefers_directml_when_available(
-        self,
-        get_training_device_mock: MagicMock,
-        compute_cross_products_mock: MagicMock,
-    ) -> None:
-        get_training_device_mock.return_value = (object(), "directml")
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
-        dataset_splits = make_train_test_split(
-            measured_dataset,
-            test_fraction=0.2,
-            random_seed=11,
-        )
-        design_frame, _ = build_cobre_design_frame(
-            dataset_splits.train.features,
-            list(dataset_splits.train.constraint_reference.columns),
-            include_bias_term=True,
-        )
-        projection_matrix = build_projection_operator(self.a_matrix)
-        projection_matrix = 0.5 * (projection_matrix + projection_matrix.T)
-        projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
-        projected_targets = dataset_splits.train.targets.to_numpy(dtype=float) @ projection_complement.T
-        design_values = design_frame.to_numpy(dtype=float)
-        compute_cross_products_mock.return_value = (
-            design_values.T @ design_values,
-            design_values.T @ projected_targets,
-            "float32",
-        )
-
-        training_result = train_cobre_model(
-            {
-                "features": dataset_splits.train.features,
-                "targets": dataset_splits.train.targets,
-                "constraint_reference": dataset_splits.train.constraint_reference,
-            },
-            self._tiny_params(ols_backend="auto")["training_defaults"],
-            A_matrix=self.a_matrix,
-            training_options={"show_progress": False},
-            runtime_options={"prefer_directml": True},
-        )
-
-        self.assertEqual(training_result["ols_metadata"]["backend_used"], "directml_normal_equations")
-        self.assertEqual(training_result["ols_metadata"]["device_label"], "directml")
-        self.assertIsNone(training_result["ols_metadata"]["fallback_reason"])
-        self.assertEqual(training_result["ols_metadata"]["matrix_multiplication_dtype"], "float32")
-
     @patch("src.models.ml.cobre.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
@@ -322,9 +240,6 @@ class CobreModelTests(unittest.TestCase):
                     "random_seed": 11,
                     "scale_features": False,
                     "scale_targets": False,
-                },
-                "runtime": {
-                    "prefer_directml": True,
                 },
                 "training_defaults": {
                     "objective": "projected_ols",
