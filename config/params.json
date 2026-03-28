@@ -544,6 +544,24 @@
       "persist_optuna": true
     }
   },
+  "collapsed_cobre": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": false,
+      "scale_targets": false
+    },
+    "training_defaults": {
+      "objective": "projected_ols",
+      "solver": "multivariate_lstsq",
+      "include_bias_term": true,
+      "lstsq_rcond": null
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": false
+    }
+  },
   "xgboost_regressor": {
     "hyperparameters": {
       "random_seed": 42,
