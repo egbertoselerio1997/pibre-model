@@ -427,9 +427,9 @@
       "random_seed": 42,
       "test_fraction": 0.2,
       "optuna_dataset_fraction": 0.1,
-      "optuna_test_fraction": 0.2,
-      "tuning_epochs": 200,
-      "n_trials": 100,
+      "optuna_test_fraction": 0.5,
+      "tuning_epochs": 500,
+      "n_trials": 30,
       "timeout_seconds": null
     }
   },
@@ -483,6 +483,10 @@
         "low": 0.0001,
         "high": 0.05,
         "log": true
+      },
+      "batch_size": {
+        "type": "categorical",
+        "choices": [32, 64, 96, 128]
       }
     },
     "pruner": {

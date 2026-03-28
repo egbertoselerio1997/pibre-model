@@ -114,6 +114,7 @@ Hyperparameter tuning is performed with Optuna from main.ipynb and uses reusable
 - optimizer weight decay
 - gradient clipping norm
 - bilinear-weight initialization scale
+- mini-batch size
 
 Training uses Adam-style first- and second-moment updates and minimizes the projected prediction mean squared error plus an L1 penalty on the learned linear and bilinear weights. On CPU and CUDA the repository uses PyTorch's built-in Adam implementation, while on DirectML it uses an equivalent custom update path that avoids unsupported optimizer kernels and keeps the optimization step on the GPU backend. The shared notebook orchestration block in config/params.json defines the global Optuna trial budget and tuning epoch budget, while the COBRE namespace defines the model-specific final training_epochs value and the PyTorch runtime options used to control DirectML preference and built-in Adam foreach behavior.
 

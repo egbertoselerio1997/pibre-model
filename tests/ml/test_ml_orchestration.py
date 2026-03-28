@@ -48,6 +48,7 @@ def _build_tiny_cobre_params() -> dict[str, object]:
         "weight_decay": {"type": "float", "low": 0.00000001, "high": 0.0001, "log": True},
         "clip_max_norm": {"type": "float", "low": 0.5, "high": 2.0, "log": False},
         "bilinear_init_scale": {"type": "float", "low": 0.001, "high": 0.02, "log": True},
+        "batch_size": {"type": "categorical", "choices": [4, 8, 12]},
     }
     params["pruner"] = {
         "type": "median",
@@ -134,6 +135,8 @@ class MlOrchestrationTests(unittest.TestCase):
         )
 
         self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
+        self.assertIn("batch_size", best_hyperparameters)
+        self.assertIn("batch_size", optuna_summary["best_params"])
         self.assertEqual(optuna_summary["n_trials"], 1)
 
     def test_external_uncobre_tuning_returns_hyperparameters(self) -> None:

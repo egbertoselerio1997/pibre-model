@@ -262,6 +262,7 @@ class CobreModelTests(unittest.TestCase):
                     "weight_decay": {"type": "float", "low": 0.00000001, "high": 0.0001, "log": True},
                     "clip_max_norm": {"type": "float", "low": 0.5, "high": 2.0, "log": False},
                     "bilinear_init_scale": {"type": "float", "low": 0.001, "high": 0.02, "log": True},
+                    "batch_size": {"type": "categorical", "choices": [8, 16, 24]},
                 },
                 "pruner": {
                     "type": "median",

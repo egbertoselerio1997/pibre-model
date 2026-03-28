@@ -544,6 +544,7 @@ def run_cobre_pipeline(
     split_params = params["hyperparameters"]
     runtime_options = resolve_torch_runtime_options(params)
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
+    selected_batch_size = int(selected_hyperparameters.get("batch_size", split_params["batch_size"]))
     scaling_bundle = fit_scalers(
         training_split,
         scale_features=bool(split_params["scale_features"]),
@@ -554,7 +555,7 @@ def run_cobre_pipeline(
 
     final_training_options = {
         "epochs": int(split_params["training_epochs"]),
-        "batch_size": int(split_params["batch_size"]),
+        "batch_size": selected_batch_size,
         "random_seed": int(split_params["random_seed"]),
         "log_interval": int(split_params["log_interval"]),
         "prefer_directml": runtime_options["prefer_directml"],

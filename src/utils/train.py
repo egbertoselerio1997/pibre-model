@@ -336,6 +336,7 @@ def tune_cobre_hyperparameters(
     def objective(trial: Any) -> float:
         hyperparameters = dict(base_hyperparameters)
         hyperparameters.update(suggest_parameters(trial, params["search_space"]))
+        tuned_batch_size = int(hyperparameters.get("batch_size", split_params["batch_size"]))
         result = train_cobre_model(
             {
                 "features": scaled_tuning_train_split.features,
@@ -346,7 +347,7 @@ def tune_cobre_hyperparameters(
             A_matrix=A_matrix,
             training_options={
                 "epochs": int(tuning_epochs),
-                "batch_size": int(split_params["batch_size"]),
+                "batch_size": tuned_batch_size,
                 "random_seed": seed + int(trial.number),
                 "log_interval": int(split_params["log_interval"]),
                 "prefer_directml": runtime_options["prefer_directml"],
