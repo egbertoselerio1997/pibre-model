@@ -431,6 +431,13 @@
       "tuning_epochs": 500,
       "n_trials": 30,
       "timeout_seconds": null
+    },
+    "analysis": {
+      "min_total_samples": 100,
+      "max_total_samples": 10000,
+      "total_sample_step": 330,
+      "n_repeats": 30,
+      "test_fraction": 0.2
     }
   },
   "cobre": {
