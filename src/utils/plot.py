@@ -448,7 +448,7 @@ def plot_response_surface_contours(
 		filled_contours.append(filled)
 		line_contours.append(lines)
 		colorbar = figure.colorbar(filled, ax=axis, shrink=0.9, pad=0.02)
-		colorbar.set_label(f"Projected {_format_target_label(target_label)}")
+		colorbar.set_label(_format_target_label(target_label))
 		colorbar.ax.tick_params(colors=tokens["primary_text"])
 		colorbars.append(colorbar)
 

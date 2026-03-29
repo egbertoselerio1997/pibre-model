@@ -203,6 +203,7 @@ class PlotHelperTests(unittest.TestCase):
 		self.assertEqual(artist_bundle["axes"][0].get_xlabel(), "HRT")
 		self.assertEqual(artist_bundle["axes"][0].get_ylabel(), "Aeration")
 		self.assertEqual(artist_bundle["axes"][0].get_title(), "COD")
+		self.assertEqual(artist_bundle["colorbars"][0].ax.get_ylabel(), "COD")
 		self.assertEqual(len(figure.axes), 4)
 
 	def test_plot_response_surface_contours_rejects_shape_mismatch(self) -> None:
