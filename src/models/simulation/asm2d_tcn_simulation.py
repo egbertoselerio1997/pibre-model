@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from scipy.integrate import solve_ivp
 from scipy.optimize import least_squares
+from tqdm import tqdm
 
 from src.utils.simulation import (
     get_repo_root,
@@ -376,8 +377,11 @@ def generate_asm2d_tcn_dataset(
     random_seed: int | None = None,
     parallel_workers: int | None = None,
     parallel_chunk_size: int | None = None,
+    include_debug_data: bool = False,
+    show_progress: bool = False,
+    progress_description: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
-    """Generate a reduced steady-state ASM2d-TCN dataset with composite-only outputs."""
+    """Generate a mechanistic steady-state ASM2d-TCN dataset with composite-only outputs."""
 
     params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params()
     runtime = _validate_runtime_structure(params)
@@ -404,7 +408,9 @@ def generate_asm2d_tcn_dataset(
     influent_states = np.zeros((sample_count, len(state_columns)), dtype=float)
     operational = np.zeros((sample_count, len(operational_columns)), dtype=float)
     measured_outputs = np.zeros((sample_count, len(measured_output_columns)), dtype=float)
-    chunk_results: list[tuple[int, np.ndarray, np.ndarray, np.ndarray]] = []
+    effluent_states = np.zeros((sample_count, len(state_columns)), dtype=float) if include_debug_data else None
+    solver_diagnostic_records: list[dict[str, Any]] = []
+    chunk_results: list[tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]]]] = []
     if sample_count > 0:
         worker_count = _resolve_parallel_workers(requested_parallel_workers, sample_count)
         chunk_size = min(_resolve_parallel_chunk_size(requested_parallel_chunk_size), sample_count)
@@ -416,22 +422,53 @@ def generate_asm2d_tcn_dataset(
                 "model_params": params,
                 "matrix_bundle": matrix_bundle,
                 "runtime": runtime,
+                "collect_debug_data": include_debug_data,
             }
             for chunk_index, chunk_start in enumerate(range(0, sample_count, chunk_size))
         ]
 
         if worker_count == 1 or len(chunk_specs) == 1:
-            chunk_results = [_generate_asm2d_tcn_dataset_chunk(**chunk_spec) for chunk_spec in chunk_specs]
+            progress_bar = tqdm(
+                total=sample_count,
+                desc=progress_description or "ASM2d-TCN simulation",
+                unit="sample",
+                disable=not show_progress,
+            )
+            try:
+                chunk_results = [
+                    _generate_asm2d_tcn_dataset_chunk(progress_bar=progress_bar, **chunk_spec)
+                    for chunk_spec in chunk_specs
+                ]
+            finally:
+                progress_bar.close()
         else:
             with ProcessPoolExecutor(max_workers=worker_count) as executor:
-                futures = [executor.submit(_generate_asm2d_tcn_dataset_chunk, **chunk_spec) for chunk_spec in chunk_specs]
-                chunk_results = [future.result() for future in futures]
+                future_map = {
+                    executor.submit(_generate_asm2d_tcn_dataset_chunk, **chunk_spec): int(chunk_spec["chunk_size"])
+                    for chunk_spec in chunk_specs
+                }
+                progress_bar = tqdm(
+                    total=sample_count,
+                    desc=progress_description or "ASM2d-TCN simulation",
+                    unit="sample",
+                    disable=not show_progress,
+                )
+                try:
+                    for future in as_completed(future_map):
+                        chunk_results.append(future.result())
+                        progress_bar.update(future_map[future])
+                finally:
+                    progress_bar.close()
 
-    for chunk_start, chunk_influent, chunk_operational, chunk_measured in chunk_results:
+    for chunk_start, chunk_influent, chunk_operational, chunk_effluent, chunk_measured, chunk_diagnostics in chunk_results:
         chunk_end = chunk_start + len(chunk_influent)
         influent_states[chunk_start:chunk_end] = chunk_influent
         operational[chunk_start:chunk_end] = chunk_operational
+        if effluent_states is not None:
+            effluent_states[chunk_start:chunk_end] = chunk_effluent
         measured_outputs[chunk_start:chunk_end] = chunk_measured
+        if include_debug_data:
+            solver_diagnostic_records.extend(chunk_diagnostics)
 
     influent_df = pd.DataFrame(influent_states, columns=[f"In_{name}" for name in state_columns])
     operational_df = pd.DataFrame(operational, columns=operational_columns)
@@ -444,7 +481,17 @@ def generate_asm2d_tcn_dataset(
         random_seed=seed,
     )
 
-    return dataset, metadata, matrix_bundle
+    simulation_bundle = dict(matrix_bundle)
+    if include_debug_data:
+        solver_diagnostics = pd.DataFrame(solver_diagnostic_records).sort_values("sample_index").reset_index(drop=True)
+        simulation_bundle["effluent_states"] = pd.DataFrame(effluent_states, columns=state_columns)
+        simulation_bundle["solver_diagnostics"] = solver_diagnostics
+        simulation_bundle["solver_summary"] = _summarize_asm2d_tcn_solver_diagnostics(
+            solver_diagnostics,
+            float(runtime["solver"]["acceptance_residual_max"]),
+        )
+
+    return dataset, metadata, simulation_bundle
 
 
 def run_asm2d_tcn_simulation(
@@ -456,16 +503,23 @@ def run_asm2d_tcn_simulation(
     parallel_workers: int | None = None,
     parallel_chunk_size: int | None = None,
     timestamp: str | None = None,
+    include_debug_data: bool = False,
+    show_progress: bool = False,
+    progress_description: str | None = None,
 ) -> dict[str, Any]:
-    """Run the ASM2d-TCN reduced steady-state simulation and optionally persist artifacts."""
+    """Run the ASM2d-TCN steady-state simulation and optionally persist artifacts."""
 
     params = load_asm2d_tcn_simulation_params(repo_root)
-    dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(
+    simulation_bundle: dict[str, Any]
+    dataset, metadata, simulation_bundle = generate_asm2d_tcn_dataset(
         model_params=params,
         n_samples=n_samples,
         random_seed=random_seed,
         parallel_workers=parallel_workers,
         parallel_chunk_size=parallel_chunk_size,
+        include_debug_data=include_debug_data,
+        show_progress=show_progress,
+        progress_description=progress_description,
     )
 
     artifact_paths: dict[str, Path | None] = {
@@ -492,11 +546,90 @@ def run_asm2d_tcn_simulation(
     return {
         "dataset": dataset,
         "metadata": metadata,
-        "petersen_matrix": matrix_bundle["petersen_matrix"],
-        "composition_matrix": matrix_bundle["composition_matrix"],
-        "matrix_bundle": matrix_bundle,
-        "composite_matrix": matrix_bundle["composition_matrix"],
+        "petersen_matrix": simulation_bundle["petersen_matrix"],
+        "composition_matrix": simulation_bundle["composition_matrix"],
+        "matrix_bundle": simulation_bundle,
+        "composite_matrix": simulation_bundle["composition_matrix"],
         "artifact_paths": artifact_paths,
+        "effluent_states": simulation_bundle.get("effluent_states"),
+        "solver_diagnostics": simulation_bundle.get("solver_diagnostics"),
+        "solver_summary": simulation_bundle.get("solver_summary"),
+    }
+
+
+def sweep_asm2d_tcn_operating_space(
+    *,
+    model_params: Mapping[str, Any] | None = None,
+    n_samples: int = 512,
+    random_seed: int | None = None,
+    show_progress: bool = False,
+    progress_description: str | None = None,
+) -> dict[str, Any]:
+    """Sample the configured operating space and summarize ASM2d-TCN solver behavior."""
+
+    if n_samples < 1:
+        raise ValueError("n_samples must be at least 1.")
+
+    params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params()
+    runtime = _validate_runtime_structure(params)
+    configured_hyperparameters = params["hyperparameters"]
+    seed = int(random_seed if random_seed is not None else configured_hyperparameters["seed"])
+    matrix_bundle = get_asm2d_tcn_matrices(params)
+    state_columns = list(runtime["state_columns"])
+    operational_columns = list(runtime["operational_columns"])
+    state_index = dict(matrix_bundle["state_index"])
+    parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
+    rng = np.random.default_rng(seed)
+    influent_samples = np.zeros((n_samples, len(state_columns)), dtype=float)
+    operational_samples = np.zeros((n_samples, len(operational_columns)), dtype=float)
+    effluent_samples = np.zeros((n_samples, len(state_columns)), dtype=float)
+    diagnostic_records: list[dict[str, Any]] = []
+
+    progress_bar = tqdm(
+        total=n_samples,
+        desc=progress_description or "ASM2d-TCN sweep",
+        unit="sample",
+        disable=not show_progress,
+    )
+    try:
+        for sample_index in range(n_samples):
+            sampled_state = _sample_named_ranges(rng, 1, state_columns, runtime["influent_state_ranges"])[0]
+            influent_state = _build_influent_state_sample(sampled_state, state_index, parameter_values)
+            operating_point = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
+            effluent_state, diagnostics = simulate_asm2d_tcn_steady_state(
+                influent_state=influent_state,
+                hrt_hours=float(operating_point[0]),
+                aeration=float(operating_point[1]),
+                model_params=params,
+                matrix_bundle=matrix_bundle,
+                previous_solution=None,
+                enforce_acceptance=False,
+            )
+            influent_samples[sample_index] = influent_state
+            operational_samples[sample_index] = operating_point
+            effluent_samples[sample_index] = effluent_state
+            diagnostic_record = dict(diagnostics)
+            diagnostic_record["sample_index"] = sample_index
+            diagnostic_record["HRT"] = float(operating_point[0])
+            diagnostic_record["Aeration"] = float(operating_point[1])
+            diagnostic_records.append(diagnostic_record)
+            progress_bar.update(1)
+    finally:
+        progress_bar.close()
+
+    solver_diagnostics = pd.DataFrame(diagnostic_records).sort_values("sample_index").reset_index(drop=True)
+    summary = _summarize_asm2d_tcn_solver_diagnostics(
+        solver_diagnostics,
+        float(runtime["solver"]["acceptance_residual_max"]),
+    )
+
+    return {
+        "influent_states": pd.DataFrame(influent_samples, columns=state_columns),
+        "operating_conditions": pd.DataFrame(operational_samples, columns=operational_columns),
+        "effluent_states": pd.DataFrame(effluent_samples, columns=state_columns),
+        "solver_diagnostics": solver_diagnostics,
+        "summary": summary,
+        "matrix_bundle": matrix_bundle,
     }
 
 
@@ -1046,6 +1179,7 @@ def simulate_asm2d_tcn_steady_state(
     model_params: Mapping[str, Any],
     matrix_bundle: Mapping[str, Any] | None = None,
     previous_solution: np.ndarray | None = None,
+    enforce_acceptance: bool = True,
 ) -> tuple[np.ndarray, dict[str, float | bool | int]]:
     """Solve a single mechanistic steady-state ASM2d-TCN operating point."""
 
@@ -1066,10 +1200,13 @@ def simulate_asm2d_tcn_steady_state(
         previous_solution=previous_solution,
     )
     candidate_guesses = [initial_guess, _build_multistart_guess(initial_guess, influent_state, state_index, model_params)]
+    candidate_labels = ["initial", "multistart"]
 
     best_result = None
     best_residual_max = np.inf
-    for candidate_guess in candidate_guesses:
+    best_result_label = "initial"
+    candidate_residuals: dict[str, float] = {}
+    for candidate_label, candidate_guess in zip(candidate_labels, candidate_guesses, strict=True):
         result = least_squares(
             _steady_state_residuals,
             candidate_guess,
@@ -1081,10 +1218,14 @@ def simulate_asm2d_tcn_steady_state(
             args=(influent_state, hrt_hours, aeration, matrix_bundle, model_params, parameter_values),
         )
         residual_max = float(np.max(np.abs(result.fun)))
+        candidate_residuals[candidate_label] = residual_max
         if residual_max < best_residual_max:
             best_result = result
             best_residual_max = residual_max
+            best_result_label = candidate_label
 
+    dynamic_relaxation_used = best_residual_max > float(solver["acceptance_residual_max"])
+    dynamic_relaxation_improved = False
     if best_residual_max > float(solver["acceptance_residual_max"]):
         dynamic_result = solve_ivp(
             lambda _time, values: _steady_state_residuals(
@@ -1119,18 +1260,28 @@ def simulate_asm2d_tcn_steady_state(
             if residual_max < best_residual_max:
                 best_result = result
                 best_residual_max = residual_max
+                best_result_label = "dynamic_relaxation"
+                dynamic_relaxation_improved = True
 
     assert best_result is not None
     result = best_result
+    accepted = bool(result.success and best_residual_max <= float(solver["acceptance_residual_max"]))
     diagnostics: dict[str, float | bool | int] = {
         "success": bool(result.success),
+        "accepted": accepted,
         "status": int(result.status),
         "nfev": int(result.nfev),
         "residual_l2": float(np.linalg.norm(result.fun)),
         "residual_max": best_residual_max,
+        "acceptance_threshold": float(solver["acceptance_residual_max"]),
+        "initial_residual_max": float(candidate_residuals["initial"]),
+        "multistart_residual_max": float(candidate_residuals["multistart"]),
+        "selected_strategy": best_result_label,
+        "dynamic_relaxation_used": dynamic_relaxation_used,
+        "dynamic_relaxation_improved": dynamic_relaxation_improved,
     }
 
-    if (not result.success) or diagnostics["residual_max"] > float(solver["acceptance_residual_max"]):
+    if enforce_acceptance and (not accepted):
         raise RuntimeError(
             "asm2d_tcn_simulation steady-state solve failed: "
             f"success={result.success}, status={result.status}, residual_max={diagnostics['residual_max']:.3e}"
@@ -1151,7 +1302,9 @@ def _generate_asm2d_tcn_dataset_chunk(
     model_params: Mapping[str, Any],
     matrix_bundle: Mapping[str, Any],
     runtime: Mapping[str, Any],
-) -> tuple[int, np.ndarray, np.ndarray, np.ndarray]:
+    collect_debug_data: bool = False,
+    progress_bar=None,
+) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]]]:
     configured_hyperparameters = model_params["hyperparameters"]
     max_sample_attempts = int(configured_hyperparameters["max_sample_attempts"])
     state_columns = list(runtime["state_columns"])
@@ -1163,12 +1316,14 @@ def _generate_asm2d_tcn_dataset_chunk(
 
     influent_states = np.zeros((chunk_size, len(state_columns)), dtype=float)
     operational = np.zeros((chunk_size, len(operational_columns)), dtype=float)
+    effluent_states = np.zeros((chunk_size, len(state_columns)), dtype=float)
     measured_outputs = np.zeros((chunk_size, len(measured_output_columns)), dtype=float)
+    solver_diagnostics: list[dict[str, Any]] = []
 
     previous_solution: np.ndarray | None = None
     for local_index in range(chunk_size):
         last_error: RuntimeError | None = None
-        for _attempt_index in range(max_sample_attempts):
+        for attempt_index in range(max_sample_attempts):
             sampled_state = _sample_named_ranges(rng, 1, state_columns, runtime["influent_state_ranges"])[0]
             candidate_influent = _build_influent_state_sample(sampled_state, state_index, parameter_values)
             candidate_operational = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
@@ -1186,7 +1341,7 @@ def _generate_asm2d_tcn_dataset_chunk(
                 last_error = error
                 continue
 
-            if not diagnostics["success"]:
+            if not diagnostics["accepted"]:
                 last_error = RuntimeError(
                     "asm2d_tcn_simulation steady-state solve did not satisfy the configured acceptance threshold."
                 )
@@ -1199,7 +1354,17 @@ def _generate_asm2d_tcn_dataset_chunk(
             previous_solution = effluent_state
             influent_states[local_index] = candidate_influent
             operational[local_index] = candidate_operational
+            effluent_states[local_index] = effluent_state
             measured_outputs[local_index] = _compute_measured_output_values(effluent_state, matrix_bundle)
+            if collect_debug_data:
+                diagnostic_record = dict(diagnostics)
+                diagnostic_record["sample_index"] = chunk_start + local_index
+                diagnostic_record["attempt_count"] = attempt_index + 1
+                diagnostic_record["HRT"] = float(candidate_operational[0])
+                diagnostic_record["Aeration"] = float(candidate_operational[1])
+                solver_diagnostics.append(diagnostic_record)
+            if progress_bar is not None:
+                progress_bar.update(1)
             break
         else:
             raise RuntimeError(
@@ -1207,7 +1372,57 @@ def _generate_asm2d_tcn_dataset_chunk(
                 f"{max_sample_attempts} attempts at sample index {chunk_start + local_index}."
             ) from last_error
 
-    return chunk_start, influent_states, operational, measured_outputs
+    return chunk_start, influent_states, operational, effluent_states, measured_outputs, solver_diagnostics
+
+
+def _summarize_asm2d_tcn_solver_diagnostics(
+    solver_diagnostics: pd.DataFrame,
+    acceptance_threshold: float,
+) -> dict[str, Any]:
+    if solver_diagnostics.empty:
+        return {
+            "sample_count": 0,
+            "accepted_count": 0,
+            "accepted_rate": 0.0,
+            "acceptance_threshold": acceptance_threshold,
+            "multistart_selected_rate": 0.0,
+            "dynamic_relaxation_used_rate": 0.0,
+            "dynamic_relaxation_improved_rate": 0.0,
+            "residual_max_quantiles": {},
+            "nfev_quantiles": {},
+            "selected_strategy_counts": {},
+        }
+
+    residual_max_quantiles = {
+        "q50": float(solver_diagnostics["residual_max"].quantile(0.50)),
+        "q90": float(solver_diagnostics["residual_max"].quantile(0.90)),
+        "q95": float(solver_diagnostics["residual_max"].quantile(0.95)),
+        "q99": float(solver_diagnostics["residual_max"].quantile(0.99)),
+        "max": float(solver_diagnostics["residual_max"].max()),
+    }
+    nfev_quantiles = {
+        "q50": float(solver_diagnostics["nfev"].quantile(0.50)),
+        "q90": float(solver_diagnostics["nfev"].quantile(0.90)),
+        "q95": float(solver_diagnostics["nfev"].quantile(0.95)),
+        "max": float(solver_diagnostics["nfev"].max()),
+    }
+    return {
+        "sample_count": int(len(solver_diagnostics)),
+        "accepted_count": int(solver_diagnostics["accepted"].sum()),
+        "accepted_rate": float(solver_diagnostics["accepted"].mean()),
+        "acceptance_threshold": float(acceptance_threshold),
+        "multistart_selected_rate": float((solver_diagnostics["selected_strategy"] == "multistart").mean()),
+        "dynamic_relaxation_used_rate": float(solver_diagnostics["dynamic_relaxation_used"].mean()),
+        "dynamic_relaxation_improved_rate": float(solver_diagnostics["dynamic_relaxation_improved"].mean()),
+        "mean_attempt_count": float(solver_diagnostics.get("attempt_count", pd.Series([1])).mean()),
+        "max_attempt_count": int(solver_diagnostics.get("attempt_count", pd.Series([1])).max()),
+        "residual_max_quantiles": residual_max_quantiles,
+        "nfev_quantiles": nfev_quantiles,
+        "selected_strategy_counts": {
+            str(name): int(count)
+            for name, count in solver_diagnostics["selected_strategy"].value_counts().items()
+        },
+    }
 
 
 def _resolve_parallel_workers(requested_workers: int, sample_count: int) -> int:
@@ -1423,4 +1638,5 @@ __all__ = [
     "resolve_asm2d_tcn_workbook_path",
     "run_asm2d_tcn_simulation",
     "simulate_asm2d_tcn_steady_state",
+    "sweep_asm2d_tcn_operating_space",
 ]

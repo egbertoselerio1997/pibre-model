@@ -21,6 +21,7 @@ from src.models.simulation.asm2d_tcn_simulation import (
     resolve_asm2d_tcn_workbook_path,
     run_asm2d_tcn_simulation,
     simulate_asm2d_tcn_steady_state,
+    sweep_asm2d_tcn_operating_space,
 )
 
 
@@ -257,6 +258,43 @@ class Asm2dTcnSimulationTests(unittest.TestCase):
         self.assertEqual(result["artifact_paths"]["dataset_csv"], None)
         self.assertEqual(result["artifact_paths"]["metadata_json"], None)
         self.assertEqual(result["metadata"]["measured_output_columns"], ["COD", "TN", "TKN", "TP", "TSS", "VSS"])
+
+    def test_run_simulation_can_return_in_memory_debug_payloads(self) -> None:
+        params = load_asm2d_tcn_simulation_params()
+        result = run_asm2d_tcn_simulation(
+            save_artifacts=False,
+            n_samples=4,
+            random_seed=5,
+            parallel_workers=1,
+            include_debug_data=True,
+            show_progress=False,
+        )
+
+        self.assertEqual(result["dataset"].shape[0], 4)
+        self.assertIsNotNone(result["effluent_states"])
+        self.assertIsNotNone(result["solver_diagnostics"])
+        self.assertIsNotNone(result["solver_summary"])
+        self.assertEqual(result["effluent_states"].shape, (4, len(params["workbook"]["state_columns"])))
+        self.assertEqual(len(result["solver_diagnostics"]), 4)
+        self.assertEqual(result["solver_summary"]["sample_count"], 4)
+        self.assertIn("selected_strategy", result["solver_diagnostics"].columns)
+        self.assertIn("dynamic_relaxation_used", result["solver_diagnostics"].columns)
+
+    def test_operating_space_sweep_returns_calibration_summary(self) -> None:
+        sweep_result = sweep_asm2d_tcn_operating_space(
+            n_samples=16,
+            random_seed=7,
+            show_progress=False,
+        )
+
+        self.assertEqual(sweep_result["influent_states"].shape[0], 16)
+        self.assertEqual(sweep_result["operating_conditions"].shape[0], 16)
+        self.assertEqual(sweep_result["effluent_states"].shape[0], 16)
+        self.assertEqual(len(sweep_result["solver_diagnostics"]), 16)
+        self.assertEqual(sweep_result["summary"]["sample_count"], 16)
+        self.assertGreaterEqual(sweep_result["summary"]["accepted_count"], 1)
+        self.assertIn("residual_max_quantiles", sweep_result["summary"])
+        self.assertIn("selected_strategy_counts", sweep_result["summary"])
 
 
 if __name__ == "__main__":

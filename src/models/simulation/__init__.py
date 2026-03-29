@@ -9,6 +9,7 @@ from .asm2d_tcn_simulation import (
 	resolve_asm2d_tcn_simulation_artifact_paths,
 	resolve_asm2d_tcn_workbook_path,
 	run_asm2d_tcn_simulation,
+	sweep_asm2d_tcn_operating_space,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
 	"resolve_asm2d_tcn_workbook_path",
 	"run_asm2d_tcn_simulation",
 	"run_asm1_simulation",
+	"sweep_asm2d_tcn_operating_space",
 ]
