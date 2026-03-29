@@ -10,7 +10,7 @@ import numpy as np
 from scipy.linalg import null_space
 
 from src.models.ml.adaboost_regressor import build_adaboost_regressor_model, load_adaboost_regressor_params
-from src.models.simulation.asm1_simulation import generate_asm1_dataset
+from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.process import build_measured_supervised_dataset, make_train_test_split, sample_dataset_fraction
 from src.utils.train import tune_tabular_regressor_hyperparameters
 
@@ -45,7 +45,7 @@ def _build_tiny_adaboost_params() -> dict[str, object]:
 class MlOrchestrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=32, random_seed=23)
+        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=32, random_seed=23)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]

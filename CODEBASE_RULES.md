@@ -333,11 +333,11 @@ Maintain this section as a compact command playbook for recurring Windows workfl
 - Repository inspection before edits: use PowerShell workspace inspection (`Get-ChildItem -Name`) plus targeted file reads.
 - Bulk in-repo hard-cutover renames for modules, docs, and tests: use PowerShell `Move-Item` so the filesystem rename is explicit before patching content.
 - Repository contract validation (after updates to CODEBASE_RULES.md, docs/ml, docs/simulation, scaffold, or path/parameter contracts): `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract`.
-- Simulation contract validation (after ASM1 integration, schema refactor, solver change, matrix exposure change, or measured-output definition change): `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm1_simulation`.
-- Downstream ML compatibility validation after ASM1 contract changes: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_cobre tests.ml.test_ml_orchestration`.
+- Simulation contract validation (after ASM2d-TCN integration, schema refactor, solver change, matrix exposure change, or measured-output definition change): `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm2d_tcn_simulation`.
+- Downstream ML compatibility validation after simulation contract changes: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_cobre tests.ml.test_ml_orchestration`.
 - Measured-space model and orchestration validation: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_cobre tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
-- Broad regression safety sweep: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm1_simulation tests.ml.test_cobre tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
-- ASM1 public API smoke check without artifacts: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c "from src.models.simulation.asm1_simulation import run_asm1_simulation; result = run_asm1_simulation(save_artifacts=False, n_samples=4, random_seed=17, parallel_workers=1); print(result['dataset'].shape); print(result['metadata']['measured_output_columns']); print(result['composition_matrix'].shape)"`.
+- Broad regression safety sweep: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm2d_tcn_simulation tests.ml.test_cobre tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
+- ASM2d-TCN public API smoke check without artifacts: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c "from src.models.simulation.asm2d_tcn_simulation import run_asm2d_tcn_simulation; result = run_asm2d_tcn_simulation(save_artifacts=False, n_samples=4, random_seed=17, parallel_workers=1); print(result['dataset'].shape); print(result['metadata']['measured_output_columns']); print(result['composition_matrix'].shape)"`.
 - Notebook JSON integrity validation after notebook edits: `c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m json.tool main.ipynb > $null`.
 - Dependency refresh after pyproject.toml changes: `uv sync`.
 
@@ -352,7 +352,7 @@ Maintain this section as a compact command playbook for recurring Windows workfl
 
 - Do not use a single-quoted top-level PowerShell payload for `python -c` unittest runners; quoting may be mangled and raise `SyntaxError`.
 - Do not use PowerShell here-strings that preserve double-quoted Python print literals or nested f-strings without verifying quote behavior first.
-- Do not use `ProcessPoolExecutor.map` with keyword-only ASM1 worker payloads; use `executor.submit` with keyword arguments.
+- Do not use `ProcessPoolExecutor.map` with keyword-only worker payloads; use `executor.submit` with keyword arguments.
 - Do not use small-batch parallel timing runs to judge process-based throughput; process startup can dominate and mislead conclusions.
 - Do not treat stale hard-coded schema expectations as command-strategy failures; update tests to derive expected measured-output shapes from metadata contracts.
 

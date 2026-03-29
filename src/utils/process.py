@@ -110,7 +110,7 @@ def build_measured_supervised_dataset(
 	metadata: dict[str, Any],
 	composition_matrix: np.ndarray,
 ) -> SupervisedDatasetFrames:
-	"""Build measured-space features, targets, and projection references from the ASM1 contract."""
+	"""Build measured-space features, targets, and projection references from the simulation metadata contract."""
 
 	state_columns = list(metadata["state_columns"])
 	measured_output_columns = list(metadata["measured_output_columns"])

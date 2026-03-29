@@ -18,7 +18,7 @@ from src.models.ml.cobre import (
     run_cobre_pipeline,
     train_cobre_model,
 )
-from src.models.simulation.asm1_simulation import generate_asm1_dataset
+from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
 from src.utils.process import build_cobre_supervised_dataset, build_projection_operator, make_train_test_split
@@ -42,7 +42,7 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
 class CobreModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm1_dataset(n_samples=36, random_seed=29)
+        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=36, random_seed=29)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]
