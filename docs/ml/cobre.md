@@ -172,6 +172,19 @@ The persisted COBRE bundle stores:
 - the design schema and scaling metadata
 - the selected hyperparameters and training metadata
 
+### 5.1 Effective coefficient visualization in the notebook
+
+After the COBRE training cell runs in `main.ipynb`, the notebook renders six figures directly from `cobre_result["model_bundle"]["effective_coefficients"]`:
+
+- a heatmap for $W_{u,eff}$ with measured targets on the y-axis and operational variables on the x-axis
+- a heatmap for $W_{in,eff}$ with measured targets on the y-axis and influent fractional variables on the x-axis
+- a bar plot for $b_{eff}$ with measured targets on the x-axis and coefficient value on the y-axis
+- a composite heatmap figure for $\Theta_{uu,eff}$ with one operational-by-operational subplot per measured target
+- a composite heatmap figure for $\Theta_{cc,eff}$ with one influent-by-influent subplot per measured target
+- a composite heatmap figure for $\Theta_{uc,eff}$ with one operational-by-influent subplot per measured target
+
+Those tensor figures preserve the repository's unsymmetrized Kronecker-style ordering. The notebook does not symmetrize, reorder, or aggregate the stored interaction blocks before plotting them, so each heatmap axis corresponds exactly to the ordered design basis used during training.
+
 ## 6. Architecture details and adopted standard architecture name
 
 The adopted architecture is a constrained second-order polynomial regression with bilinear interaction terms and an analytically collapsed orthogonal projector. In machine-learning terms it is a multivariate ordinary least-squares regressor over a hand-built second-order feature map.

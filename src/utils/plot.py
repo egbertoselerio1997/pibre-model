@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import matplotlib as mpl
@@ -9,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from cycler import cycler
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
@@ -102,6 +103,256 @@ def _format_metric_label(metric_name: str) -> str:
 
 def _format_target_label(target_name: str) -> str:
 	return target_name.replace("Out_", "", 1).replace("_", " ")
+
+
+def _validate_label_count(labels: list[str], *, expected_size: int, label_name: str) -> list[str]:
+	label_list = [str(label) for label in labels]
+	if len(label_list) != expected_size:
+		raise ValueError(f"{label_name} must contain exactly {expected_size} labels.")
+	return label_list
+
+
+def _validate_coefficient_array(
+	coefficient_values: Any,
+	*,
+	expected_ndim: int,
+	value_name: str,
+) -> np.ndarray:
+	coefficient_array = np.asarray(coefficient_values, dtype=float)
+	if coefficient_array.ndim != expected_ndim:
+		raise ValueError(f"{value_name} must be a {expected_ndim}D numeric array.")
+	if not np.isfinite(coefficient_array).all():
+		raise ValueError(f"{value_name} must contain only finite numeric values.")
+	return coefficient_array
+
+
+def _build_centered_diverging_norm(coefficient_values: np.ndarray) -> TwoSlopeNorm:
+	max_magnitude = float(np.max(np.abs(coefficient_values)))
+	if max_magnitude <= 0.0:
+		max_magnitude = 1.0
+	return TwoSlopeNorm(vmin=-max_magnitude, vcenter=0.0, vmax=max_magnitude)
+
+
+def _resolve_subplot_grid(panel_count: int, *, max_columns: int) -> tuple[int, int]:
+	if panel_count <= 0:
+		raise ValueError("panel_count must be positive.")
+	column_count = min(max_columns, max(1, math.ceil(math.sqrt(panel_count))))
+	row_count = math.ceil(panel_count / column_count)
+	return row_count, column_count
+
+
+def plot_coefficient_heatmap(
+	coefficient_values: Any,
+	*,
+	row_labels: list[str],
+	column_labels: list[str],
+	title: str,
+	x_label: str,
+	y_label: str,
+	colorbar_label: str = "Coefficient value",
+	ax: Any | None = None,
+	figure_size: tuple[float, float] = (10.0, 6.0),
+	x_tick_rotation: float = 45.0,
+) -> tuple[Any, Any]:
+	"""Plot a coefficient heatmap with repository-standard styling."""
+
+	tokens = apply_pibre_plot_theme()
+	coefficient_matrix = _validate_coefficient_array(
+		coefficient_values,
+		expected_ndim=2,
+		value_name="coefficient_values",
+	)
+	row_label_list = _validate_label_count(
+		row_labels,
+		expected_size=coefficient_matrix.shape[0],
+		label_name="row_labels",
+	)
+	column_label_list = _validate_label_count(
+		column_labels,
+		expected_size=coefficient_matrix.shape[1],
+		label_name="column_labels",
+	)
+
+	if ax is None:
+		figure, ax = plt.subplots(figsize=figure_size, dpi=140, constrained_layout=True)
+	else:
+		figure = ax.figure
+
+	image = ax.imshow(
+		coefficient_matrix,
+		aspect="auto",
+		cmap=tokens["diverging_colormap"],
+		norm=_build_centered_diverging_norm(coefficient_matrix),
+		origin="lower",
+		interpolation="nearest",
+	)
+	colorbar = figure.colorbar(image, ax=ax)
+	colorbar.set_label(colorbar_label)
+	colorbar.ax.tick_params(colors=tokens["primary_text"])
+
+	ax.set_xticks(np.arange(len(column_label_list), dtype=float))
+	ax.set_xticklabels(column_label_list, rotation=x_tick_rotation, ha="right")
+	ax.set_yticks(np.arange(len(row_label_list), dtype=float))
+	ax.set_yticklabels(row_label_list)
+	ax.set_xlabel(x_label)
+	ax.set_ylabel(y_label)
+	ax.set_title(title)
+	ax.set_facecolor(tokens["axes_background"])
+	ax.grid(False)
+	setattr(
+		ax,
+		"_pibre_coefficient_heatmap",
+		{"image": image, "colorbar": colorbar, "values": coefficient_matrix},
+	)
+	return figure, ax
+
+
+def plot_coefficient_bar_chart(
+	coefficient_values: Any,
+	*,
+	labels: list[str],
+	title: str,
+	x_label: str,
+	y_label: str,
+	ax: Any | None = None,
+	figure_size: tuple[float, float] = (10.0, 5.5),
+	x_tick_rotation: float = 45.0,
+) -> tuple[Any, Any]:
+	"""Plot a coefficient bar chart with repository-standard styling."""
+
+	tokens = apply_pibre_plot_theme()
+	coefficient_vector = _validate_coefficient_array(
+		coefficient_values,
+		expected_ndim=1,
+		value_name="coefficient_values",
+	)
+	label_list = _validate_label_count(
+		labels,
+		expected_size=coefficient_vector.shape[0],
+		label_name="labels",
+	)
+
+	if ax is None:
+		figure, ax = plt.subplots(figsize=figure_size, dpi=140, constrained_layout=True)
+	else:
+		figure = ax.figure
+
+	positions = np.arange(len(label_list), dtype=float)
+	bar_container = ax.bar(
+		positions,
+		coefficient_vector,
+		color=tokens["qualitative_cycle"][0],
+		edgecolor=tokens["primary_text"],
+		alpha=0.82,
+		linewidth=0.7,
+	)
+	ax.axhline(0.0, color=tokens["secondary_text"], linewidth=1.0, linestyle="--")
+	ax.set_xticks(positions)
+	ax.set_xticklabels(label_list, rotation=x_tick_rotation, ha="right")
+	ax.set_xlabel(x_label)
+	ax.set_ylabel(y_label)
+	ax.set_title(title)
+	ax.grid(axis="y", which="major", color=tokens["major_grid"], alpha=0.45)
+	ax.grid(axis="x", which="major", visible=False)
+	setattr(
+		ax,
+		"_pibre_coefficient_bar_chart",
+		{"bars": list(bar_container), "values": coefficient_vector},
+	)
+	return figure, ax
+
+
+def plot_coefficient_tensor_heatmaps(
+	coefficient_values: Any,
+	*,
+	target_labels: list[str],
+	row_labels: list[str],
+	column_labels: list[str],
+	title: str,
+	x_label: str,
+	y_label: str,
+	colorbar_label: str = "Coefficient value",
+	figure_size_per_panel: tuple[float, float] = (4.6, 3.8),
+	max_columns: int = 3,
+	x_tick_rotation: float = 45.0,
+) -> tuple[Any, np.ndarray]:
+	"""Plot one coefficient heatmap per target for a rank-3 tensor."""
+
+	tokens = apply_pibre_plot_theme()
+	coefficient_tensor = _validate_coefficient_array(
+		coefficient_values,
+		expected_ndim=3,
+		value_name="coefficient_values",
+	)
+	target_label_list = _validate_label_count(
+		target_labels,
+		expected_size=coefficient_tensor.shape[0],
+		label_name="target_labels",
+	)
+	row_label_list = _validate_label_count(
+		row_labels,
+		expected_size=coefficient_tensor.shape[1],
+		label_name="row_labels",
+	)
+	column_label_list = _validate_label_count(
+		column_labels,
+		expected_size=coefficient_tensor.shape[2],
+		label_name="column_labels",
+	)
+	row_count, column_count = _resolve_subplot_grid(coefficient_tensor.shape[0], max_columns=max_columns)
+	figure, axes = plt.subplots(
+		row_count,
+		column_count,
+		figsize=(figure_size_per_panel[0] * column_count, figure_size_per_panel[1] * row_count),
+		dpi=140,
+		constrained_layout=True,
+		squeeze=False,
+	)
+	norm = _build_centered_diverging_norm(coefficient_tensor)
+	active_axes: list[Any] = []
+	last_image = None
+
+	for axis_index, axis in enumerate(axes.flat):
+		if axis_index >= coefficient_tensor.shape[0]:
+			axis.set_visible(False)
+			continue
+		active_axes.append(axis)
+		image = axis.imshow(
+			coefficient_tensor[axis_index],
+			aspect="auto",
+			cmap=tokens["diverging_colormap"],
+			norm=norm,
+			origin="lower",
+			interpolation="nearest",
+		)
+		last_image = image
+		axis.set_xticks(np.arange(len(column_label_list), dtype=float))
+		axis.set_xticklabels(column_label_list, rotation=x_tick_rotation, ha="right")
+		axis.set_yticks(np.arange(len(row_label_list), dtype=float))
+		axis.set_yticklabels(row_label_list)
+		axis.set_xlabel(x_label)
+		axis.set_ylabel(y_label)
+		axis.set_title(target_label_list[axis_index])
+		axis.set_facecolor(tokens["axes_background"])
+		axis.grid(False)
+
+	if last_image is None:
+		raise ValueError("coefficient_values must contain at least one target panel.")
+
+	colorbar = figure.colorbar(last_image, ax=active_axes, shrink=0.92, pad=0.02)
+	colorbar.set_label(colorbar_label)
+	colorbar.ax.tick_params(colors=tokens["primary_text"])
+	figure.suptitle(title)
+	setattr(
+		figure,
+		"_pibre_coefficient_tensor_heatmaps",
+		{
+			"axes": active_axes,
+			"colorbar": colorbar,
+			"values": coefficient_tensor,
+		},
+	)
+	return figure, axes
 
 
 def plot_train_test_metric_boxplots(
@@ -248,5 +499,8 @@ __all__ = [
 	"PIBRE_THEME_TOKENS",
 	"PROJECTED_METRIC_COLUMNS",
 	"apply_pibre_plot_theme",
+	"plot_coefficient_bar_chart",
+	"plot_coefficient_heatmap",
+	"plot_coefficient_tensor_heatmaps",
 	"plot_train_test_metric_boxplots",
 ]

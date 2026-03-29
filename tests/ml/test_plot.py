@@ -9,9 +9,16 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
-from src.utils.plot import apply_pibre_plot_theme, plot_train_test_metric_boxplots
+from src.utils.plot import (
+	apply_pibre_plot_theme,
+	plot_coefficient_bar_chart,
+	plot_coefficient_heatmap,
+	plot_coefficient_tensor_heatmaps,
+	plot_train_test_metric_boxplots,
+)
 
 
 def _build_metric_frame() -> pd.DataFrame:
@@ -93,6 +100,76 @@ class PlotHelperTests(unittest.TestCase):
 				metric_frame,
 				metric_name="raw_R2",
 				target_name="Out_A",
+			)
+
+	def test_plot_coefficient_heatmap_returns_colorbar_and_labels(self) -> None:
+		figure, axis = plot_coefficient_heatmap(
+			np.array([[0.2, -0.1, 0.0], [0.4, -0.3, 0.1]], dtype=float),
+			row_labels=["Out_A", "Out_B"],
+			column_labels=["Flow", "Aeration", "Recycle"],
+			title="Effective operational coefficients",
+			x_label="Operational variable",
+			y_label="Measured target",
+		)
+
+		artist_bundle = getattr(axis, "_pibre_coefficient_heatmap")
+		self.assertIs(figure, axis.figure)
+		self.assertEqual(artist_bundle["values"].shape, (2, 3))
+		self.assertEqual(artist_bundle["image"].origin, "lower")
+		self.assertEqual(axis.get_xlabel(), "Operational variable")
+		self.assertEqual(axis.get_ylabel(), "Measured target")
+		self.assertEqual(len(figure.axes), 2)
+
+	def test_plot_coefficient_bar_chart_returns_expected_number_of_bars(self) -> None:
+		figure, axis = plot_coefficient_bar_chart(
+			np.array([0.4, -0.2, 0.1], dtype=float),
+			labels=["Out_A", "Out_B", "Out_C"],
+			title="Effective bias coefficients",
+			x_label="Measured target",
+			y_label="Coefficient value",
+		)
+
+		artist_bundle = getattr(axis, "_pibre_coefficient_bar_chart")
+		self.assertIs(figure, axis.figure)
+		self.assertEqual(len(artist_bundle["bars"]), 3)
+		self.assertEqual(axis.get_xlabel(), "Measured target")
+		self.assertEqual(axis.get_ylabel(), "Coefficient value")
+
+	def test_plot_coefficient_tensor_heatmaps_returns_one_subplot_per_target(self) -> None:
+		figure, axes = plot_coefficient_tensor_heatmaps(
+			np.array(
+				[
+					[[0.2, -0.1], [0.0, 0.3]],
+					[[0.1, 0.4], [-0.2, -0.3]],
+				],
+				dtype=float,
+			),
+			target_labels=["Out_A", "Out_B"],
+			row_labels=["Flow", "Aeration"],
+			column_labels=["Flow", "Aeration"],
+			title="Operational interaction coefficients",
+			x_label="Operational variable",
+			y_label="Operational variable",
+		)
+
+		artist_bundle = getattr(figure, "_pibre_coefficient_tensor_heatmaps")
+		self.assertEqual(len(artist_bundle["axes"]), 2)
+		self.assertEqual(len(figure.axes), 3)
+		self.assertEqual(axes.shape, (1, 2))
+		self.assertEqual(artist_bundle["axes"][0].images[0].origin, "lower")
+		self.assertEqual(artist_bundle["axes"][0].get_title(), "Out_A")
+		self.assertEqual(artist_bundle["axes"][1].get_title(), "Out_B")
+
+	def test_plot_coefficient_tensor_heatmaps_rejects_target_label_mismatch(self) -> None:
+		with self.assertRaises(ValueError):
+			plot_coefficient_tensor_heatmaps(
+				np.ones((2, 2, 2), dtype=float),
+				target_labels=["Out_A"],
+				row_labels=["Flow", "Aeration"],
+				column_labels=["Flow", "Aeration"],
+				title="Operational interaction coefficients",
+				x_label="Operational variable",
+				y_label="Operational variable",
 			)
 
 
