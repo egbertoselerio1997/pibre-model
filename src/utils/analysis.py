@@ -11,7 +11,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from .process import DatasetSplit, SupervisedDatasetFrames, make_train_test_split
-from .simulation import load_ml_orchestration_params
+from .simulation import load_ml_orchestration_params, load_params_config
 
 
 ModelRunner = Callable[..., dict[str, Any]]
@@ -23,6 +23,13 @@ _DEFAULT_ANALYSIS_SETTINGS = {
 	"n_repeats": 30,
 	"test_fraction": 0.2,
 	"random_seed": 42,
+}
+
+_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS = {
+	"grid_points_per_axis": 49,
+	"contour_levels": 18,
+	"operational_extension_fraction": 0.5,
+	"fixed_influent_profile": "midpoint",
 }
 
 
@@ -40,6 +47,275 @@ def load_analysis_defaults(repo_root: str | Path | None = None) -> dict[str, int
 		"n_repeats": int(analysis_params.get("n_repeats", _DEFAULT_ANALYSIS_SETTINGS["n_repeats"])),
 		"test_fraction": float(analysis_params.get("test_fraction", hyperparameters.get("test_fraction", _DEFAULT_ANALYSIS_SETTINGS["test_fraction"]))),
 		"random_seed": int(hyperparameters.get("random_seed", _DEFAULT_ANALYSIS_SETTINGS["random_seed"])),
+	}
+
+
+def load_cobre_response_surface_defaults(repo_root: str | Path | None = None) -> dict[str, int | float | str]:
+	"""Load configurable defaults for the COBRE operational response-surface study."""
+
+	orchestration_params = load_ml_orchestration_params(repo_root)
+	analysis_params = dict(orchestration_params.get("analysis", {}))
+	response_surface_params = dict(analysis_params.get("cobre_response_surface", {}))
+
+	return {
+		"grid_points_per_axis": int(
+			response_surface_params.get(
+				"grid_points_per_axis",
+				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["grid_points_per_axis"],
+			)
+		),
+		"contour_levels": int(
+			response_surface_params.get(
+				"contour_levels",
+				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["contour_levels"],
+			)
+		),
+		"operational_extension_fraction": float(
+			response_surface_params.get(
+				"operational_extension_fraction",
+				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["operational_extension_fraction"],
+			)
+		),
+		"fixed_influent_profile": str(
+			response_surface_params.get(
+				"fixed_influent_profile",
+				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["fixed_influent_profile"],
+			)
+		),
+	}
+
+
+def _resolve_response_surface_metadata(
+	metadata: Mapping[str, Any] | None,
+	*,
+	repo_root: str | Path | None = None,
+) -> dict[str, list[str]]:
+	params = load_params_config(repo_root)
+	simulation_params = dict(params["asm2d_tcn_simulation"])
+	workbook_params = dict(simulation_params.get("workbook", {}))
+	resolved_metadata = dict(metadata or {})
+
+	operational_columns = list(
+		resolved_metadata.get("operational_columns", simulation_params.get("operational_columns", []))
+	)
+	state_columns = list(
+		resolved_metadata.get(
+			"state_columns",
+			workbook_params.get("state_columns", list(dict(simulation_params.get("influent_state_ranges", {})).keys())),
+		)
+	)
+	measured_output_columns = list(
+		resolved_metadata.get("measured_output_columns", simulation_params.get("measured_output_columns", []))
+	)
+
+	if "HRT" not in operational_columns or "Aeration" not in operational_columns:
+		raise ValueError("The COBRE response surface requires HRT and Aeration operational columns.")
+	if not state_columns:
+		raise ValueError("At least one influent state column is required to build a COBRE response surface.")
+	if not measured_output_columns:
+		raise ValueError("At least one measured output column is required to build a COBRE response surface.")
+
+	return {
+		"operational_columns": operational_columns,
+		"state_columns": state_columns,
+		"measured_output_columns": measured_output_columns,
+	}
+
+
+def _build_midpoint_influent_profile(
+	state_columns: list[str],
+	*,
+	repo_root: str | Path | None = None,
+) -> dict[str, float]:
+	params = load_params_config(repo_root)
+	influent_ranges = dict(params["asm2d_tcn_simulation"]["influent_state_ranges"])
+	profile: dict[str, float] = {}
+
+	for state_column in state_columns:
+		if state_column not in influent_ranges:
+			raise KeyError(f"Influent state range not found for '{state_column}'.")
+		lower_bound, upper_bound = influent_ranges[state_column]
+		profile[state_column] = 0.5 * (float(lower_bound) + float(upper_bound))
+
+	return profile
+
+
+def _resolve_fixed_influent_profile(
+	state_columns: list[str],
+	fixed_influent_profile: str | Mapping[str, Any] | None,
+	*,
+	repo_root: str | Path | None = None,
+) -> dict[str, float]:
+	if fixed_influent_profile is None or fixed_influent_profile == "midpoint":
+		return _build_midpoint_influent_profile(state_columns, repo_root=repo_root)
+
+	if isinstance(fixed_influent_profile, Mapping):
+		resolved_profile: dict[str, float] = {}
+		for state_column in state_columns:
+			if state_column not in fixed_influent_profile:
+				raise KeyError(f"Fixed influent profile is missing '{state_column}'.")
+			resolved_profile[state_column] = float(fixed_influent_profile[state_column])
+		return resolved_profile
+
+	raise ValueError("fixed_influent_profile must be 'midpoint', None, or a mapping of state values.")
+
+
+def _resolve_operational_domain(
+	operational_columns: list[str],
+	*,
+	operational_extension_fraction: float,
+	repo_root: str | Path | None = None,
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+	"""Resolve the trained and extrapolated operating domains while preserving non-negative controls."""
+
+	if operational_extension_fraction < 0.0:
+		raise ValueError("operational_extension_fraction must be greater than or equal to 0.")
+
+	params = load_params_config(repo_root)
+	operational_ranges = dict(params["asm2d_tcn_simulation"]["operational_ranges"])
+	training_domain: dict[str, dict[str, float]] = {}
+	extended_domain: dict[str, dict[str, float]] = {}
+
+	for column_name in operational_columns:
+		if column_name not in operational_ranges:
+			raise KeyError(f"Operational range not found for '{column_name}'.")
+		lower_bound, upper_bound = operational_ranges[column_name]
+		lower_value = float(lower_bound)
+		upper_value = float(upper_bound)
+		width = upper_value - lower_value
+		extension = float(operational_extension_fraction) * width
+		training_domain[column_name] = {"min": lower_value, "max": upper_value}
+		extended_domain[column_name] = {
+			"min": max(0.0, lower_value - extension),
+			"max": upper_value + extension,
+		}
+
+	return training_domain, extended_domain
+
+
+def build_cobre_response_surface_prediction_data(
+	model_path: str | Path,
+	*,
+	metadata: Mapping[str, Any] | None = None,
+	repo_root: str | Path | None = None,
+	grid_points_per_axis: int | None = None,
+	operational_extension_fraction: float | None = None,
+	fixed_influent_profile: str | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+	"""Build a COBRE prediction grid over HRT and Aeration with a fixed influent profile."""
+
+	from src.models.ml import predict_cobre_model
+
+	defaults = load_cobre_response_surface_defaults(repo_root)
+	selected_grid_points = int(
+		grid_points_per_axis
+		if grid_points_per_axis is not None
+		else defaults["grid_points_per_axis"]
+	)
+	selected_extension_fraction = float(
+		operational_extension_fraction
+		if operational_extension_fraction is not None
+		else defaults["operational_extension_fraction"]
+	)
+	selected_profile = (
+		fixed_influent_profile
+		if fixed_influent_profile is not None
+		else defaults["fixed_influent_profile"]
+	)
+
+	if selected_grid_points < 2:
+		raise ValueError("grid_points_per_axis must be at least 2.")
+
+	resolved_metadata = _resolve_response_surface_metadata(metadata, repo_root=repo_root)
+	operational_columns = list(resolved_metadata["operational_columns"])
+	state_columns = list(resolved_metadata["state_columns"])
+	training_domain, extended_domain = _resolve_operational_domain(
+		operational_columns,
+		operational_extension_fraction=selected_extension_fraction,
+		repo_root=repo_root,
+	)
+	resolved_influent_profile = _resolve_fixed_influent_profile(
+		state_columns,
+		selected_profile,
+		repo_root=repo_root,
+	)
+
+	hrt_axis = np.linspace(
+		extended_domain["HRT"]["min"],
+		extended_domain["HRT"]["max"],
+		selected_grid_points,
+		dtype=float,
+	)
+	aeration_axis = np.linspace(
+		extended_domain["Aeration"]["min"],
+		extended_domain["Aeration"]["max"],
+		selected_grid_points,
+		dtype=float,
+	)
+	hrt_mesh, aeration_mesh = np.meshgrid(hrt_axis, aeration_axis)
+	row_count = int(hrt_mesh.size)
+
+	feature_columns = {
+		"HRT": hrt_mesh.reshape(-1),
+		"Aeration": aeration_mesh.reshape(-1),
+	}
+	for state_column in state_columns:
+		feature_columns[f"In_{state_column}"] = np.full(
+			row_count,
+			resolved_influent_profile[state_column],
+			dtype=float,
+		)
+	feature_frame = pd.DataFrame(feature_columns)
+	constraint_reference = pd.DataFrame(
+		{
+			state_column: np.full(row_count, resolved_influent_profile[state_column], dtype=float)
+			for state_column in state_columns
+		}
+	)
+
+	prediction_result = predict_cobre_model(
+		{
+			"features": feature_frame,
+			"constraint_reference": constraint_reference,
+		},
+		model_path,
+	)
+	projected_predictions = prediction_result["projected_predictions"].copy()
+	per_target_surfaces = {
+		target_name: projected_predictions[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
+		for target_name in projected_predictions.columns
+	}
+	prediction_table = pd.concat(
+		[
+			feature_frame,
+			constraint_reference.add_prefix("ConstraintReference_"),
+			projected_predictions.add_prefix("Projected_"),
+		],
+		axis=1,
+	)
+
+	return {
+		"response_surface_config": {
+			"grid_points_per_axis": selected_grid_points,
+			"operational_extension_fraction": selected_extension_fraction,
+			"fixed_influent_profile": "explicit" if isinstance(selected_profile, Mapping) else str(selected_profile),
+		},
+		"fixed_influent_profile": pd.Series(resolved_influent_profile, name="value"),
+		"operational_axes": {
+			"HRT": hrt_axis,
+			"Aeration": aeration_axis,
+		},
+		"operational_meshes": {
+			"HRT": hrt_mesh,
+			"Aeration": aeration_mesh,
+		},
+		"training_domain": training_domain,
+		"extended_domain": extended_domain,
+		"feature_grid": feature_frame,
+		"constraint_reference": constraint_reference,
+		"projected_predictions": projected_predictions,
+		"prediction_table": prediction_table,
+		"per_target_surfaces": per_target_surfaces,
 	}
 
 
@@ -339,7 +615,9 @@ def run_model_dataset_size_analysis(
 
 __all__ = [
 	"ModelRunner",
+	"build_cobre_response_surface_prediction_data",
 	"build_dataset_size_schedule",
+	"load_cobre_response_surface_defaults",
 	"load_analysis_defaults",
 	"run_model_dataset_size_analysis",
 ]

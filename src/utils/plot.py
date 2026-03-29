@@ -13,6 +13,7 @@ from cycler import cycler
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.patches import Rectangle
 
 
 PIBRE_THEME_TOKENS: dict[str, Any] = {
@@ -139,6 +140,19 @@ def _resolve_subplot_grid(panel_count: int, *, max_columns: int) -> tuple[int, i
 	column_count = min(max_columns, max(1, math.ceil(math.sqrt(panel_count))))
 	row_count = math.ceil(panel_count / column_count)
 	return row_count, column_count
+
+
+def _validate_surface_mesh(
+	x_mesh: Any,
+	y_mesh: Any,
+	*,
+	value_name: str,
+) -> tuple[np.ndarray, np.ndarray]:
+	x_array = _validate_coefficient_array(x_mesh, expected_ndim=2, value_name=f"{value_name}_x_mesh")
+	y_array = _validate_coefficient_array(y_mesh, expected_ndim=2, value_name=f"{value_name}_y_mesh")
+	if x_array.shape != y_array.shape:
+		raise ValueError(f"{value_name} meshes must share the same shape.")
+	return x_array, y_array
 
 
 def plot_coefficient_heatmap(
@@ -355,6 +369,133 @@ def plot_coefficient_tensor_heatmaps(
 	return figure, axes
 
 
+def plot_response_surface_contours(
+	x_mesh: Any,
+	y_mesh: Any,
+	response_surfaces: dict[str, Any] | pd.Series,
+	*,
+	title: str,
+	x_label: str,
+	y_label: str,
+	training_domain: dict[str, dict[str, float]] | None = None,
+	contour_levels: int = 18,
+	figure_size_per_panel: tuple[float, float] = (4.8, 4.0),
+	max_columns: int = 3,
+) -> tuple[Any, np.ndarray]:
+	"""Plot one filled contour response surface per target with repository-standard styling."""
+
+	if contour_levels < 2:
+		raise ValueError("contour_levels must be at least 2.")
+
+	mesh_x, mesh_y = _validate_surface_mesh(x_mesh, y_mesh, value_name="response_surface")
+	if isinstance(response_surfaces, pd.Series):
+		surface_mapping = response_surfaces.to_dict()
+	else:
+		surface_mapping = dict(response_surfaces)
+	if not surface_mapping:
+		raise ValueError("response_surfaces must contain at least one target surface.")
+
+	tokens = apply_pibre_plot_theme()
+	target_labels = [str(target_name) for target_name in surface_mapping.keys()]
+	row_count, column_count = _resolve_subplot_grid(len(target_labels), max_columns=max_columns)
+	figure, axes = plt.subplots(
+		row_count,
+		column_count,
+		figsize=(figure_size_per_panel[0] * column_count, figure_size_per_panel[1] * row_count),
+		dpi=140,
+		constrained_layout=True,
+		squeeze=False,
+	)
+	active_axes: list[Any] = []
+	colorbars: list[Any] = []
+	filled_contours: list[Any] = []
+	line_contours: list[Any] = []
+	training_patches: list[Any] = []
+
+	for axis_index, axis in enumerate(axes.flat):
+		if axis_index >= len(target_labels):
+			axis.set_visible(False)
+			continue
+
+		target_label = target_labels[axis_index]
+		surface_array = _validate_coefficient_array(
+			surface_mapping[target_label],
+			expected_ndim=2,
+			value_name=f"response_surfaces['{target_label}']",
+		)
+		if surface_array.shape != mesh_x.shape:
+			raise ValueError(
+				f"response_surfaces['{target_label}'] must match the mesh shape {mesh_x.shape}."
+			)
+
+		active_axes.append(axis)
+		filled = axis.contourf(
+			mesh_x,
+			mesh_y,
+			surface_array,
+			levels=int(contour_levels),
+			cmap=tokens["sequential_colormap"],
+		)
+		lines = axis.contour(
+			mesh_x,
+			mesh_y,
+			surface_array,
+			levels=filled.levels,
+			colors=tokens["primary_text"],
+			linewidths=0.6,
+			alpha=0.55,
+		)
+		filled_contours.append(filled)
+		line_contours.append(lines)
+		colorbar = figure.colorbar(filled, ax=axis, shrink=0.9, pad=0.02)
+		colorbar.set_label(f"Projected {_format_target_label(target_label)}")
+		colorbar.ax.tick_params(colors=tokens["primary_text"])
+		colorbars.append(colorbar)
+
+		if training_domain is not None:
+			training_patch = Rectangle(
+				(
+					float(training_domain["HRT"]["min"]),
+					float(training_domain["Aeration"]["min"]),
+				),
+				float(training_domain["HRT"]["max"]) - float(training_domain["HRT"]["min"]),
+				float(training_domain["Aeration"]["max"]) - float(training_domain["Aeration"]["min"]),
+				fill=False,
+				edgecolor=tokens["secondary_text"],
+				linewidth=1.3,
+				linestyle="--",
+			)
+			axis.add_patch(training_patch)
+			training_patches.append(training_patch)
+
+		axis.set_xlabel(x_label)
+		axis.set_ylabel(y_label)
+		axis.set_title(_format_target_label(target_label))
+		axis.set_facecolor(tokens["axes_background"])
+		axis.set_xlim(float(np.min(mesh_x)), float(np.max(mesh_x)))
+		axis.set_ylim(float(np.min(mesh_y)), float(np.max(mesh_y)))
+		axis.grid(which="major", color=tokens["major_grid"], alpha=0.35)
+		axis.grid(which="minor", color=tokens["minor_grid"], alpha=0.2)
+		axis.minorticks_on()
+
+	figure.suptitle(title)
+	setattr(
+		figure,
+		"_pibre_response_surface_contours",
+		{
+			"axes": active_axes,
+			"colorbars": colorbars,
+			"filled_contours": filled_contours,
+			"line_contours": line_contours,
+			"training_patches": training_patches,
+			"x_mesh": mesh_x,
+			"y_mesh": mesh_y,
+			"response_surfaces": {key: np.asarray(value, dtype=float) for key, value in surface_mapping.items()},
+		},
+	)
+	return figure, axes
+
+
 def plot_train_test_metric_boxplots(
 	metric_frame: pd.DataFrame,
 	*,
@@ -502,5 +643,6 @@ __all__ = [
 	"plot_coefficient_bar_chart",
 	"plot_coefficient_heatmap",
 	"plot_coefficient_tensor_heatmaps",
+	"plot_response_surface_contours",
 	"plot_train_test_metric_boxplots",
 ]

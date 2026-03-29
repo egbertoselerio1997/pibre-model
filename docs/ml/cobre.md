@@ -182,8 +182,11 @@ After the COBRE training cell runs in `main.ipynb`, the notebook renders six fig
 - a composite heatmap figure for $\Theta_{uu,eff}$ with one operational-by-operational subplot per measured target
 - a composite heatmap figure for $\Theta_{cc,eff}$ with one influent-by-influent subplot per measured target
 - a composite heatmap figure for $\Theta_{uc,eff}$ with one operational-by-influent subplot per measured target
+- a composite operational response-surface figure with one contour subplot per measured target, using HRT on the x-axis and Aeration on the y-axis
 
 Those tensor figures preserve the repository's unsymmetrized Kronecker-style ordering. The notebook does not symmetrize, reorder, or aggregate the stored interaction blocks before plotting them, so each heatmap axis corresponds exactly to the ordered design basis used during training.
+
+The response-surface figure is a post-training diagnostic. The notebook fixes the influent fractional state vector to a common wastewater profile defined as the midpoint of each configured influent-state range, then evaluates the persisted COBRE bundle across an HRT-Aeration grid that extends beyond the original simulation envelope while clipping the lower HRT and Aeration bounds at zero so the operational axes remain physically admissible. The dashed rectangle overlaid on each subplot marks the original training domain, so the user can distinguish interpolation inside the calibrated region from extrapolation outside it. The contour panels therefore help diagnose how the fitted surrogate behaves as the operational variables vary, but they should not be interpreted as a retraining result or as a formal validation study.
 
 ## 6. Architecture details and adopted standard architecture name
 

@@ -17,6 +17,7 @@ from src.utils.plot import (
 	plot_coefficient_bar_chart,
 	plot_coefficient_heatmap,
 	plot_coefficient_tensor_heatmaps,
+	plot_response_surface_contours,
 	plot_train_test_metric_boxplots,
 )
 
@@ -170,6 +171,54 @@ class PlotHelperTests(unittest.TestCase):
 				title="Operational interaction coefficients",
 				x_label="Operational variable",
 				y_label="Operational variable",
+			)
+
+	def test_plot_response_surface_contours_returns_one_panel_per_target(self) -> None:
+		hrt_mesh, aeration_mesh = np.meshgrid(
+			np.linspace(-9.0, 51.0, 5, dtype=float),
+			np.linspace(-0.5, 3.5, 4, dtype=float),
+		)
+		figure, axes = plot_response_surface_contours(
+			hrt_mesh,
+			aeration_mesh,
+			{
+				"Out_COD": hrt_mesh + 2.0 * aeration_mesh,
+				"Out_TN": hrt_mesh - aeration_mesh,
+			},
+			title="COBRE operational response surfaces",
+			x_label="HRT",
+			y_label="Aeration",
+			training_domain={
+				"HRT": {"min": 6.0, "max": 36.0},
+				"Aeration": {"min": 0.5, "max": 2.5},
+			},
+			contour_levels=9,
+		)
+
+		artist_bundle = getattr(figure, "_pibre_response_surface_contours")
+		self.assertEqual(axes.shape, (1, 2))
+		self.assertEqual(len(artist_bundle["axes"]), 2)
+		self.assertEqual(len(artist_bundle["colorbars"]), 2)
+		self.assertEqual(len(artist_bundle["training_patches"]), 2)
+		self.assertEqual(artist_bundle["axes"][0].get_xlabel(), "HRT")
+		self.assertEqual(artist_bundle["axes"][0].get_ylabel(), "Aeration")
+		self.assertEqual(artist_bundle["axes"][0].get_title(), "COD")
+		self.assertEqual(len(figure.axes), 4)
+
+	def test_plot_response_surface_contours_rejects_shape_mismatch(self) -> None:
+		hrt_mesh, aeration_mesh = np.meshgrid(
+			np.linspace(0.0, 1.0, 4, dtype=float),
+			np.linspace(0.0, 1.0, 4, dtype=float),
+		)
+
+		with self.assertRaises(ValueError):
+			plot_response_surface_contours(
+				hrt_mesh,
+				aeration_mesh,
+				{"Out_COD": np.ones((3, 3), dtype=float)},
+				title="Invalid response surfaces",
+				x_label="HRT",
+				y_label="Aeration",
 			)
 
 
