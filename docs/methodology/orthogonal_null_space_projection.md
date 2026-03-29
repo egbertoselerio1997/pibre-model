@@ -1,394 +1,165 @@
-# Orthogonal Null-Space Projection in the Measured-Space ML Pipelines
+# Orthogonal Null-Space Projection in the Repository ML Pipelines
 
 ## 1. Purpose
 
-This note documents how the repository derives and applies the measured-space orthogonal projection used by the machine-learning models in `src/models/ml`.
+This note explains how orthogonal projection is used in the machine-learning pipelines in this repository after the COBRE refactor to the strict fractional-space formulation.
 
-It answers two implementation questions:
+The central distinction is now explicit:
 
-1. how the projected predictions shown in `main.ipynb` are generated
-2. whether the projection is part of model training or an external post-processing step
+- the classical regressors still train in measured-output space and apply projection afterward in the same measured basis
+- COBRE now trains from a fractional-space raw model whose physically admissible state is collapsed into the measured-output basis analytically
 
-The short answer is:
+Those are related ideas, but they are not the same implementation.
 
-- for the classical regressors (`adaboost_regressor`, `catboost_regressor`, `lightgbm_regressor`, `random_forest_regressor`, `svr_regressor`, `xgboost_regressor`), projection is external to estimator fitting and is applied after the model produces raw predictions
-- for `cobre`, projection is integrated analytically into the least-squares solution, and the repository still reports both raw and projected predictions derived from the fitted parameter matrices
+## 2. Two invariant matrices now exist in the notebook workflow
 
-## 2. Measured-space constraint construction in the notebook
+The notebook keeps two different invariant constructions because the repository currently supports two different model families.
 
-The notebook first builds the macroscopic stoichiometric matrix in the measured-output basis and then computes its null space:
+### 2.1 Fractional invariant matrix for COBRE
 
-$$
-S_{macro} = S_{Petersen} C^T
-$$
-
-where:
-
-- $S_{Petersen}$ is the process-by-state stoichiometric matrix
-- $C$ is the measured-output composition matrix
-
-The null space basis is then obtained as:
+For COBRE, the invariant matrix is derived directly from the Petersen matrix:
 
 $$
-N = \operatorname{null\_space}(S_{macro})
+A_{frac} = \operatorname{null\_space}(\nu)^T
 $$
 
-and the repository defines the measured-space constraint matrix as:
+This is the strict matrix required by the fractional-space derivation, because the projection constraint is imposed on the fractional change itself.
+
+### 2.2 Measured-space invariant matrix for the classical regressors
+
+The classical regressors still use the older measured-space projector derived from the macroscopic stoichiometric matrix:
 
 $$
-A = N^T
+S_{macro} = \nu I_{comp}^T
 $$
 
-In `main.ipynb`, this is the code path used to create `A_matrix`:
-
-```python
-macroscopic_stoichiometric_matrix = petersen_matrix @ composition_matrix.T
-constraint_basis = null_space(macroscopic_stoichiometric_matrix)
-A_matrix = constraint_basis.T
-```
-
-Interpretation:
-
-- each row of $A$ represents one measured-space invariant
-- if an output vector $y$ satisfies the invariants relative to an influent reference $y_{ref}$, then
-
 $$
-A y = A y_{ref}
+A_{measured} = \operatorname{null\_space}(S_{macro})^T
 $$
 
-The notebook rounds and normalizes the displayed matrix for readability. The downstream code does not assume exact orthonormality and therefore computes the projector with a pseudoinverse.
+This measured-space matrix is retained in the notebook because the classical regressors continue to project measured-output predictions directly.
 
-## 3. Orthogonal projection used in the repository
+## 3. Shared projector formula
 
-The core implementation lives in `src/utils/process.py`.
-
-The repository first constructs the projection operator:
+Both model families use the same projector construction once an invariant matrix $A$ has been chosen:
 
 $$
 P = A^T (A A^T)^+ A
 $$
 
-where $(\cdot)^+$ denotes the Moore-Penrose pseudoinverse.
+where $(\cdot)^+$ is the Moore-Penrose pseudoinverse. The complementary projector is:
 
-This is implemented by `build_projection_operator(A_matrix)`.
+$$
+P_{\perp} = I - P
+$$
 
-The actual projection step is then:
+The helper that builds this projector lives in `src/utils/process.py`.
+
+## 4. Classical regressors: measured-space post-projection
+
+The classical regressors in `src/models/ml` still follow the measured-space path:
+
+1. build measured-space features and measured-space targets
+2. fit an unconstrained regressor in measured-output space
+3. generate raw measured-output predictions
+4. project those predictions onto the affine measured-space invariant set using the measured-space constraint reference
+
+For those models the projected prediction is:
 
 $$
 \hat{y}_{proj} = \hat{y}_{raw} - (\hat{y}_{raw} - y_{ref}) P^T
 $$
 
-implemented by `project_to_mass_balance(raw_predictions, constraint_reference, A_matrix)`.
+with:
 
-Because $P$ projects onto the row space of $A$, the correction removes exactly the component of $\hat{y}_{raw} - y_{ref}$ that violates the invariants. The result is the closest feasible prediction in the Euclidean sense:
+- $\hat{y}_{raw}$ in measured-output space
+- $y_{ref}$ in measured-output space
+- $A = A_{measured}$
 
-$$
-A \hat{y}_{proj} = A y_{ref}
-$$
+This remains a post-processing step outside the estimator fitting itself.
 
-up to numerical precision.
+## 5. COBRE: strict fractional-space projection with measured-space collapse
 
-Why this is called an orthogonal projection:
+COBRE now uses a different path.
 
-- the correction is the minimum-norm adjustment needed to satisfy the linear constraints
-- among all vectors that satisfy the invariants, $\hat{y}_{proj}$ is the one closest to $\hat{y}_{raw}$ under the standard inner product used by the implementation
+### 5.1 Raw model space
 
-## 4. What `constraint_reference` means
+The notebook prepares:
 
-The projection is not onto the homogeneous null space alone. It is onto an affine constraint set anchored by the sample-specific influent measured composites.
+- operational inputs $u$
+- influent fractional states $C_{in}$
+- measured effluent targets $Y$
 
-The repository constructs a supervised measured-space dataset with:
-
-- `features`: operating variables plus influent measured composites
-- `targets`: effluent measured outputs
-- `constraint_reference`: the influent measured composite vector in the same measured-output basis as the targets
-
-This is implemented in `build_measured_supervised_dataset(...)` in `src/utils/process.py`.
-
-Therefore, each sample has its own reference vector $y_{ref}$, and the projection enforces the invariants relative to that sample's influent conditions.
-
-## 5. Classical regressors: training flow and projection flow
-
-The six classical regressors share the same structure:
-
-- `src/models/ml/adaboost_regressor.py`
-- `src/models/ml/catboost_regressor.py`
-- `src/models/ml/lightgbm_regressor.py`
-- `src/models/ml/random_forest_regressor.py`
-- `src/models/ml/svr_regressor.py`
-- `src/models/ml/xgboost_regressor.py`
-
-Each file is intentionally thin. It defines:
-
-1. a parameter loader
-2. a model builder
-3. a pipeline entry point that forwards into the shared utility `run_tabular_regressor_pipeline(...)`
-
-The important consequence is that the projection logic is not implemented separately in each model file. It is centralized in the shared utilities under `src/utils/train.py` and `src/utils/process.py`.
-
-### 5.1 What happens during fitting
-
-For classical regressors, fitting happens inside `train_tabular_regressor(...)` in `src/utils/train.py`:
-
-```python
-estimator.fit(feature_frame, target_frame)
-```
-
-This call receives only features and targets. It does not receive:
-
-- `A_matrix`
-- `constraint_reference`
-- a projection operator
-
-That means the estimator is trained as an ordinary unconstrained regressor in measured-output space.
-
-Examples:
-
-- AdaBoost uses `MultiOutputRegressor(AdaBoostRegressor(...))`
-- CatBoost uses `CatBoostRegressor(...)`
-- LightGBM uses `MultiOutputRegressor(LGBMRegressor(...))`
-- Random Forest uses `RandomForestRegressor(...)`
-- SVR uses `MultiOutputRegressor(SVR(...))`
-- XGBoost uses `MultiOutputRegressor(XGBRegressor(...))`
-
-None of those model objects has the mass-balance projector embedded inside the estimator itself.
-
-### 5.2 What happens after fitting
-
-After a classical regressor produces raw predictions, the shared helper `predict_tabular_regressor_split(...)` applies the projection:
-
-1. call `model.predict(...)`
-2. inverse-transform targets back into physical units if target scaling was used
-3. call `project_to_mass_balance(...)`
-4. return both projected and raw predictions
-
-In simplified form:
-
-```python
-raw_predictions = model.predict(dataset_split.features)
-raw_predictions = inverse_transform_targets(raw_predictions, scaling_bundle)
-projected_predictions = project_to_mass_balance(
-    raw_predictions,
-    dataset_split.constraint_reference.to_numpy(dtype=float),
-    np.asarray(A_matrix, dtype=float),
-)
-```
-
-This establishes the core behavior:
-
-- the trained classical model first generates unconstrained raw outputs
-- the repository then projects those outputs to generate physically compliant projected outputs
-
-So for the classical regressors, the null-space projection is an external process applied to predictions, not a constraint built into training.
-
-## 6. Why the notebook shows both raw and projected results
-
-The notebook displays results from the report object returned by each pipeline. Those reports are created by `evaluate_prediction_bundle(...)` in `src/utils/test.py`.
-
-That evaluation function computes metrics twice:
-
-1. once for `raw_predictions`
-2. once for `projected_predictions`
-
-It returns:
-
-- aggregate metrics with one row for `raw` and one row for `projected`
-- per-target metrics for both raw and projected outputs
-- raw and projected prediction frames
-- residual summaries comparing both variants against the invariance constraints
-
-This is why the notebook can show projected performance and projected constraint residuals without the underlying classical model being trained with a projection layer.
-
-The projected values shown in `main.ipynb` are therefore generated by shared post-prediction evaluation code, not by a special projected estimator class for AdaBoost, CatBoost, or the other classical regressors.
-
-## 7. Hyperparameter tuning for classical regressors
-
-There is one subtle but important detail.
-
-For classical regressors, fitting remains unconstrained, but Optuna tuning uses projected validation performance as the objective.
-
-Inside `tune_tabular_regressor_hyperparameters(...)` in `src/utils/train.py`, the workflow is:
-
-1. fit the candidate regressor on the tuning-train split
-2. generate raw predictions on the tuning-test split
-3. project those predictions with `project_to_mass_balance(...)`
-4. evaluate mean squared error against the projected predictions
-
-So the tuning objective is effectively:
+The raw COBRE model predicts fractional states:
 
 $$
-\min_{\theta} \operatorname{MSE}(y_{true}, \hat{y}_{proj}(\theta))
+C_{raw} = W_u u + W_{in} C_{in} + b + \Theta_{uu}(u \otimes u) + \Theta_{cc}(C_{in} \otimes C_{in}) + \Theta_{uc}(u \otimes C_{in})
 $$
 
-not:
+### 5.2 Projection space
+
+The fractional physically admissible state is:
 
 $$
-\min_{\theta} \operatorname{MSE}(y_{true}, \hat{y}_{raw}(\theta))
+C^* = P_{\perp} C_{raw} + P C_{in}
 $$
 
-This means:
+with $A = A_{frac}$.
 
-- projection influences hyperparameter selection
-- projection does not alter the estimator's internal fitting algorithm
+### 5.3 Measured-output collapse
 
-That distinction matters. The repository selects hyperparameters based on projected outputs while still training a conventional unconstrained regressor.
-
-## 8. Prediction-time behavior for persisted classical regressor bundles
-
-When a saved classical regressor bundle is loaded through `predict_tabular_regressor_model(...)`, the bundle contains:
-
-- the fitted estimator
-- saved feature and target column order
-- fitted scalers
-- `A_matrix`
-- constraint column names
-
-Prediction proceeds as follows:
-
-1. rebuild the measured-space input frame if raw simulation rows are supplied
-2. transform features with the saved scaler
-3. call the estimator for raw predictions
-4. apply the same measured-space projection using the saved `A_matrix`
-5. return both `raw_predictions` and `projected_predictions`
-
-This confirms that even after persistence, the projection remains an explicit downstream step applied to raw predictions.
-
-## 9. `cobre`: projection integrated into the OLS solve
-
-`src/models/ml/cobre.py` does not train an unconstrained predictor and then project it afterwards. It analytically folds the measured-space projector into the least-squares problem.
-
-The training path:
-
-1. builds a partitioned second-order design matrix over operational variables and influent measured composites
-2. computes the measured-space projection matrix and its complement
-3. projects the training targets into the feasible subspace during the OLS assembly step
-4. solves for one raw parameter matrix and one effective projected parameter matrix
-
-The stored bundle therefore contains both:
-
-- `raw_parameter_matrix` for the unconstrained bilinear response
-- `effective_parameter_matrix` for the projected measured-space response
-
-Prediction then evaluates both parameter matrices on the same design frame. So `cobre` is different from the classical regressors:
-
-- projection is not a post-hoc call to `project_to_mass_balance(...)` at evaluation time
-- projection is not a differentiable training loop inside a neural network
-- projection is built directly into the closed-form linear-algebra solution used for fitting
-
-## 11. Summary by model family
-
-### 11.1 Classical regressors
-
-Models:
-
-- AdaBoost
-- CatBoost
-- LightGBM
-- Random Forest
-- SVR
-- XGBoost
-
-Projection placement:
-
-- external post-processing step
-
-Training target:
-
-- unconstrained raw measured outputs
-
-Tuning objective:
-
-- projected validation MSE
-
-Reported notebook outputs:
-
-- both raw and projected metrics and residuals
-
-### 11.2 COBRE
-
-Model:
-
-- partitioned bilinear design with projected multivariate least squares
-
-Projection placement:
-
-- collapsed analytically into the fitted parameter matrices
-
-Training target:
-
-- targets projected through the measured-space projector complement during the OLS solve
-
-Tuning objective:
-
-- none in the current repository workflow
-
-Reported notebook outputs:
-
-- both raw and projected metrics and residuals
-
-## 12. Practical interpretation of the notebook results
-
-When reading the classical-regressor outputs in `main.ipynb`, keep the following interpretation in mind:
-
-- `raw` rows show what the unconstrained estimator predicted directly
-- `projected` rows show the physically corrected predictions after orthogonal projection into the measured-space invariant set
-- `constraint_residuals` compare how strongly the raw and projected outputs violate the invariants
-
-Therefore, if the projected metrics improve or the projected constraint residuals collapse toward zero, that does not mean the estimator itself learned the invariants. It means the repository's post-processing projection successfully corrected the raw outputs.
-
-For `cobre`, the interpretation is different: projected outputs are not just a post-hoc correction. They come from the effective parameter matrix obtained by analytically incorporating the projection into the regression solve.
-
-## 13. Why the pseudoinverse form is used
-
-The projector implementation uses:
+The measured prediction used for reporting and training loss is:
 
 $$
-A^T (A A^T)^+ A
+C_{comp}^* = I_{comp} C^*
 $$
 
-instead of assuming that $(A A^T)^{-1}$ exists exactly.
+so the training objective is built in measured-output space even though the raw model and the constraints live in fractional space.
 
-This is numerically safer because:
+### 5.4 Implemented transformed target
 
-- `A_matrix` originates from a floating-point null-space computation
-- the notebook rounds and normalizes the displayed basis for readability
-- future constraint sets may not remain perfectly orthonormal or perfectly independent under all preprocessing choices
+The row-oriented transformed target used in the repository is:
 
-Using the pseudoinverse makes the projector robust to mild rank deficiency or numerical perturbations while preserving the intended orthogonal projection behavior.
+$$
+\widetilde{Y} = Y - C_{IN} P^T I_{comp}^T
+$$
 
-## 14. Repository locations relevant to this methodology
+The repository then solves the analytically collapsed least-squares problem without explicitly building the large Kronecker matrix during normal training.
 
-Core notebook construction:
+## 6. Reporting differences between the model families
 
-- `main.ipynb`
+The reporting distinction is now important.
 
-Shared projection and measured-space preprocessing:
+### 6.1 Classical regressors
 
-- `src/utils/process.py`
+For the classical regressors:
 
-Shared classical-regressor training, tuning, and prediction flow:
+- regression metrics are measured in measured-output space
+- constraint residuals are also measured in measured-output space
 
-- `src/utils/train.py`
+### 6.2 COBRE
 
-Shared reporting of raw versus projected results:
+For COBRE:
 
-- `src/utils/test.py`
+- regression metrics are measured on measured-output predictions after mapping through the composition matrix
+- constraint residuals are measured on the fractional raw and fractional projected states against the fractional influent reference
 
-Classical regressor wrappers:
+This is why COBRE now uses a dedicated evaluation helper rather than the generic measured-space reporting path.
 
-- `src/models/ml/adaboost_regressor.py`
-- `src/models/ml/catboost_regressor.py`
-- `src/models/ml/lightgbm_regressor.py`
-- `src/models/ml/random_forest_regressor.py`
-- `src/models/ml/svr_regressor.py`
-- `src/models/ml/xgboost_regressor.py`
+## 7. Notebook orchestration implications
 
-Projected least-squares bilinear model:
+The notebook remains the only place where train-test splitting and any Optuna-only subset creation occur. After the strict COBRE refactor, the notebook therefore carries two aligned supervised datasets:
 
-- `src/models/ml/cobre.py`
+- a measured-space dataset for the classical regressors
+- a COBRE-specific dataset with fractional influent features and measured targets
 
-## 15. Final answer to the implementation question
+The notebook also keeps both invariant matrices so later classical-regressor cells can continue to use the measured-space projector while the COBRE cells use the strict fractional projector.
 
-For `src/models/ml/adaboost_regressor.py`, `src/models/ml/catboost_regressor.py`, and the other classical regressors, the orthogonal null-space projection is not embedded within model training. The estimator is trained first, raw predictions are generated, and those raw predictions are then projected to produce the projected outputs shown in `main.ipynb`.
+## 8. Limitations
 
-For `src/models/ml/cobre.py`, the projection is not a separate prediction-time correction step. It is incorporated analytically into the least-squares formulation that produces the effective projected parameter matrix.
+The present repository design intentionally supports both projection strategies at once. That choice preserves backward compatibility for the classical regressors, but it means a reader must distinguish carefully between:
+
+- the fractional COBRE invariant matrix
+- the measured-space classical-regressor invariant matrix
+
+Confusing those two objects will lead to incorrect interpretations of the reported residuals or of the fitted coefficient matrices.

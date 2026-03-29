@@ -1,4 +1,4 @@
-"""COBRE (Constrained Bilinear Regression) solved by projected ordinary least squares in measured-output space."""
+"""COBRE (Constrained Bilinear Regression) solved in fractional space with a collapsed measured-output objective."""
 
 from __future__ import annotations
 
@@ -13,14 +13,13 @@ from src.utils.process import (
     DatasetSplit,
     ScalingBundle,
     TrainTestDatasetSplits,
-    build_measured_supervised_dataset,
+    build_cobre_supervised_dataset,
     build_projection_operator,
     fit_scalers,
-    project_to_mass_balance,
     transform_dataset_split,
 )
 from src.utils.simulation import load_model_params
-from src.utils.test import evaluate_prediction_bundle
+from src.utils.test import evaluate_cobre_prediction_bundle
 from src.utils.train import (
     load_model_bundle,
     persist_training_artifacts,
@@ -63,34 +62,28 @@ def _resolve_ols_backend(model_hyperparameters: Mapping[str, Any]) -> str:
 
 def _validate_scaling_configuration(hyperparameters: Mapping[str, Any]) -> None:
     if bool(hyperparameters.get("scale_features", False)):
-        raise ValueError("COBRE requires scale_features=False so C_in remains in physical coordinates.")
+        raise ValueError("COBRE requires scale_features=False so fractional influent states remain physical.")
     if bool(hyperparameters.get("scale_targets", False)):
-        raise ValueError("COBRE requires scale_targets=False because the projected OLS target lives in measured-output space.")
+        raise ValueError("COBRE requires scale_targets=False because the collapsed OLS target lives in measured-output space.")
 
 
-def _predict_from_bundle(
-    feature_frame: pd.DataFrame,
-    constraint_reference: pd.DataFrame,
-    model_bundle: Mapping[str, Any],
+def _validate_composition_shape(
+    composition_matrix: np.ndarray,
     *,
-    scaling_bundle: ScalingBundle,
-) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    transformed_features = transform_feature_frame(feature_frame, scaling_bundle)
-    constraint_columns = list(model_bundle["constraint_columns"])
-    selected_constraint_reference = constraint_reference.loc[:, constraint_columns].copy()
-    design_frame, _ = build_cobre_design_frame(
-        transformed_features,
-        constraint_columns,
-        include_bias_term=bool(model_bundle["design_schema"]["include_bias_term"]),
-    )
-    raw_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["raw_parameter_matrix"])
-    projected_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["effective_parameter_matrix"])
-    return raw_predictions, projected_predictions, selected_constraint_reference
+    target_columns: list[str],
+    constraint_columns: list[str],
+) -> np.ndarray:
+    composition_array = np.asarray(composition_matrix, dtype=float)
+    expected_shape = (len(target_columns), len(constraint_columns))
+    if composition_array.shape != expected_shape:
+        raise ValueError(
+            "COBRE requires composition_matrix shape to match target_columns x constraint_columns."
+        )
+    return composition_array
 
 
 def _compute_projection_matrices(A_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     projection_matrix = build_projection_operator(np.asarray(A_matrix, dtype=float))
-    projection_matrix = 0.5 * (projection_matrix + projection_matrix.T)
     projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
     return projection_matrix, projection_complement
 
@@ -116,7 +109,7 @@ def _resolve_feature_partition(
         raise ValueError("COBRE requires at least one operational feature column.")
     if influent_columns != expected_influent_columns:
         raise ValueError(
-            "COBRE requires influent measured columns to match constraint_reference columns in order."
+            "COBRE requires influent fractional feature columns to match constraint_reference columns in order."
         )
 
     return operational_columns, influent_columns
@@ -143,7 +136,7 @@ def build_cobre_design_frame(
     *,
     include_bias_term: bool,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Build the partitioned second-order design matrix used by COBRE."""
+    """Build the partitioned second-order COBRE design matrix over operational and fractional influent inputs."""
 
     feature_column_list = list(feature_frame.columns)
     operational_columns, influent_columns = _resolve_feature_partition(feature_column_list, constraint_columns)
@@ -269,11 +262,15 @@ def _unpack_parameter_blocks(
 def _build_effective_parameter_matrix(
     raw_parameter_matrix: np.ndarray,
     design_schema: Mapping[str, Any],
-    projection_matrix: np.ndarray,
+    collapse_operator: np.ndarray,
+    pass_through_operator: np.ndarray,
 ) -> np.ndarray:
-    effective_parameter_matrix = np.asarray(raw_parameter_matrix, dtype=float).copy()
+    effective_parameter_matrix = np.asarray(raw_parameter_matrix, dtype=float) @ np.asarray(
+        collapse_operator,
+        dtype=float,
+    ).T
     effective_parameter_matrix[_get_block_slice(design_schema, "linear_influent"), :] += np.asarray(
-        projection_matrix,
+        pass_through_operator,
         dtype=float,
     ).T
     return effective_parameter_matrix
@@ -286,60 +283,65 @@ def _predict_with_parameter_matrix(
     return design_frame.to_numpy(dtype=float) @ np.asarray(parameter_matrix, dtype=float)
 
 
-def _summarize_linear_solve(
-    design_matrix: np.ndarray,
-    target_matrix: np.ndarray,
-    parameter_matrix: np.ndarray,
-) -> tuple[np.ndarray, int, np.ndarray]:
-    singular_values = np.linalg.svd(design_matrix, compute_uv=False)
-    rank = int(np.linalg.matrix_rank(design_matrix))
-    residual_matrix = target_matrix - (design_matrix @ parameter_matrix)
-    if design_matrix.shape[0] > design_matrix.shape[1] and rank == design_matrix.shape[1]:
-        residuals = np.sum(residual_matrix**2, axis=0)
-    else:
-        residuals = np.array([], dtype=float)
-    return np.asarray(residuals, dtype=float), rank, np.asarray(singular_values, dtype=float)
-
-
 def _solve_with_numpy_lstsq(
-    design_matrix: np.ndarray,
-    target_matrix: np.ndarray,
+    left_matrix: np.ndarray,
+    right_matrix: np.ndarray,
     *,
     rcond_value: Any,
 ) -> dict[str, Any]:
-    parameter_matrix, residuals, rank, singular_values = np.linalg.lstsq(
-        design_matrix,
-        target_matrix,
+    solution_matrix, residuals, rank, singular_values = np.linalg.lstsq(
+        left_matrix,
+        right_matrix,
         rcond=None if rcond_value is None else float(rcond_value),
     )
     return {
-        "parameter_matrix": np.asarray(parameter_matrix, dtype=float),
+        "solution_matrix": np.asarray(solution_matrix, dtype=float),
         "residuals": np.asarray(residuals, dtype=float),
         "rank": int(rank),
         "singular_values": np.asarray(singular_values, dtype=float),
         "backend_used": "numpy_lstsq",
         "device_label": "cpu",
-        "matrix_multiplication_dtype": None,
     }
 
 
 def _solve_projected_ols(
     design_matrix: np.ndarray,
-    target_matrix: np.ndarray,
+    transformed_target_matrix: np.ndarray,
+    collapse_operator: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
 ) -> dict[str, Any]:
     requested_backend = _resolve_ols_backend(model_hyperparameters)
     rcond_value = model_hyperparameters.get("lstsq_rcond")
-    solve_result = _solve_with_numpy_lstsq(design_matrix, target_matrix, rcond_value=rcond_value)
+    transformed_parameter_result = _solve_with_numpy_lstsq(
+        design_matrix,
+        transformed_target_matrix,
+        rcond_value=rcond_value,
+    )
+    raw_parameter_result = _solve_with_numpy_lstsq(
+        collapse_operator,
+        transformed_parameter_result["solution_matrix"].T,
+        rcond_value=rcond_value,
+    )
+    raw_parameter_matrix = np.asarray(raw_parameter_result["solution_matrix"], dtype=float).T
+    fit_residual_matrix = transformed_target_matrix - design_matrix @ raw_parameter_matrix @ collapse_operator.T
 
-    solve_result["ols_metadata"] = {
-        "requested_backend": requested_backend,
-        "backend_used": str(solve_result["backend_used"]),
-        "device_label": "cpu",
-        "fallback_reason": None,
-        "matrix_multiplication_dtype": solve_result["matrix_multiplication_dtype"],
+    return {
+        "parameter_matrix": raw_parameter_matrix,
+        "transformed_parameter_matrix": np.asarray(transformed_parameter_result["solution_matrix"], dtype=float),
+        "fit_residual_matrix": fit_residual_matrix,
+        "design_residuals": np.asarray(transformed_parameter_result["residuals"], dtype=float),
+        "design_rank": int(transformed_parameter_result["rank"]),
+        "design_singular_values": np.asarray(transformed_parameter_result["singular_values"], dtype=float),
+        "collapse_residuals": np.asarray(raw_parameter_result["residuals"], dtype=float),
+        "collapse_rank": int(raw_parameter_result["rank"]),
+        "collapse_singular_values": np.asarray(raw_parameter_result["singular_values"], dtype=float),
+        "ols_metadata": {
+            "requested_backend": requested_backend,
+            "backend_used": str(raw_parameter_result["backend_used"]),
+            "device_label": "cpu",
+            "fallback_reason": None,
+        },
     }
-    return solve_result
 
 
 def _build_model_bundle(
@@ -350,6 +352,7 @@ def _build_model_bundle(
     target_columns: list[str],
     constraint_columns: list[str],
     A_matrix: np.ndarray,
+    composition_matrix: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
     training_options: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -359,10 +362,14 @@ def _build_model_bundle(
         "target_columns": target_columns,
         "constraint_columns": constraint_columns,
         "A_matrix": np.asarray(A_matrix, dtype=float),
+        "composition_matrix": np.asarray(composition_matrix, dtype=float),
         "projection_matrix": np.asarray(training_result["projection_matrix"], dtype=float),
         "projection_complement": np.asarray(training_result["projection_complement"], dtype=float),
+        "collapse_operator": np.asarray(training_result["collapse_operator"], dtype=float),
+        "pass_through_operator": np.asarray(training_result["pass_through_operator"], dtype=float),
         "design_schema": dict(training_result["design_schema"]),
         "raw_parameter_matrix": np.asarray(training_result["raw_parameter_matrix"], dtype=float),
+        "raw_measured_parameter_matrix": np.asarray(training_result["raw_measured_parameter_matrix"], dtype=float),
         "effective_parameter_matrix": np.asarray(training_result["effective_parameter_matrix"], dtype=float),
         "raw_coefficients": dict(training_result["raw_coefficients"]),
         "effective_coefficients": dict(training_result["effective_coefficients"]),
@@ -373,24 +380,64 @@ def _build_model_bundle(
     }
 
 
+def _predict_from_bundle(
+    feature_frame: pd.DataFrame,
+    constraint_reference: pd.DataFrame,
+    model_bundle: Mapping[str, Any],
+    *,
+    scaling_bundle: ScalingBundle,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
+    transformed_features = transform_feature_frame(feature_frame, scaling_bundle)
+    constraint_columns = list(model_bundle["constraint_columns"])
+    selected_constraint_reference = constraint_reference.loc[:, constraint_columns].copy()
+    design_frame, _ = build_cobre_design_frame(
+        transformed_features,
+        constraint_columns,
+        include_bias_term=bool(model_bundle["design_schema"]["include_bias_term"]),
+    )
+
+    raw_fractional_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["raw_parameter_matrix"])
+    projected_fractional_predictions = raw_fractional_predictions @ np.asarray(
+        model_bundle["projection_complement"],
+        dtype=float,
+    ).T + selected_constraint_reference.to_numpy(dtype=float) @ np.asarray(model_bundle["projection_matrix"], dtype=float).T
+    raw_measured_predictions = raw_fractional_predictions @ np.asarray(model_bundle["composition_matrix"], dtype=float).T
+    projected_measured_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["effective_parameter_matrix"])
+    return (
+        raw_measured_predictions,
+        projected_measured_predictions,
+        raw_fractional_predictions,
+        projected_fractional_predictions,
+        selected_constraint_reference,
+    )
+
+
 def train_cobre_model(
     training_dataset: Mapping[str, pd.DataFrame | np.ndarray],
     model_hyperparameters: Mapping[str, Any],
     *,
     A_matrix: np.ndarray,
+    composition_matrix: np.ndarray,
     training_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fit the projected OLS COBRE estimator on a prepared dataset."""
+    """Fit the strict COBRE estimator on notebook-prepared fractional features and measured targets."""
 
     _validate_scaling_configuration(model_hyperparameters)
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
     constraint_frame = pd.DataFrame(training_dataset["constraint_reference"])
+    composition_array = _validate_composition_shape(
+        composition_matrix,
+        target_columns=list(target_frame.columns),
+        constraint_columns=list(constraint_frame.columns),
+    )
 
     objective_label = resolve_training_objective_label(model_hyperparameters, default="projected_ols")
     options = _resolve_training_options(training_options, objective_name=objective_label)
     projection_matrix, projection_complement = _compute_projection_matrices(np.asarray(A_matrix, dtype=float))
+    collapse_operator = composition_array @ projection_complement
+    pass_through_operator = composition_array @ projection_matrix
 
     design_frame, design_schema = build_cobre_design_frame(
         feature_frame,
@@ -406,35 +453,38 @@ def train_cobre_model(
     )
     try:
         progress_bar.set_postfix(stage="project_target", objective=str(options["objective_name"]))
-        projected_target_values = target_frame.to_numpy(dtype=float) @ projection_complement.T
+        transformed_target_values = target_frame.to_numpy(dtype=float) - constraint_frame.to_numpy(dtype=float) @ pass_through_operator.T
         design_matrix = design_frame.to_numpy(dtype=float)
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="solve", objective=str(options["objective_name"]))
         solve_result = _solve_projected_ols(
             design_matrix,
-            projected_target_values,
+            transformed_target_values,
+            collapse_operator,
             model_hyperparameters,
         )
         raw_parameter_matrix = np.asarray(solve_result["parameter_matrix"], dtype=float)
-        residuals = np.asarray(solve_result["residuals"], dtype=float)
-        rank = int(solve_result["rank"])
-        singular_values = np.asarray(solve_result["singular_values"], dtype=float)
+        fit_residual_matrix = np.asarray(solve_result["fit_residual_matrix"], dtype=float)
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="assemble", objective=str(options["objective_name"]))
+        raw_measured_parameter_matrix = raw_parameter_matrix @ composition_array.T
         effective_parameter_matrix = _build_effective_parameter_matrix(
             raw_parameter_matrix,
             design_schema,
-            projection_matrix,
+            collapse_operator,
+            pass_through_operator,
         )
         raw_coefficients = _unpack_parameter_blocks(raw_parameter_matrix, design_schema)
         effective_coefficients = _unpack_parameter_blocks(effective_parameter_matrix, design_schema)
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="predict", objective=str(options["objective_name"]))
-        training_raw_predictions = _predict_with_parameter_matrix(design_frame, raw_parameter_matrix)
-        training_projected_predictions = _predict_with_parameter_matrix(design_frame, effective_parameter_matrix)
+        training_raw_fractional_predictions = _predict_with_parameter_matrix(design_frame, raw_parameter_matrix)
+        training_projected_fractional_predictions = training_raw_fractional_predictions @ projection_complement.T + constraint_frame.to_numpy(dtype=float) @ projection_matrix.T
+        training_raw_predictions = training_raw_fractional_predictions @ composition_array.T
+        training_projected_predictions = training_projected_fractional_predictions @ composition_array.T
         train_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_projected_predictions) ** 2))
         progress_bar.set_postfix(
             stage="predict",
@@ -449,7 +499,10 @@ def train_cobre_model(
         "design_schema": design_schema,
         "projection_matrix": projection_matrix,
         "projection_complement": projection_complement,
+        "collapse_operator": collapse_operator,
+        "pass_through_operator": pass_through_operator,
         "raw_parameter_matrix": raw_parameter_matrix,
+        "raw_measured_parameter_matrix": raw_measured_parameter_matrix,
         "effective_parameter_matrix": effective_parameter_matrix,
         "raw_coefficients": raw_coefficients,
         "effective_coefficients": effective_coefficients,
@@ -463,10 +516,24 @@ def train_cobre_model(
             index=target_frame.index,
             columns=target_frame.columns,
         ),
+        "training_raw_fractional_predictions": pd.DataFrame(
+            training_raw_fractional_predictions,
+            index=constraint_frame.index,
+            columns=constraint_frame.columns,
+        ),
+        "training_projected_fractional_predictions": pd.DataFrame(
+            training_projected_fractional_predictions,
+            index=constraint_frame.index,
+            columns=constraint_frame.columns,
+        ),
         "training_mse": train_mse,
-        "rank": int(rank),
-        "singular_values": np.asarray(singular_values, dtype=float),
-        "residuals": np.asarray(residuals, dtype=float),
+        "fit_residuals": fit_residual_matrix,
+        "design_residuals": np.asarray(solve_result["design_residuals"], dtype=float),
+        "design_rank": int(solve_result["design_rank"]),
+        "design_singular_values": np.asarray(solve_result["design_singular_values"], dtype=float),
+        "collapse_residuals": np.asarray(solve_result["collapse_residuals"], dtype=float),
+        "collapse_rank": int(solve_result["collapse_rank"]),
+        "collapse_singular_values": np.asarray(solve_result["collapse_singular_values"], dtype=float),
         "ols_metadata": dict(solve_result["ols_metadata"]),
     }
 
@@ -478,7 +545,7 @@ def predict_cobre_model(
     metadata: Mapping[str, Any] | None = None,
     composition_matrix: np.ndarray | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Load a persisted COBRE bundle and generate aligned predictions."""
+    """Load a persisted COBRE bundle and generate aligned measured and fractional predictions."""
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
@@ -486,13 +553,13 @@ def predict_cobre_model(
     if isinstance(test_dataset, pd.DataFrame):
         if metadata is None or composition_matrix is None:
             raise ValueError("metadata and composition_matrix are required when predicting from a raw dataset.")
-        measured_dataset = build_measured_supervised_dataset(
+        cobre_dataset = build_cobre_supervised_dataset(
             test_dataset,
             dict(metadata),
             np.asarray(composition_matrix, dtype=float),
         )
-        feature_frame = measured_dataset.features
-        constraint_reference = measured_dataset.constraint_reference
+        feature_frame = cobre_dataset.features
+        constraint_reference = cobre_dataset.constraint_reference
     else:
         feature_frame = pd.DataFrame(test_dataset["features"], columns=scaling_bundle.feature_columns)
         constraint_reference = pd.DataFrame(
@@ -500,7 +567,7 @@ def predict_cobre_model(
             columns=model_bundle["constraint_columns"],
         )
 
-    raw_predictions, projected_predictions, selected_constraint_reference = _predict_from_bundle(
+    raw_predictions, projected_predictions, raw_fractional, projected_fractional, selected_constraint_reference = _predict_from_bundle(
         feature_frame,
         constraint_reference,
         model_bundle,
@@ -514,6 +581,16 @@ def predict_cobre_model(
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
+        "raw_fractional_predictions": pd.DataFrame(
+            raw_fractional,
+            index=feature_frame.index,
+            columns=model_bundle["constraint_columns"],
+        ),
+        "projected_fractional_predictions": pd.DataFrame(
+            projected_fractional,
+            index=feature_frame.index,
+            columns=model_bundle["constraint_columns"],
+        ),
         "constraint_reference": selected_constraint_reference,
     }
 
@@ -523,6 +600,7 @@ def run_cobre_pipeline(
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
     *,
+    composition_matrix: np.ndarray,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
@@ -531,7 +609,7 @@ def run_cobre_pipeline(
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Train, evaluate, and optionally persist one COBRE bundle."""
+    """Train, evaluate, and optionally persist one strict-theory COBRE bundle."""
 
     params = dict(model_params) if model_params is not None else load_cobre_params(repo_root)
     split_params = dict(params["hyperparameters"])
@@ -566,6 +644,7 @@ def run_cobre_pipeline(
             },
             selected_hyperparameters,
             A_matrix=np.asarray(A_matrix, dtype=float),
+            composition_matrix=np.asarray(composition_matrix, dtype=float),
             training_options={
                 "show_progress": False,
                 "progress_description": "Training COBRE",
@@ -581,6 +660,7 @@ def run_cobre_pipeline(
             target_columns=list(training_split.targets.columns),
             constraint_columns=list(training_split.constraint_reference.columns),
             A_matrix=np.asarray(A_matrix, dtype=float),
+            composition_matrix=np.asarray(composition_matrix, dtype=float),
             model_hyperparameters=selected_hyperparameters,
             training_options={
                 "objective_name": objective_label,
@@ -589,7 +669,7 @@ def run_cobre_pipeline(
         )
 
         progress_bar.set_postfix(stage="evaluate_train", objective=objective_label)
-        train_raw, train_projected, train_constraint_reference = _predict_from_bundle(
+        train_raw, train_projected, train_raw_fractional, train_projected_fractional, train_constraint_reference = _predict_from_bundle(
             scaled_training_split.features,
             scaled_training_split.constraint_reference,
             model_bundle,
@@ -598,28 +678,32 @@ def run_cobre_pipeline(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="evaluate_test", objective=objective_label)
-        test_raw, test_projected, test_constraint_reference = _predict_from_bundle(
+        test_raw, test_projected, test_raw_fractional, test_projected_fractional, test_constraint_reference = _predict_from_bundle(
             scaled_test_split.features,
             scaled_test_split.constraint_reference,
             model_bundle,
             scaling_bundle=scaling_bundle,
         )
-        train_report = evaluate_prediction_bundle(
+        train_report = evaluate_cobre_prediction_bundle(
             training_split.targets.to_numpy(dtype=float),
-            train_raw,
-            train_projected,
+            train_raw_fractional,
+            train_projected_fractional,
             train_constraint_reference.to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
+            np.asarray(composition_matrix, dtype=float),
             training_split.targets.columns,
+            training_split.constraint_reference.columns,
             index=training_split.targets.index,
         )
-        test_report = evaluate_prediction_bundle(
+        test_report = evaluate_cobre_prediction_bundle(
             test_split.targets.to_numpy(dtype=float),
-            test_raw,
-            test_projected,
+            test_raw_fractional,
+            test_projected_fractional,
             test_constraint_reference.to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
+            np.asarray(composition_matrix, dtype=float),
             test_split.targets.columns,
+            test_split.constraint_reference.columns,
             index=test_split.targets.index,
         )
         progress_bar.update(1)
@@ -670,7 +754,6 @@ __all__ = [
     "build_cobre_design_frame",
     "load_cobre_params",
     "predict_cobre_model",
-    "project_to_mass_balance",
     "run_cobre_pipeline",
     "train_cobre_model",
 ]

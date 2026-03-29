@@ -139,6 +139,47 @@ def build_measured_supervised_dataset(
 	)
 
 
+def build_cobre_supervised_dataset(
+	dataset: pd.DataFrame,
+	metadata: dict[str, Any],
+	composition_matrix: np.ndarray,
+) -> SupervisedDatasetFrames:
+	"""Build the strict COBRE dataset with fractional influent states and measured effluent targets."""
+
+	state_columns = list(metadata["state_columns"])
+	measured_output_columns = list(metadata["measured_output_columns"])
+	operational_columns = list(metadata["operational_columns"])
+	influent_state_columns = [f"In_{column_name}" for column_name in state_columns]
+	target_columns = [f"Out_{column_name}" for column_name in measured_output_columns]
+
+	_ensure_columns_exist(dataset, operational_columns)
+	_ensure_columns_exist(dataset, influent_state_columns)
+	_ensure_columns_exist(dataset, target_columns)
+
+	features = pd.concat(
+		[
+			dataset.loc[:, operational_columns].copy(),
+			dataset.loc[:, influent_state_columns].copy(),
+		],
+		axis=1,
+	)
+	constraint_reference = dataset.loc[:, influent_state_columns].copy().rename(
+		columns=lambda column_name: column_name.replace("In_", "", 1)
+	)
+	targets = dataset.loc[:, target_columns].copy()
+
+	if np.asarray(composition_matrix, dtype=float).shape != (len(measured_output_columns), len(state_columns)):
+		raise ValueError(
+			"composition_matrix shape must match measured_output_columns x state_columns for the COBRE contract."
+		)
+
+	return SupervisedDatasetFrames(
+		features=features,
+		targets=targets,
+		constraint_reference=constraint_reference,
+	)
+
+
 def _split_frame(frame: pd.DataFrame, indices: pd.Index) -> pd.DataFrame:
 	return frame.loc[indices].copy()
 
@@ -354,6 +395,7 @@ __all__ = [
 	"SupervisedDatasetFrames",
 	"TrainTestDatasetSplits",
 	"build_projection_operator",
+	"build_cobre_supervised_dataset",
 	"build_measured_supervised_dataset",
 	"combine_dataset_splits",
 	"compute_measured_composites",

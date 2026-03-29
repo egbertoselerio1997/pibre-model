@@ -29,18 +29,7 @@
       "COD",
       "TSS",
       "TN",
-      "TP",
-      "S_S",
-      "S_I",
-      "S_NH4_N",
-      "S_NO3_N",
-      "S_PO4_P",
-      "S_O2",
-      "S_Alkalinity",
-      "X_I",
-      "X_S",
-      "X_H",
-      "X_AUT"
+      "TP"
     ],
     "measured_output_definitions": {
       "COD": {

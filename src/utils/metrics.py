@@ -86,6 +86,14 @@ def summarize_mass_balance_residuals(
 	"""Summarize absolute and L2 mass-balance residuals across all samples."""
 
 	residuals = compute_mass_balance_residuals(predictions, constraint_reference, A_matrix)
+	if residuals.size == 0:
+		return {
+			"constraint_mean_l2": 0.0,
+			"constraint_max_l2": 0.0,
+			"constraint_mean_abs": 0.0,
+			"constraint_max_abs": 0.0,
+		}
+
 	l2_values = np.linalg.norm(residuals, axis=1)
 
 	return {

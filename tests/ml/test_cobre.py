@@ -21,12 +21,12 @@ from src.models.ml.cobre import (
 from src.models.simulation.asm1_simulation import generate_asm1_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
-from src.utils.process import build_measured_supervised_dataset, build_projection_operator, make_train_test_split
+from src.utils.process import build_cobre_supervised_dataset, build_projection_operator, make_train_test_split
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
-    macroscopic_stoichiometric_matrix = petersen_matrix @ composition_matrix.T
-    constraint_basis = null_space(macroscopic_stoichiometric_matrix)
+    del composition_matrix
+    constraint_basis = null_space(petersen_matrix)
     a_matrix = constraint_basis.T
     a_matrix = np.round(a_matrix, 5)
     a_matrix[np.abs(a_matrix) < 1e-10] = 0.0
@@ -48,16 +48,12 @@ class CobreModelTests(unittest.TestCase):
         cls.composition_matrix = matrix_bundle["composition_matrix"]
         cls.petersen_matrix = matrix_bundle["petersen_matrix"]
         cls.a_matrix = _compute_a_matrix(cls.petersen_matrix, cls.composition_matrix)
+        cls.cobre_dataset = build_cobre_supervised_dataset(cls.dataset, cls.metadata, cls.composition_matrix)
 
     def test_run_pipeline_returns_raw_and_projected_metrics(self) -> None:
         params = self._tiny_params()
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            self.cobre_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
@@ -66,6 +62,7 @@ class CobreModelTests(unittest.TestCase):
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
+            composition_matrix=self.composition_matrix,
             model_params=params,
             show_progress=False,
             persist_artifacts=False,
@@ -77,21 +74,31 @@ class CobreModelTests(unittest.TestCase):
         projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
         self.assertGreater(float(raw_row["constraint_mean_l2"]), 1e-9)
         self.assertLess(float(projected_row["constraint_mean_l2"]), float(raw_row["constraint_mean_l2"]))
+        self.assertLess(float(projected_row["constraint_max_abs"]), 1e-6)
 
         projection_matrix = np.asarray(result["model_bundle"]["projection_matrix"], dtype=float)
+        projection_complement = np.asarray(result["model_bundle"]["projection_complement"], dtype=float)
+        collapse_operator = self.composition_matrix @ projection_complement
+        pass_through_operator = self.composition_matrix @ projection_matrix
+        raw_w_u = np.asarray(result["model_bundle"]["raw_coefficients"]["W_u"], dtype=float)
         raw_w_in = np.asarray(result["model_bundle"]["raw_coefficients"]["W_in"], dtype=float)
+        raw_b = np.asarray(result["model_bundle"]["raw_coefficients"]["b"], dtype=float)
+        effective_w_u = np.asarray(result["model_bundle"]["effective_coefficients"]["W_u"], dtype=float)
         effective_w_in = np.asarray(result["model_bundle"]["effective_coefficients"]["W_in"], dtype=float)
-        np.testing.assert_allclose(effective_w_in - raw_w_in, projection_matrix, atol=1e-10, rtol=1e-10)
+        effective_b = np.asarray(result["model_bundle"]["effective_coefficients"]["b"], dtype=float)
+        np.testing.assert_allclose(effective_w_u, collapse_operator @ raw_w_u, atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(
+            effective_w_in,
+            collapse_operator @ raw_w_in + pass_through_operator,
+            atol=1e-10,
+            rtol=1e-10,
+        )
+        np.testing.assert_allclose(effective_b, collapse_operator @ raw_b, atol=1e-10, rtol=1e-10)
 
     def test_predict_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            self.cobre_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
@@ -99,6 +106,7 @@ class CobreModelTests(unittest.TestCase):
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
+            composition_matrix=self.composition_matrix,
             model_params=params,
             show_progress=False,
             persist_artifacts=False,
@@ -117,7 +125,7 @@ class CobreModelTests(unittest.TestCase):
         expected_output_dim = len(self.metadata["measured_output_columns"])
         self.assertEqual(prediction_result["projected_predictions"].shape, (8, expected_output_dim))
         summary = summarize_mass_balance_residuals(
-            prediction_result["projected_predictions"].to_numpy(dtype=float),
+            prediction_result["projected_fractional_predictions"].to_numpy(dtype=float),
             prediction_result["constraint_reference"].to_numpy(dtype=float),
             self.a_matrix,
         )
@@ -125,13 +133,8 @@ class CobreModelTests(unittest.TestCase):
 
     def test_projected_ols_matches_explicit_kronecker_solution(self) -> None:
         params = self._tiny_params(ols_backend="numpy_lstsq")
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            self.cobre_dataset,
             test_fraction=0.2,
             random_seed=7,
         )
@@ -145,6 +148,7 @@ class CobreModelTests(unittest.TestCase):
             },
             params["training_defaults"],
             A_matrix=self.a_matrix,
+            composition_matrix=self.composition_matrix,
             training_options={"show_progress": False},
         )
 
@@ -154,26 +158,26 @@ class CobreModelTests(unittest.TestCase):
             include_bias_term=True,
         )
         projection_matrix = build_projection_operator(self.a_matrix)
-        projection_matrix = 0.5 * (projection_matrix + projection_matrix.T)
         projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
 
-        y_tilde = train_split.targets.to_numpy(dtype=float) - train_split.constraint_reference.to_numpy(dtype=float) @ projection_matrix.T
-        z_matrix = np.kron(design_frame.to_numpy(dtype=float), projection_complement)
+        collapse_operator = self.composition_matrix @ projection_complement
+        pass_through_operator = self.composition_matrix @ projection_matrix
+        y_tilde = train_split.targets.to_numpy(dtype=float) - train_split.constraint_reference.to_numpy(dtype=float) @ pass_through_operator.T
+        z_matrix = np.kron(collapse_operator, design_frame.to_numpy(dtype=float))
         beta, *_ = np.linalg.lstsq(
             z_matrix,
-            y_tilde.T.reshape(-1, order="F"),
+            y_tilde.reshape(-1, order="F"),
             rcond=None,
         )
         explicit_raw = beta.reshape(
-            projection_complement.shape[0],
             design_frame.shape[1],
+            projection_complement.shape[0],
             order="F",
         )
-        explicit_projected = projection_complement @ explicit_raw
 
         np.testing.assert_allclose(
-            np.asarray(training_result["raw_parameter_matrix"], dtype=float).T,
-            explicit_projected,
+            np.asarray(training_result["raw_parameter_matrix"], dtype=float),
+            explicit_raw,
             atol=1e-8,
             rtol=1e-8,
         )
@@ -181,13 +185,8 @@ class CobreModelTests(unittest.TestCase):
     @patch("src.models.ml.cobre.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            self.cobre_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
@@ -200,6 +199,7 @@ class CobreModelTests(unittest.TestCase):
             },
             self._tiny_params()["training_defaults"],
             A_matrix=self.a_matrix,
+            composition_matrix=self.composition_matrix,
         )
 
         self.assertTrue(progress_factory.called)
@@ -208,13 +208,8 @@ class CobreModelTests(unittest.TestCase):
     @patch("src.models.ml.cobre.create_progress_bar")
     def test_train_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
-        measured_dataset = build_measured_supervised_dataset(
-            self.dataset,
-            self.metadata,
-            self.composition_matrix,
-        )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            self.cobre_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
@@ -227,6 +222,7 @@ class CobreModelTests(unittest.TestCase):
             },
             self._tiny_params()["training_defaults"],
             A_matrix=self.a_matrix,
+            composition_matrix=self.composition_matrix,
             training_options={"show_progress": False},
         )
 
