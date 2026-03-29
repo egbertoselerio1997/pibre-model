@@ -411,6 +411,887 @@
       "mass_transfer"
     ]
   },
+  "asm2d_tcn_simulation": {
+    "schema_version": "1.1",
+    "hyperparameters": {
+      "n_samples": 1000,
+      "seed": 42,
+      "max_sample_attempts": 8,
+      "parallel_workers": 1,
+      "parallel_chunk_size": 64,
+      "fixed_point_iterations": 18,
+      "fixed_point_relaxation": 0.2,
+      "state_floor": 1e-08,
+      "state_ceiling": 1500.0,
+      "max_process_rate": 250.0,
+      "acceptance_residual_max": 25.0
+    },
+    "measured_output_columns": [
+      "COD",
+      "TN",
+      "TKN",
+      "TP",
+      "TSS",
+      "VSS"
+    ],
+    "operational_columns": [
+      "HRT",
+      "Aeration"
+    ],
+    "operational_ranges": {
+      "HRT": [
+        6.0,
+        36.0
+      ],
+      "Aeration": [
+        0.5,
+        2.5
+      ]
+    },
+    "influent_state_ranges": {
+      "S_A": [
+        5.0,
+        80.0
+      ],
+      "S_F": [
+        20.0,
+        180.0
+      ],
+      "S_I": [
+        10.0,
+        90.0
+      ],
+      "S_N2": [
+        0.0,
+        2.0
+      ],
+      "S_NH4": [
+        12.0,
+        55.0
+      ],
+      "S_NO2": [
+        0.0,
+        3.0
+      ],
+      "S_NO3": [
+        0.0,
+        8.0
+      ],
+      "S_PO4": [
+        2.0,
+        18.0
+      ],
+      "S_ALK": [
+        80.0,
+        260.0
+      ],
+      "S_O2": [
+        0.0,
+        0.5
+      ],
+      "X_I": [
+        20.0,
+        120.0
+      ],
+      "X_S": [
+        60.0,
+        280.0
+      ],
+      "X_H": [
+        15.0,
+        100.0
+      ],
+      "X_PAO": [
+        5.0,
+        60.0
+      ],
+      "X_PP": [
+        2.0,
+        20.0
+      ],
+      "X_PHA": [
+        1.0,
+        30.0
+      ],
+      "X_AOB": [
+        0.5,
+        8.0
+      ],
+      "X_NOB": [
+        0.5,
+        8.0
+      ],
+      "X_TSS": [
+        0.0,
+        0.0
+      ],
+      "X_MeOH": [
+        0.0,
+        12.0
+      ],
+      "X_MeP": [
+        0.0,
+        12.0
+      ]
+    },
+    "aeration_model": {
+      "do_saturation": 8.5,
+      "kla_base": 2.0,
+      "kla_per_aeration": 18.0
+    },
+    "process_types": [
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "biochemical",
+      "chemical",
+      "chemical"
+    ],
+    "workbook": {
+      "sheets": [
+        "stoichiometric_matrix",
+        "composition_matrix",
+        "parameter_table"
+      ],
+      "dissolved_state_columns": [
+        "S_A",
+        "S_F",
+        "S_I",
+        "S_N2",
+        "S_NH4",
+        "S_NO2",
+        "S_NO3",
+        "S_PO4",
+        "S_ALK",
+        "S_O2"
+      ],
+      "particulate_state_columns": [
+        "X_I",
+        "X_S",
+        "X_H",
+        "X_PAO",
+        "X_PP",
+        "X_PHA",
+        "X_AOB",
+        "X_NOB",
+        "X_TSS",
+        "X_MeOH",
+        "X_MeP"
+      ],
+      "state_columns": [
+        "S_A",
+        "S_F",
+        "S_I",
+        "S_N2",
+        "S_NH4",
+        "S_NO2",
+        "S_NO3",
+        "S_PO4",
+        "S_ALK",
+        "S_O2",
+        "X_I",
+        "X_S",
+        "X_H",
+        "X_PAO",
+        "X_PP",
+        "X_PHA",
+        "X_AOB",
+        "X_NOB",
+        "X_TSS",
+        "X_MeOH",
+        "X_MeP"
+      ],
+      "composite_variables": [
+        "COD",
+        "TN",
+        "TKN",
+        "TP",
+        "TSS",
+        "VSS"
+      ],
+      "state_units": {
+        "S_A": "g COD/m^3",
+        "S_F": "g COD/m^3",
+        "S_I": "g COD/m^3",
+        "S_N2": "g N/m^3",
+        "S_NH4": "g N/m^3",
+        "S_NO2": "g N/m^3",
+        "S_NO3": "g N/m^3",
+        "S_PO4": "g P/m^3",
+        "S_ALK": "mol/m^3",
+        "S_O2": "g O2/m^3",
+        "X_I": "g COD/m^3",
+        "X_S": "g COD/m^3",
+        "X_H": "g COD/m^3",
+        "X_PAO": "g COD/m^3",
+        "X_PP": "g P/m^3",
+        "X_PHA": "g COD/m^3",
+        "X_AOB": "g COD/m^3",
+        "X_NOB": "g COD/m^3",
+        "X_TSS": "g TSS/m^3",
+        "X_MeOH": "g TSS/m^3",
+        "X_MeP": "g TSS/m^3"
+      },
+      "processes": [
+        {
+          "index": 1,
+          "name": "Aerobic hydrolysis"
+        },
+        {
+          "index": 2,
+          "name": "Anoxic hydrolysis (NO2)"
+        },
+        {
+          "index": 3,
+          "name": "Anoxic hydrolysis (NO3)"
+        },
+        {
+          "index": 4,
+          "name": "Anaerobic hydrolysis"
+        },
+        {
+          "index": 5,
+          "name": "Aerobic growth on S_F"
+        },
+        {
+          "index": 6,
+          "name": "Aerobic growth on S_A"
+        },
+        {
+          "index": 7,
+          "name": "Anoxic growth on S_F (NO3 -> NO2)"
+        },
+        {
+          "index": 8,
+          "name": "Anoxic growth on S_F (NO2 -> N2)"
+        },
+        {
+          "index": 9,
+          "name": "Anoxic growth on S_A (NO3 -> NO2)"
+        },
+        {
+          "index": 10,
+          "name": "Anoxic growth on S_A (NO2 -> N2)"
+        },
+        {
+          "index": 11,
+          "name": "Fermentation"
+        },
+        {
+          "index": 12,
+          "name": "Lysis of X_H"
+        },
+        {
+          "index": 13,
+          "name": "Storage of X_PHA"
+        },
+        {
+          "index": 14,
+          "name": "Aerobic storage of X_PP"
+        },
+        {
+          "index": 15,
+          "name": "Anoxic storage of X_PP (NO3 -> NO2)"
+        },
+        {
+          "index": 16,
+          "name": "Anoxic storage of X_PP (NO2 -> N2)"
+        },
+        {
+          "index": 17,
+          "name": "Aerobic growth (PAO)"
+        },
+        {
+          "index": 18,
+          "name": "Anoxic growth (PAO, NO3 -> NO2)"
+        },
+        {
+          "index": 19,
+          "name": "Anoxic growth (PAO, NO2 -> N2)"
+        },
+        {
+          "index": 20,
+          "name": "Lysis of PAO"
+        },
+        {
+          "index": 21,
+          "name": "Lysis of PP"
+        },
+        {
+          "index": 22,
+          "name": "Lysis of PHA"
+        },
+        {
+          "index": 23,
+          "name": "Aerobic growth of X_AOB"
+        },
+        {
+          "index": 24,
+          "name": "Aerobic growth of X_NOB"
+        },
+        {
+          "index": 25,
+          "name": "Lysis of AOB"
+        },
+        {
+          "index": 26,
+          "name": "Lysis of NOB"
+        },
+        {
+          "index": 27,
+          "name": "Precipitation"
+        },
+        {
+          "index": 28,
+          "name": "Redissolution"
+        }
+      ],
+      "parameters": [
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "Y_H",
+          "excel_name": "Y_H",
+          "description": "Heterotrophic yield",
+          "value": 0.625,
+          "unit": "g COD/g COD"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "Y_PAO",
+          "excel_name": "Y_PAO",
+          "description": "PAO yield",
+          "value": 0.625,
+          "unit": "g COD/g COD"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "Y_PHA",
+          "excel_name": "Y_PHA",
+          "description": "PHA requirement for PP storage",
+          "value": 0.2,
+          "unit": "g COD/g P"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "Y_PO4",
+          "excel_name": "Y_PO4",
+          "description": "PP requirement for PHA storage",
+          "value": 0.4,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "Y_AOB",
+          "excel_name": "Y_AOB",
+          "description": "AOB yield",
+          "value": 0.24,
+          "unit": "g COD/g N"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "Y_NOB",
+          "excel_name": "Y_NOB",
+          "description": "NOB yield",
+          "value": 0.06,
+          "unit": "g COD/g N"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "f_SI",
+          "excel_name": "f_SI",
+          "description": "Production of S_I in hydrolysis",
+          "value": 0.0,
+          "unit": "g COD/g COD"
+        },
+        {
+          "category": "Stoichiometric Parameters",
+          "symbol": "f_XIBM",
+          "excel_name": "f_XIBM",
+          "description": "Fraction of inert COD generated in biomass lysis",
+          "value": 0.1,
+          "unit": "g COD/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_NBM",
+          "excel_name": "i_NBM",
+          "description": "Nitrogen content of biomass",
+          "value": 0.086,
+          "unit": "g N/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_PBM",
+          "excel_name": "i_PBM",
+          "description": "Phosphorus content of biomass",
+          "value": 0.02,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_NSF",
+          "excel_name": "i_NSF",
+          "description": "Nitrogen content of S_F",
+          "value": 0.03,
+          "unit": "g N/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_PSF",
+          "excel_name": "i_PSF",
+          "description": "Phosphorus content of S_F",
+          "value": 0.01,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_NSI",
+          "excel_name": "i_NSI",
+          "description": "Nitrogen content of S_I",
+          "value": 0.01,
+          "unit": "g N/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_PSI",
+          "excel_name": "i_PSI",
+          "description": "Phosphorus content of S_I",
+          "value": 0.0,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_NXS",
+          "excel_name": "i_NXS",
+          "description": "Nitrogen content of X_S",
+          "value": 0.04,
+          "unit": "g N/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_PXS",
+          "excel_name": "i_PXS",
+          "description": "Phosphorus content of X_S",
+          "value": 0.01,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_NXI",
+          "excel_name": "i_NXI",
+          "description": "Nitrogen content of X_I",
+          "value": 0.02,
+          "unit": "g N/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_PXI",
+          "excel_name": "i_PXI",
+          "description": "Phosphorus content of X_I",
+          "value": 0.01,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_VSS_BM",
+          "excel_name": "i_VSS_BM",
+          "description": "VSS to COD ratio for biomass",
+          "value": 0.75,
+          "unit": "g VSS/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_VSS_XI",
+          "excel_name": "i_VSS_XI",
+          "description": "VSS to COD ratio for X_I",
+          "value": 0.75,
+          "unit": "g VSS/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_VSS_XS",
+          "excel_name": "i_VSS_XS",
+          "description": "VSS to COD ratio for X_S",
+          "value": 0.75,
+          "unit": "g VSS/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_VSS_PHA",
+          "excel_name": "i_VSS_PHA",
+          "description": "VSS to COD ratio for X_PHA",
+          "value": 0.75,
+          "unit": "g VSS/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_TSS_i",
+          "excel_name": "i_TSS_i",
+          "description": "TSS to COD ratio for organic particulates",
+          "value": 0.75,
+          "unit": "g TSS/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_TSS_PHA",
+          "excel_name": "i_TSS_PHA",
+          "description": "TSS to COD ratio for X_PHA",
+          "value": 0.6,
+          "unit": "g TSS/g COD"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_TSS_PP",
+          "excel_name": "i_TSS_PP",
+          "description": "TSS to P ratio for X_PP",
+          "value": 3.23,
+          "unit": "g TSS/g P"
+        },
+        {
+          "category": "Composition Parameters",
+          "symbol": "i_PMeP",
+          "excel_name": "i_PMeP",
+          "description": "Phosphorus content of X_MeP",
+          "value": 0.205,
+          "unit": "g P/g TSS"
+        },
+        {
+          "category": "Kinetic Parameters (Hydrolysis)",
+          "symbol": "K_h",
+          "excel_name": "K_h",
+          "description": "Hydrolysis rate constant",
+          "value": 3.0,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (Hydrolysis)",
+          "symbol": "eta_NO3",
+          "excel_name": "eta_NO3",
+          "description": "Anoxic hydrolysis reduction factor (NO3)",
+          "value": 0.6,
+          "unit": "-"
+        },
+        {
+          "category": "Kinetic Parameters (Hydrolysis)",
+          "symbol": "eta_NO2",
+          "excel_name": "eta_NO2",
+          "description": "Anoxic hydrolysis reduction factor (NO2)",
+          "value": 0.6,
+          "unit": "-"
+        },
+        {
+          "category": "Kinetic Parameters (Hydrolysis)",
+          "symbol": "eta_fe",
+          "excel_name": "eta_fe",
+          "description": "Anaerobic hydrolysis reduction factor",
+          "value": 0.4,
+          "unit": "-"
+        },
+        {
+          "category": "Kinetic Parameters (Hydrolysis)",
+          "symbol": "K_X",
+          "excel_name": "K_X",
+          "description": "Half-saturation constant for particulate COD",
+          "value": 0.1,
+          "unit": "g COD/g COD"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "mu_H",
+          "excel_name": "mu_H",
+          "description": "Maximum growth rate on substrate",
+          "value": 6.0,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "q_fe",
+          "excel_name": "q_fe",
+          "description": "Maximum rate for fermentation",
+          "value": 3.0,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "b_H",
+          "excel_name": "b_H",
+          "description": "Rate constant for lysis and decay",
+          "value": 0.4,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_O2",
+          "excel_name": "K_O2",
+          "description": "Half-saturation constant for oxygen",
+          "value": 0.2,
+          "unit": "g O2/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_F",
+          "excel_name": "K_F",
+          "description": "Half-saturation constant for growth on S_F",
+          "value": 4.0,
+          "unit": "g COD/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_fe",
+          "excel_name": "K_fe",
+          "description": "Half-saturation constant for fermentation of S_F",
+          "value": 4.0,
+          "unit": "g COD/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_A",
+          "excel_name": "K_A",
+          "description": "Half-saturation constant for growth on S_A",
+          "value": 4.0,
+          "unit": "g COD/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_NO3",
+          "excel_name": "K_NO3",
+          "description": "Half-saturation constant for nitrate",
+          "value": 0.5,
+          "unit": "g N/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_NO2",
+          "excel_name": "K_NO2",
+          "description": "Half-saturation constant for nitrite",
+          "value": 0.5,
+          "unit": "g N/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_NOX",
+          "excel_name": "K_NOX",
+          "description": "Half-saturation constant for nitrogen oxides",
+          "value": 0.5,
+          "unit": "g N/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_NH4",
+          "excel_name": "K_NH4",
+          "description": "Half-saturation constant for ammonium",
+          "value": 0.05,
+          "unit": "g N/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_PO4",
+          "excel_name": "K_PO4",
+          "description": "Half-saturation constant for phosphate",
+          "value": 0.01,
+          "unit": "g P/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (Heterotrophs)",
+          "symbol": "K_ALK",
+          "excel_name": "K_ALK",
+          "description": "Half-saturation constant for alkalinity",
+          "value": 0.1,
+          "unit": "mol HCO3-/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "q_PHA",
+          "excel_name": "q_PHA",
+          "description": "Rate constant for storage of X_PHA",
+          "value": 3.0,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "q_PP",
+          "excel_name": "q_PP",
+          "description": "Rate constant for storage of X_PP",
+          "value": 1.5,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "mu_PAO",
+          "excel_name": "mu_PAO",
+          "description": "Maximum growth rate of PAO",
+          "value": 1.0,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "b_PAO",
+          "excel_name": "b_PAO",
+          "description": "Lysis rate of X_PAO",
+          "value": 0.2,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "b_PP",
+          "excel_name": "b_PP",
+          "description": "Lysis rate of X_PP",
+          "value": 0.2,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "b_PHA",
+          "excel_name": "b_PHA",
+          "description": "Lysis rate of X_PHA",
+          "value": 0.2,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "K_PS",
+          "excel_name": "K_PS",
+          "description": "Half-saturation constant for phosphorus in PP",
+          "value": 0.2,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "K_PP",
+          "excel_name": "K_PP",
+          "description": "Half-saturation constant for poly-phosphate",
+          "value": 0.01,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "K_max",
+          "excel_name": "K_max",
+          "description": "Maximum ratio X_PP/X_PAO",
+          "value": 0.34,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "K_IPP",
+          "excel_name": "K_IPP",
+          "description": "Inhibition coefficient for PP storage",
+          "value": 0.02,
+          "unit": "g P/g COD"
+        },
+        {
+          "category": "Kinetic Parameters (PAOs)",
+          "symbol": "K_PHA",
+          "excel_name": "K_PHA",
+          "description": "Half-saturation constant for PHA",
+          "value": 0.01,
+          "unit": "g COD/g COD"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "mu_AOB",
+          "excel_name": "mu_AOB",
+          "description": "Maximum growth rate of AOB",
+          "value": 1.0,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "mu_NOB",
+          "excel_name": "mu_NOB",
+          "description": "Maximum growth rate of NOB",
+          "value": 0.7,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "b_AOB",
+          "excel_name": "b_AOB",
+          "description": "Decay rate of AOB",
+          "value": 0.15,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "b_NOB",
+          "excel_name": "b_NOB",
+          "description": "Decay rate of NOB",
+          "value": 0.15,
+          "unit": "d^-1"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "K_O2_AOB",
+          "excel_name": "K_O2_AOB",
+          "description": "Half-saturation constant for oxygen of AOB",
+          "value": 0.5,
+          "unit": "g O2/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "K_O2_NOB",
+          "excel_name": "K_O2_NOB",
+          "description": "Half-saturation constant for oxygen of NOB",
+          "value": 0.5,
+          "unit": "g O2/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "K_NH4_AOB",
+          "excel_name": "K_NH4_AOB",
+          "description": "Half-saturation constant for ammonium of AOB",
+          "value": 1.0,
+          "unit": "g N/m^3"
+        },
+        {
+          "category": "Kinetic Parameters (AOB and NOB)",
+          "symbol": "K_NO2_NOB",
+          "excel_name": "K_NO2_NOB",
+          "description": "Half-saturation constant for nitrite of NOB",
+          "value": 0.3,
+          "unit": "g N/m^3"
+        },
+        {
+          "category": "Precipitation Parameters",
+          "symbol": "k_PRE",
+          "excel_name": "k_PRE",
+          "description": "Rate constant for P precipitation",
+          "value": 1.0,
+          "unit": "m^3/(g Fe(OH)3*d)"
+        },
+        {
+          "category": "Precipitation Parameters",
+          "symbol": "k_RED",
+          "excel_name": "k_RED",
+          "description": "Rate constant for redissolution",
+          "value": 0.6,
+          "unit": "d^-1"
+        }
+      ]
+    }
+  },
   "ml_orchestration": {
     "hyperparameters": {
       "random_seed": 42,

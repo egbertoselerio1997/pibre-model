@@ -72,6 +72,8 @@ def render_simulation_artifact_paths(
 	repo_root: str | Path | None = None,
 	timestamp: str | None = None,
 	paths_config: Mapping[str, Any] | None = None,
+	data_pattern_key: str = "simulation_data_pattern",
+	metadata_pattern_key: str = "simulation_metadata_pattern",
 ) -> tuple[Path, Path, str]:
 	"""Resolve the configured dataset and metadata artifact paths."""
 
@@ -80,13 +82,13 @@ def render_simulation_artifact_paths(
 	date_time = make_simulation_timestamp(timestamp)
 
 	dataset_relative = Path(
-		config["simulation_data_pattern"].format(
+		config[data_pattern_key].format(
 			simulation_name=simulation_name,
 			date_time=date_time,
 		)
 	)
 	metadata_relative = Path(
-		config["simulation_metadata_pattern"].format(
+		config[metadata_pattern_key].format(
 			simulation_name=simulation_name,
 			date_time=date_time,
 		)
@@ -103,6 +105,8 @@ def save_simulation_artifacts(
 	repo_root: str | Path | None = None,
 	timestamp: str | None = None,
 	paths_config: Mapping[str, Any] | None = None,
+	data_pattern_key: str = "simulation_data_pattern",
+	metadata_pattern_key: str = "simulation_metadata_pattern",
 ) -> tuple[Path, Path, dict[str, Any]]:
 	"""Persist a simulation dataset and matching metadata contract."""
 
@@ -111,6 +115,8 @@ def save_simulation_artifacts(
 		repo_root=repo_root,
 		timestamp=timestamp,
 		paths_config=paths_config,
+		data_pattern_key=data_pattern_key,
+		metadata_pattern_key=metadata_pattern_key,
 	)
 
 	dataset_path.parent.mkdir(parents=True, exist_ok=True)

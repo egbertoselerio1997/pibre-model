@@ -55,6 +55,9 @@ EXPECTED_PATH_KEYS = {
     "ml_model_bundle_pattern",
     "ml_metrics_pattern",
     "ml_optuna_pattern",
+    "asm2d_tcn_reference_workbook",
+    "asm2d_tcn_simulation_data_pattern",
+    "asm2d_tcn_simulation_metadata_pattern",
     "simulation_data_pattern",
     "simulation_metadata_pattern",
 }
@@ -115,6 +118,14 @@ class BootstrapContractTests(unittest.TestCase):
 
         dependencies = data["project"]["dependencies"]
         self.assertTrue(any(str(dependency).startswith("tqdm>=") for dependency in dependencies))
+
+    def test_pyproject_declares_openpyxl_dependency(self) -> None:
+        pyproject_path = REPO_ROOT / "pyproject.toml"
+        with pyproject_path.open("rb") as handle:
+            data = tomllib.load(handle)
+
+        dependencies = data["project"]["dependencies"]
+        self.assertTrue(any(str(dependency).startswith("openpyxl>=") for dependency in dependencies))
 
 
 if __name__ == "__main__":
