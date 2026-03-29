@@ -2,7 +2,7 @@
 
 ## 1. Title and simulation summary
 
-The current ASM2d-TCN implementation in this repository provides a reduced steady-state simulation workflow plus the canonical workbook contract for a two-step nitrification ASM2d formulation. The simulation module exposes the same high-level bundle shape used by the simulation portion of `main.ipynb`: dataset, metadata, Petersen matrix, composition matrix, matrix bundle, and artifact paths.
+The current ASM2d-TCN implementation in this repository provides a mechanistic steady-state simulation workflow plus the canonical workbook contract for a two-step nitrification ASM2d formulation. The simulation module exposes the same high-level bundle shape used by the simulation portion of `main.ipynb`: dataset, metadata, Petersen matrix, composition matrix, matrix bundle, and artifact paths.
 
 The main reporting difference relative to the ASM1 notebook flow is deliberate: ASM2d-TCN reports composite output variables only. The saved dataset therefore contains operational inputs, influent state variables, and effluent composite outputs, but it does not persist raw effluent state variables as dependent columns.
 
@@ -10,7 +10,7 @@ The main reporting difference relative to the ASM1 notebook flow is deliberate: 
 
 ASM2d extends the activated-sludge model family to include biological phosphorus removal together with nitrogen and carbon conversions. The present repository variant is being prepared as an ASM2d-TCN formulation with explicit two-step nitrification, meaning nitrite and nitrate are represented separately instead of being collapsed into a single oxidized-nitrogen state.
 
-For this repository, the workbook still fixes the process ordering, state ordering, composite-output ordering, and parameter naming. On top of that contract, the repository now implements a reduced steady-state simulation routine that uses the configured ASM2d-TCN process rates and matrices to generate reproducible composite-output datasets for notebook use.
+For this repository, the workbook still fixes the process ordering, state ordering, composite-output ordering, and parameter naming. On top of that contract, the repository now implements a mechanistic steady-state simulation routine that uses the configured ASM2d-TCN process rates and matrices to generate reproducible composite-output datasets for notebook use.
 
 ## 3. Mathematical definition and governing relations
 
@@ -46,13 +46,21 @@ $$
 
 The composition matrix maps internal state variables to standard composite variables `[COD, TN, TKN, TP, TSS, VSS]`.
 
-The current runtime implementation uses a reduced steady-state fixed-point approximation for a completely mixed reactor. For hydraulic retention time $\tau$ with dilution rate $D = 24 / \tau$, the state update seeks a fixed point of
+The current runtime implementation treats the reactor as a completely mixed steady-state system and solves the nonlinear residual balances directly. For hydraulic retention time $\tau$ with dilution rate $D = 24 / \tau$, the steady-state residual is
 
 $$
-x \approx x_{in} + \frac{\nu^T \rho(x, u) + a(x, u)}{D}
+r(x) = D(x_{in} - x) + \nu^T \rho(x, u) + a(x, u)
 $$
 
-where $\nu$ is the Petersen matrix, $\rho(x, u)$ is the ASM2d-TCN process-rate vector, and $a(x, u)$ is the external oxygen-transfer contribution driven by the configured aeration setting. This is a reduced-order approximation rather than a full nonlinear least-squares mechanistic solve.
+where $\nu$ is the Petersen matrix, $\rho(x, u)$ is the ASM2d-TCN process-rate vector, and $a(x, u)$ is the external oxygen-transfer contribution driven by the configured aeration setting.
+
+For each sampled operating point, the repository solves $r(x) = 0$ with a bounded nonlinear least-squares solve. The runtime uses an ASM1-style protocol:
+
+1. construct a physically biased initial guess from the influent state, HRT, aeration setting, and optional warm start from the previous successful solve
+2. solve the bounded residual system with `scipy.optimize.least_squares`
+3. repeat from a biomass-rich multistart guess and keep the solution with the smaller maximum residual
+4. if the residual is still above the configured acceptance threshold, run a `solve_ivp` dynamic-relaxation trajectory and use its terminal state as a final least-squares initial guess
+5. reject the operating point if the final solution is unsuccessful or remains above the configured acceptance threshold
 
 ## 4. Inputs, outputs, state variables, and assumptions
 
@@ -77,7 +85,7 @@ Current assumptions:
 - the workbook is the canonical reference asset, not the runtime source of truth
 - `config/params.json` remains the authoritative repository parameter source
 - the workbook formulas mirror that configuration for transparency and later validation
-- the current runtime is a reduced steady-state approximation intended to support the notebook workflow and matrix analysis
+- the current runtime is a mechanistic steady-state nonlinear solve intended to support notebook reproducibility and higher-fidelity dataset generation
 
 ## 5. Implementation used in this repository
 
@@ -92,7 +100,7 @@ The repository currently implements:
 5. generating the composition matrix sheet with parameter-linked formulas
 6. building numeric Petersen and composition matrices from the configured workbook contract
 7. sampling operational conditions and influent states
-8. computing reduced steady-state effluent states internally and reporting composite outputs only
+8. solving mechanistic steady-state effluent states internally and reporting composite outputs only
 9. writing the canonical `.xlsx` file under `data/asm2d-tcn`
 10. persisting simulation artifacts under `data/asm2d-tcn/simulation`
 
@@ -105,9 +113,10 @@ Runtime architecture:
 1. `parameter_table` is written first as the source table for model constants
 2. the numeric Petersen and composition matrices are built from the same configured coefficient definitions
 3. operational conditions and influent states are sampled from configured ranges
-4. a reduced steady-state fixed-point iteration updates the internal state
+4. a bounded nonlinear steady-state solve updates the internal state, with multistart and dynamic-relaxation fallback when the first pass is not acceptable
 5. the composition matrix maps the internal state to the composite output space
-6. the dataset and metadata are returned in the notebook-facing contract and may also be persisted to disk
+6. only converged operating points are admitted into the generated dataset
+7. the dataset and metadata are returned in the notebook-facing contract and may also be persisted to disk
 
 This design ensures that when a parameter value changes in configuration, both the workbook and the runtime matrices stay synchronized.
 
@@ -127,7 +136,6 @@ The companion helper `create_asm2d_tcn_workbook` continues to generate the canon
 
 Current limitations:
 
-- the current steady-state routine is a reduced fixed-point approximation rather than a full nonlinear mechanistic solve
 - the notebook-facing dataset reports composites only, so raw effluent state trajectories are not persisted as targets
 - the implementation is aimed at simulation-notebook reproducibility and matrix analysis, not yet at plant-calibrated prediction
 
@@ -136,7 +144,7 @@ Expected failure modes:
 - formula breakage if parameter names or row ordering are changed without regenerating the workbook
 - contract drift if the workbook is edited manually while `config/params.json` is not updated to match
 - downstream inconsistency if future ASM2d-TCN code hardcodes state or process order instead of loading configuration
-- poor operating-point realism if the configured influent ranges or aeration settings are pushed outside the intended range of the reduced approximation
+- solver convergence failure if sampled influent states or operating conditions are incompatible with a physically acceptable steady state under the configured kinetics
 
 ## 9. References
 

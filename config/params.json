@@ -414,17 +414,12 @@
   "asm2d_tcn_simulation": {
     "schema_version": "1.1",
     "hyperparameters": {
-      "n_samples": 1000,
+      "n_samples": 10000,
       "seed": 42,
-      "max_sample_attempts": 8,
-      "parallel_workers": 1,
+      "max_sample_attempts": 25,
+      "parallel_workers": 12,
       "parallel_chunk_size": 64,
-      "fixed_point_iterations": 18,
-      "fixed_point_relaxation": 0.2,
-      "state_floor": 1e-08,
-      "state_ceiling": 1500.0,
-      "max_process_rate": 250.0,
-      "acceptance_residual_max": 25.0
+      "max_process_rate": 250.0
     },
     "measured_output_columns": [
       "COD",
@@ -447,6 +442,34 @@
         0.5,
         2.5
       ]
+    },
+    "solver": {
+      "lower_bound": 1e-08,
+      "upper_bound": 1500.0,
+      "initial_guess_floor": 1e-06,
+      "warm_start_previous_weight": 0.55,
+      "warm_start_influent_weight": 0.45,
+      "initial_s_a_fraction": 0.7,
+      "initial_s_f_fraction": 0.7,
+      "initial_heterotroph_to_xs_ratio": 0.25,
+      "initial_pao_to_pp_ratio": 1.2,
+      "initial_aob_to_nh4_ratio": 0.03,
+      "initial_nob_to_no2_ratio": 0.1,
+      "multistart_s_a_fraction": 0.35,
+      "multistart_s_f_fraction": 0.35,
+      "multistart_heterotroph_to_xs_ratio": 0.45,
+      "multistart_pao_to_pp_ratio": 1.8,
+      "multistart_aob_to_nh4_ratio": 0.08,
+      "multistart_nob_to_no2_ratio": 0.25,
+      "dynamic_relaxation_days": 20.0,
+      "dynamic_absolute_tolerance": 1e-08,
+      "dynamic_relative_tolerance": 1e-06,
+      "dynamic_max_step": 0.25,
+      "residual_tolerance": 1e-09,
+      "variable_tolerance": 1e-09,
+      "gradient_tolerance": 1e-09,
+      "acceptance_residual_max": 5.0,
+      "max_nfev": 1200
     },
     "influent_state_ranges": {
       "S_A": [

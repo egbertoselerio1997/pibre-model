@@ -1,4 +1,4 @@
-"""ASM2d-TCN workbook, matrix, and reduced steady-state simulation helpers."""
+"""ASM2d-TCN workbook, matrix, and mechanistic steady-state simulation helpers."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from scipy.integrate import solve_ivp
+from scipy.optimize import least_squares
 
 from src.utils.simulation import (
     get_repo_root,
@@ -550,6 +552,7 @@ def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]
 
 def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, Any]:
     workbook_config = _validate_workbook_config(model_params)
+    solver = _validate_solver_config(model_params)
     state_columns = list(workbook_config["state_columns"])
     composite_variables = list(workbook_config["composite_variables"])
     measured_output_columns = list(model_params["measured_output_columns"])
@@ -584,6 +587,7 @@ def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, An
 
     return {
         "workbook_config": workbook_config,
+        "solver": solver,
         "state_columns": state_columns,
         "measured_output_columns": measured_output_columns,
         "process_names": process_names,
@@ -592,6 +596,67 @@ def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, An
         "influent_state_ranges": influent_state_ranges,
         "operational_ranges": operational_ranges,
     }
+
+
+def _validate_solver_config(model_params: Mapping[str, Any]) -> dict[str, Any]:
+    if "solver" not in model_params:
+        raise KeyError("asm2d_tcn_simulation must define a solver section.")
+
+    solver = dict(model_params["solver"])
+    required_keys = (
+        "lower_bound",
+        "upper_bound",
+        "initial_guess_floor",
+        "warm_start_previous_weight",
+        "warm_start_influent_weight",
+        "initial_s_a_fraction",
+        "initial_s_f_fraction",
+        "initial_heterotroph_to_xs_ratio",
+        "initial_pao_to_pp_ratio",
+        "initial_aob_to_nh4_ratio",
+        "initial_nob_to_no2_ratio",
+        "multistart_s_a_fraction",
+        "multistart_s_f_fraction",
+        "multistart_heterotroph_to_xs_ratio",
+        "multistart_pao_to_pp_ratio",
+        "multistart_aob_to_nh4_ratio",
+        "multistart_nob_to_no2_ratio",
+        "dynamic_relaxation_days",
+        "dynamic_absolute_tolerance",
+        "dynamic_relative_tolerance",
+        "dynamic_max_step",
+        "residual_tolerance",
+        "variable_tolerance",
+        "gradient_tolerance",
+        "acceptance_residual_max",
+        "max_nfev",
+    )
+
+    for key in required_keys:
+        if key not in solver:
+            raise KeyError(f"asm2d_tcn_simulation solver missing '{key}'.")
+        float(solver[key])
+
+    lower_bound = float(solver["lower_bound"])
+    upper_bound = float(solver["upper_bound"])
+    initial_guess_floor = float(solver["initial_guess_floor"])
+    if lower_bound < 0.0:
+        raise ValueError("asm2d_tcn_simulation solver lower_bound must be non-negative.")
+    if upper_bound <= lower_bound:
+        raise ValueError("asm2d_tcn_simulation solver upper_bound must exceed lower_bound.")
+    if not (lower_bound <= initial_guess_floor <= upper_bound):
+        raise ValueError(
+            "asm2d_tcn_simulation solver initial_guess_floor must lie between lower_bound and upper_bound."
+        )
+
+    previous_weight = float(solver["warm_start_previous_weight"])
+    influent_weight = float(solver["warm_start_influent_weight"])
+    if previous_weight < 0.0 or influent_weight < 0.0:
+        raise ValueError("asm2d_tcn_simulation warm-start weights must be non-negative.")
+    if previous_weight + influent_weight <= 0.0:
+        raise ValueError("asm2d_tcn_simulation warm-start weights must sum to a positive value.")
+
+    return solver
 
 
 def _validate_unique_names(names: list[str], name_type: str) -> None:
@@ -682,36 +747,90 @@ def _build_influent_state_sample(
 
 def _build_initial_guess(
     influent_state: np.ndarray,
+    hrt_hours: float,
     aeration: float,
     state_index: Mapping[str, int],
     model_params: Mapping[str, Any],
     previous_solution: np.ndarray | None = None,
 ) -> np.ndarray:
-    hyperparameters = model_params["hyperparameters"]
+    solver = model_params["solver"]
     aeration_model = model_params["aeration_model"]
-    state_floor = float(hyperparameters["state_floor"])
-    state_ceiling = float(hyperparameters["state_ceiling"])
-    guess = np.clip(influent_state.copy(), state_floor, state_ceiling)
+    lower_floor = float(solver["initial_guess_floor"])
+    upper_bound = float(solver["upper_bound"])
+    guess = np.clip(influent_state.copy(), lower_floor, upper_bound)
 
     if previous_solution is not None:
-        guess = np.clip(0.55 * previous_solution + 0.45 * guess, state_floor, state_ceiling)
+        previous_weight = float(solver["warm_start_previous_weight"])
+        influent_weight = float(solver["warm_start_influent_weight"])
+        weight_total = max(previous_weight + influent_weight, 1e-9)
+        guess = np.clip(
+            (previous_weight * previous_solution + influent_weight * guess) / weight_total,
+            lower_floor,
+            upper_bound,
+        )
 
-    guess[state_index["S_A"]] *= 0.7
-    guess[state_index["S_F"]] *= 0.7
-    guess[state_index["X_H"]] = max(guess[state_index["X_H"]], guess[state_index["X_S"]] * 0.25)
-    guess[state_index["X_PAO"]] = max(guess[state_index["X_PAO"]], guess[state_index["X_PP"]] * 1.2)
-    guess[state_index["X_AOB"]] = max(guess[state_index["X_AOB"]], guess[state_index["S_NH4"]] * 0.03)
-    guess[state_index["X_NOB"]] = max(guess[state_index["X_NOB"]], guess[state_index["S_NO2"]] * 0.1)
+    guess[state_index["S_A"]] *= float(solver["initial_s_a_fraction"])
+    guess[state_index["S_F"]] *= float(solver["initial_s_f_fraction"])
+    guess[state_index["X_H"]] = max(
+        guess[state_index["X_H"]],
+        guess[state_index["X_S"]] * float(solver["initial_heterotroph_to_xs_ratio"]),
+    )
+    guess[state_index["X_PAO"]] = max(
+        guess[state_index["X_PAO"]],
+        guess[state_index["X_PP"]] * float(solver["initial_pao_to_pp_ratio"]),
+    )
+    guess[state_index["X_AOB"]] = max(
+        guess[state_index["X_AOB"]],
+        guess[state_index["S_NH4"]] * float(solver["initial_aob_to_nh4_ratio"]),
+    )
+    guess[state_index["X_NOB"]] = max(
+        guess[state_index["X_NOB"]],
+        guess[state_index["S_NO2"]] * float(solver["initial_nob_to_no2_ratio"]),
+    )
 
+    dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
     kla = float(aeration_model["kla_base"]) + float(aeration_model["kla_per_aeration"]) * max(float(aeration), 0.0)
     do_saturation = float(aeration_model["do_saturation"])
     guess[state_index["S_O2"]] = np.clip(
-        (guess[state_index["S_O2"]] + kla * do_saturation) / max(1.0 + kla, 1e-9),
-        state_floor,
+        (dilution_rate * guess[state_index["S_O2"]] + kla * do_saturation) / max(dilution_rate + kla, 1e-9),
+        lower_floor,
         do_saturation,
     )
 
     return guess
+
+
+def _build_multistart_guess(
+    initial_guess: np.ndarray,
+    influent_state: np.ndarray,
+    state_index: Mapping[str, int],
+    model_params: Mapping[str, Any],
+) -> np.ndarray:
+    solver = model_params["solver"]
+    multistart_guess = initial_guess.copy()
+    multistart_guess[state_index["S_A"]] *= float(solver["multistart_s_a_fraction"])
+    multistart_guess[state_index["S_F"]] *= float(solver["multistart_s_f_fraction"])
+    multistart_guess[state_index["X_H"]] = max(
+        multistart_guess[state_index["X_H"]],
+        influent_state[state_index["X_S"]] * float(solver["multistart_heterotroph_to_xs_ratio"]),
+    )
+    multistart_guess[state_index["X_PAO"]] = max(
+        multistart_guess[state_index["X_PAO"]],
+        influent_state[state_index["X_PP"]] * float(solver["multistart_pao_to_pp_ratio"]),
+    )
+    multistart_guess[state_index["X_AOB"]] = max(
+        multistart_guess[state_index["X_AOB"]],
+        influent_state[state_index["S_NH4"]] * float(solver["multistart_aob_to_nh4_ratio"]),
+    )
+    multistart_guess[state_index["X_NOB"]] = max(
+        multistart_guess[state_index["X_NOB"]],
+        influent_state[state_index["S_NO2"]] * float(solver["multistart_nob_to_no2_ratio"]),
+    )
+    return np.clip(
+        multistart_guess,
+        float(solver["lower_bound"]),
+        float(solver["upper_bound"]),
+    )
 
 
 def _compute_process_rates(
@@ -928,72 +1047,96 @@ def simulate_asm2d_tcn_steady_state(
     matrix_bundle: Mapping[str, Any] | None = None,
     previous_solution: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, float | bool | int]]:
-    """Approximate the ASM2d-TCN steady state by relaxed fixed-point iteration."""
+    """Solve a single mechanistic steady-state ASM2d-TCN operating point."""
 
     matrix_bundle = matrix_bundle if matrix_bundle is not None else get_asm2d_tcn_matrices(model_params)
     runtime = _validate_runtime_structure(model_params)
     parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
+    state_columns = list(runtime["state_columns"])
     state_index = dict(matrix_bundle["state_index"])
-    hyperparameters = model_params["hyperparameters"]
-    base_iterations = int(hyperparameters["fixed_point_iterations"])
-    base_relaxation = float(hyperparameters["fixed_point_relaxation"])
-    state_floor = float(hyperparameters["state_floor"])
-    state_ceiling = float(hyperparameters["state_ceiling"])
+    solver = runtime["solver"]
+    lower_bounds = np.full(len(state_columns), float(solver["lower_bound"]), dtype=float)
+    upper_bounds = np.full(len(state_columns), float(solver["upper_bound"]), dtype=float)
+    initial_guess = _build_initial_guess(
+        influent_state,
+        hrt_hours,
+        aeration,
+        state_index,
+        model_params,
+        previous_solution=previous_solution,
+    )
+    candidate_guesses = [initial_guess, _build_multistart_guess(initial_guess, influent_state, state_index, model_params)]
 
-    best_state = None
-    best_residual = None
-    best_iteration_count = 0
-    for iteration_count, relaxation in ((base_iterations, base_relaxation), (base_iterations * 2, base_relaxation * 0.5)):
-        state = _build_initial_guess(
-            influent_state,
-            aeration,
-            state_index,
-            model_params,
-            previous_solution=previous_solution,
+    best_result = None
+    best_residual_max = np.inf
+    for candidate_guess in candidate_guesses:
+        result = least_squares(
+            _steady_state_residuals,
+            candidate_guess,
+            bounds=(lower_bounds, upper_bounds),
+            xtol=float(solver["variable_tolerance"]),
+            ftol=float(solver["residual_tolerance"]),
+            gtol=float(solver["gradient_tolerance"]),
+            max_nfev=int(solver["max_nfev"]),
+            args=(influent_state, hrt_hours, aeration, matrix_bundle, model_params, parameter_values),
         )
-        for _ in range(iteration_count):
-            residual = _steady_state_residuals(
-                state,
+        residual_max = float(np.max(np.abs(result.fun)))
+        if residual_max < best_residual_max:
+            best_result = result
+            best_residual_max = residual_max
+
+    if best_residual_max > float(solver["acceptance_residual_max"]):
+        dynamic_result = solve_ivp(
+            lambda _time, values: _steady_state_residuals(
+                values,
                 influent_state,
                 hrt_hours,
                 aeration,
                 matrix_bundle,
                 model_params,
                 parameter_values,
-            )
-            dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
-            state = np.clip(
-                state + relaxation * (residual / max(dilution_rate, 1e-9)),
-                state_floor,
-                state_ceiling,
-            )
-            if not np.all(np.isfinite(state)):
-                raise RuntimeError("asm2d_tcn_simulation produced non-finite state values during fixed-point iteration.")
-
-        final_residual = _steady_state_residuals(
-            state,
-            influent_state,
-            hrt_hours,
-            aeration,
-            matrix_bundle,
-            model_params,
-            parameter_values,
+            ),
+            (0.0, float(solver["dynamic_relaxation_days"])),
+            np.clip(candidate_guesses[-1], lower_bounds, upper_bounds),
+            method="BDF",
+            atol=float(solver["dynamic_absolute_tolerance"]),
+            rtol=float(solver["dynamic_relative_tolerance"]),
+            max_step=float(solver["dynamic_max_step"]),
         )
-        if best_residual is None or np.max(np.abs(final_residual)) < np.max(np.abs(best_residual)):
-            best_state = state
-            best_residual = final_residual
-            best_iteration_count = iteration_count
+        if dynamic_result.success:
+            relaxed_guess = np.clip(dynamic_result.y[:, -1], lower_bounds, upper_bounds)
+            result = least_squares(
+                _steady_state_residuals,
+                relaxed_guess,
+                bounds=(lower_bounds, upper_bounds),
+                xtol=float(solver["variable_tolerance"]),
+                ftol=float(solver["residual_tolerance"]),
+                gtol=float(solver["gradient_tolerance"]),
+                max_nfev=int(solver["max_nfev"]),
+                args=(influent_state, hrt_hours, aeration, matrix_bundle, model_params, parameter_values),
+            )
+            residual_max = float(np.max(np.abs(result.fun)))
+            if residual_max < best_residual_max:
+                best_result = result
+                best_residual_max = residual_max
 
-    assert best_state is not None
-    assert best_residual is not None
+    assert best_result is not None
+    result = best_result
     diagnostics: dict[str, float | bool | int] = {
-        "success": bool(np.max(np.abs(best_residual)) <= float(hyperparameters["acceptance_residual_max"])),
-        "status": 1,
-        "iterations": best_iteration_count,
-        "residual_l2": float(np.linalg.norm(best_residual)),
-        "residual_max": float(np.max(np.abs(best_residual))),
+        "success": bool(result.success),
+        "status": int(result.status),
+        "nfev": int(result.nfev),
+        "residual_l2": float(np.linalg.norm(result.fun)),
+        "residual_max": best_residual_max,
     }
-    return best_state, diagnostics
+
+    if (not result.success) or diagnostics["residual_max"] > float(solver["acceptance_residual_max"]):
+        raise RuntimeError(
+            "asm2d_tcn_simulation steady-state solve failed: "
+            f"success={result.success}, status={result.status}, residual_max={diagnostics['residual_max']:.3e}"
+        )
+
+    return result.x, diagnostics
 
 
 def _compute_measured_output_values(state: np.ndarray, matrix_bundle: Mapping[str, Any]) -> np.ndarray:
@@ -1031,7 +1174,7 @@ def _generate_asm2d_tcn_dataset_chunk(
             candidate_operational = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
 
             try:
-                effluent_state, _ = simulate_asm2d_tcn_steady_state(
+                effluent_state, diagnostics = simulate_asm2d_tcn_steady_state(
                     influent_state=candidate_influent,
                     hrt_hours=float(candidate_operational[0]),
                     aeration=float(candidate_operational[1]),
@@ -1041,6 +1184,12 @@ def _generate_asm2d_tcn_dataset_chunk(
                 )
             except RuntimeError as error:
                 last_error = error
+                continue
+
+            if not diagnostics["success"]:
+                last_error = RuntimeError(
+                    "asm2d_tcn_simulation steady-state solve did not satisfy the configured acceptance threshold."
+                )
                 continue
 
             if not np.all(np.isfinite(effluent_state)):
