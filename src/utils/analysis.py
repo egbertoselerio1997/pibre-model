@@ -31,6 +31,119 @@ def describe_and_display_table(
 	ipython_display(table)
 	return table
 
+
+def _iter_prediction_frames(
+	report: Mapping[str, pd.DataFrame],
+) -> list[tuple[str, pd.DataFrame, str]]:
+	frame_specs: list[tuple[str, pd.DataFrame, str]] = []
+
+	if "raw_predictions" in report:
+		frame_specs.append(("raw", report["raw_predictions"].copy(), "Raw_"))
+	if "projected_predictions" in report:
+		frame_specs.append(("projected", report["projected_predictions"].copy(), "Projected_"))
+	if not frame_specs:
+		raise KeyError("Report must include at least one prediction frame.")
+
+	return frame_specs
+
+
+def _build_negative_prediction_frames(
+	report: Mapping[str, pd.DataFrame],
+	*,
+	split_name: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+	incidence_rows: list[dict[str, Any]] = []
+	per_target_frames: list[pd.DataFrame] = []
+
+	for prediction_type, prediction_frame, column_prefix in _iter_prediction_frames(report):
+		resolved_prediction_frame = prediction_frame.rename(
+			columns=lambda column_name: str(column_name).removeprefix(column_prefix)
+		)
+		negative_mask = resolved_prediction_frame.lt(0.0)
+		negative_prediction_count = int(negative_mask.to_numpy(dtype=bool).sum())
+		total_prediction_count = int(resolved_prediction_frame.size)
+		total_sample_count = int(len(resolved_prediction_frame))
+		affected_sample_counts = negative_mask.sum(axis=1)
+		affected_sample_count = int((affected_sample_counts > 0).sum())
+		affected_samples = affected_sample_counts[affected_sample_counts > 0]
+		negative_values = resolved_prediction_frame.where(negative_mask).stack()
+
+		incidence_rows.append(
+			{
+				"split": split_name,
+				"prediction_type": prediction_type,
+				"total_predictions": total_prediction_count,
+				"negative_predictions": negative_prediction_count,
+				"negative_prediction_rate_pct": (
+					100.0 * negative_prediction_count / total_prediction_count
+					if total_prediction_count > 0
+					else 0.0
+				),
+				"total_samples": total_sample_count,
+				"samples_with_any_negative": affected_sample_count,
+				"sample_incidence_rate_pct": (
+					100.0 * affected_sample_count / total_sample_count
+					if total_sample_count > 0
+					else 0.0
+				),
+				"avg_negative_targets_per_affected_sample": (
+					float(affected_samples.mean()) if not affected_samples.empty else 0.0
+				),
+				"minimum_prediction": float(resolved_prediction_frame.min().min()),
+				"mean_negative_prediction": (
+					float(negative_values.mean()) if not negative_values.empty else np.nan
+				),
+				"median_negative_prediction": (
+					float(negative_values.median()) if not negative_values.empty else np.nan
+				),
+			}
+		)
+
+		per_target_frames.append(
+			pd.DataFrame(
+				{
+					"split": split_name,
+					"prediction_type": prediction_type,
+					"target": resolved_prediction_frame.columns,
+					"negative_predictions": negative_mask.sum(axis=0).to_numpy(dtype=int),
+					"negative_prediction_rate_pct": negative_mask.mean(axis=0).mul(100.0).to_numpy(dtype=float),
+					"minimum_prediction": resolved_prediction_frame.min(axis=0).to_numpy(dtype=float),
+					"mean_negative_prediction": resolved_prediction_frame.where(negative_mask).mean(axis=0).to_numpy(dtype=float),
+					"median_negative_prediction": resolved_prediction_frame.where(negative_mask).median(axis=0).to_numpy(dtype=float),
+				}
+			)
+		)
+
+	return pd.DataFrame(incidence_rows), pd.concat(per_target_frames, ignore_index=True)
+
+
+def build_negative_prediction_tables(
+	reports_by_split: Mapping[str, Mapping[str, pd.DataFrame]],
+) -> dict[str, pd.DataFrame]:
+	"""Summarize negative measured-output predictions across train/test style reports."""
+
+	if not reports_by_split:
+		raise ValueError("reports_by_split must include at least one split report.")
+
+	summary_frames: list[pd.DataFrame] = []
+	per_target_frames: list[pd.DataFrame] = []
+
+	for split_name, report in reports_by_split.items():
+		split_summary, split_per_target = _build_negative_prediction_frames(
+			report,
+			split_name=str(split_name),
+		)
+		summary_frames.append(split_summary)
+		per_target_frames.append(split_per_target)
+
+	return {
+		"summary": pd.concat(summary_frames, ignore_index=True),
+		"per_target": pd.concat(per_target_frames, ignore_index=True).sort_values(
+			["split", "prediction_type", "negative_predictions", "minimum_prediction"],
+			ascending=[True, True, False, True],
+		).reset_index(drop=True),
+	}
+
 _DEFAULT_ANALYSIS_SETTINGS = {
 	"min_total_samples": 100,
 	"max_total_samples": 10000,

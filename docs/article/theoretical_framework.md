@@ -469,6 +469,107 @@ The term $H c_{in}$ is not an ad hoc adjustment. It is the unavoidable algebraic
 
 The order of operations matters. Conservation relations originate in component space because the stoichiometric matrix acts on ASM components. If the prediction were first collapsed to measured space and only then corrected, part of the invariant structure could be lost or become unobservable. Enforcing the constraint in component space is therefore stronger than attempting to repair only the measured-output prediction. With the measured-space model now fixed, the next step is to ask what the available data can actually identify.
 
+### 7.4 Blockwise measured-output model and interpretation
+
+The compact form
+
+$$
+y^* = G B \phi(u, c_{in}) + H c_{in}
+$$
+
+is algebraically convenient, but it compresses the block structure that made the raw component-space model easy to read. That structure can be restored in measured-output space by partitioning the raw coefficient matrix $B$ conformably with the feature map. Using the same blocks introduced in Section 5.3,
+
+$$
+B = \begin{bmatrix}
+b & W_u & W_{in} & \Theta_{uu} & \Theta_{cc} & \Theta_{uc}
+\end{bmatrix}
+$$
+
+and therefore
+
+$$
+M = G B = \begin{bmatrix}
+b_y & W_{u,y} & W_{in,y} & \Theta_{uu,y} & \Theta_{cc,y} & \Theta_{uc,y}
+\end{bmatrix}
+$$
+
+with effective measured-space blocks defined by
+
+$$
+b_y = G b, \quad
+W_{u,y} = G W_u, \quad
+W_{in,y} = G W_{in}
+$$
+
+$$
+\Theta_{uu,y} = G \Theta_{uu}, \quad
+\Theta_{cc,y} = G \Theta_{cc}, \quad
+\Theta_{uc,y} = G \Theta_{uc}
+$$
+
+Substituting these blocks into the measured-output model gives
+
+$$
+y^* = b_y + W_{u,y} u + W_{in,y} c_{in} + \Theta_{uu,y}(u \otimes u) + \Theta_{cc,y}(c_{in} \otimes c_{in}) + \Theta_{uc,y}(u \otimes c_{in}) + H c_{in}
+$$
+
+or, after collecting the two first-order influent terms,
+
+$$
+y^* = b_y + W_{u,y} u + (W_{in,y} + H)c_{in} + \Theta_{uu,y}(u \otimes u) + \Theta_{cc,y}(c_{in} \otimes c_{in}) + \Theta_{uc,y}(u \otimes c_{in})
+$$
+
+This blockwise expression restores the same interpretive separation that was available in component space, but now directly at the level of measured effluent variables. The block $b_y$ is the baseline measured-output offset. The block $W_{u,y} u$ captures first-order operating effects on the measured outputs. The block $W_{in,y} c_{in}$ captures the learned first-order dependence of measured outputs on influent composition that is not fixed by the invariant constraint. The block $H c_{in}$ is different in kind: it is not learned from measured-output regression coefficients but is the fixed invariant carry-through implied by the stoichiometric projection. The three quadratic blocks preserve the same interpretation as in the raw surrogate, now in measured-output space: $\Theta_{uu,y}(u \otimes u)$ captures curvature and interaction among operating variables, $\Theta_{cc,y}(c_{in} \otimes c_{in})$ captures curvature in influent composition, and $\Theta_{uc,y}(u \otimes c_{in})$ captures operation-loading interactions.
+
+This form is useful because it decomposes each predicted measured output into additive term contributions for any given sample. For one operating point $(u, c_{in})$, the prediction can be written as
+
+$$
+y^* = y_{bias} + y_{u,lin} + y_{c,lin} + y_{inv} + y_{uu} + y_{cc} + y_{uc}
+$$
+
+where
+
+$$
+y_{bias} = b_y, \quad
+y_{u,lin} = W_{u,y} u, \quad
+y_{c,lin} = W_{in,y} c_{in}, \quad
+y_{inv} = H c_{in}
+$$
+
+$$
+y_{uu} = \Theta_{uu,y}(u \otimes u), \quad
+y_{cc} = \Theta_{cc,y}(c_{in} \otimes c_{in}), \quad
+y_{uc} = \Theta_{uc,y}(u \otimes c_{in})
+$$
+
+For output component $k$, this gives the scalar decomposition
+
+$$
+y_k^* = [y_{bias}]_k + [y_{u,lin}]_k + [y_{c,lin}]_k + [y_{inv}]_k + [y_{uu}]_k + [y_{cc}]_k + [y_{uc}]_k
+$$
+
+which explains why the predicted value takes its final level for that sample. Variable-level contributions can then be read from the same blocks. For example,
+
+$$
+[y_{u,lin}]_k = \sum_{j=1}^{M_{op}} (W_{u,y})_{k j} u_j
+$$
+
+and
+
+$$
+[y_{c,lin} + y_{inv}]_k = \sum_{f=1}^{F} \left[(W_{in,y})_{k f} + H_{k f}\right] (c_{in})_f
+$$
+
+so the linear contribution of each operating variable or influent component is explicit. Likewise, the interaction block expands as
+
+$$
+[y_{uc}]_k = \sum_{j=1}^{M_{op}} \sum_{f=1}^{F} (\Theta_{uc,y})_{k,(j,f)} u_j (c_{in})_f
+$$
+
+and analogous expansions hold for $y_{uu}$ and $y_{cc}$. These decompositions are local rather than global: the contribution of a variable depends on the current sample because the quadratic and interaction terms depend on products of input values. The model therefore supports interpretation of which terms and variables are driving a particular prediction without claiming that one fixed effect size applies uniformly over the entire operating domain.
+
+This blockwise rewriting does not change the identifiability question. The quantities that measured composite data identify are the effective measured-space blocks that make up $M = G B$, together with the known carry-through operator $H$. By contrast, the latent component-space blocks inside $B$ remain generally non-unique unless extra structure is imposed. The next section makes that distinction precise at the dataset level.
+
 ## 8. Estimation and Identifiability from Measured Composite Data
 
 ### 8.1 Dataset-level model

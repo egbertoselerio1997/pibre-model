@@ -14,6 +14,7 @@ from scipy.linalg import null_space
 from src.models.ml.cobre import run_cobre_pipeline
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.analysis import (
+	build_negative_prediction_tables,
 	build_cobre_response_surface_prediction_data,
 	build_dataset_size_schedule,
 	run_model_dataset_size_analysis,
@@ -213,6 +214,78 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertIn("ConstraintReference_Out_A", first_prediction_table.columns)
 		self.assertNotIn("Projected_Out_A", first_prediction_table.columns)
 		self.assertNotIn("measured_adjustment_l2", first_prediction_table.columns)
+
+	def test_build_negative_prediction_tables_handles_active_and_inactive_reports(self) -> None:
+		target_columns = ["Out_A", "Out_B"]
+		index = pd.Index([0, 1], name="sample_id")
+		active_a_matrix = np.array([[1.0, -1.0]], dtype=float)
+		inactive_a_matrix = np.zeros((0, 2), dtype=float)
+
+		active_report = evaluate_prediction_bundle(
+			y_true=np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float),
+			raw_predictions=np.array([[-1.0, 2.0], [3.0, -0.5]], dtype=float),
+			projected_predictions=np.array([[0.2, 2.0], [3.0, 0.1]], dtype=float),
+			constraint_reference=np.zeros((2, 2), dtype=float),
+			A_matrix=active_a_matrix,
+			target_columns=target_columns,
+			index=index,
+		)
+		inactive_report = evaluate_prediction_bundle(
+			y_true=np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float),
+			raw_predictions=np.array([[0.1, -0.2], [1.0, 0.3]], dtype=float),
+			projected_predictions=np.array([[0.1, -0.2], [1.0, 0.3]], dtype=float),
+			constraint_reference=np.zeros((2, 2), dtype=float),
+			A_matrix=inactive_a_matrix,
+			target_columns=target_columns,
+			index=index,
+		)
+
+		negative_prediction_tables = build_negative_prediction_tables(
+			{
+				"train": active_report,
+				"test": inactive_report,
+			}
+		)
+
+		summary = negative_prediction_tables["summary"]
+		per_target = negative_prediction_tables["per_target"]
+
+		self.assertEqual(len(summary), 3)
+		self.assertEqual(
+			list(summary["prediction_type"]),
+			["raw", "projected", "raw"],
+		)
+
+		train_raw_row = summary.loc[
+			(summary["split"] == "train") & (summary["prediction_type"] == "raw")
+		].iloc[0]
+		self.assertEqual(int(train_raw_row["negative_predictions"]), 2)
+		self.assertEqual(int(train_raw_row["total_predictions"]), 4)
+		self.assertAlmostEqual(float(train_raw_row["negative_prediction_rate_pct"]), 50.0)
+		self.assertEqual(int(train_raw_row["samples_with_any_negative"]), 2)
+		self.assertAlmostEqual(float(train_raw_row["sample_incidence_rate_pct"]), 100.0)
+		self.assertAlmostEqual(float(train_raw_row["minimum_prediction"]), -1.0)
+		self.assertAlmostEqual(float(train_raw_row["mean_negative_prediction"]), -0.75)
+		self.assertAlmostEqual(float(train_raw_row["median_negative_prediction"]), -0.75)
+
+		train_projected_row = summary.loc[
+			(summary["split"] == "train") & (summary["prediction_type"] == "projected")
+		].iloc[0]
+		self.assertEqual(int(train_projected_row["negative_predictions"]), 0)
+		self.assertTrue(np.isnan(float(train_projected_row["mean_negative_prediction"])))
+
+		test_raw_row = summary.loc[
+			(summary["split"] == "test") & (summary["prediction_type"] == "raw")
+		].iloc[0]
+		self.assertEqual(int(test_raw_row["negative_predictions"]), 1)
+		self.assertAlmostEqual(float(test_raw_row["minimum_prediction"]), -0.2)
+
+		self.assertEqual(len(per_target), 6)
+		self.assertFalse(
+			((per_target["split"] == "test") & (per_target["prediction_type"] == "projected")).any()
+		)
+		self.assertIn("Out_A", set(per_target["target"]))
+		self.assertIn("Out_B", set(per_target["target"]))
 
 	def test_build_cobre_response_surface_prediction_data_uses_midpoint_profile_and_extended_domain(self) -> None:
 		dataset_splits = make_train_test_split(
