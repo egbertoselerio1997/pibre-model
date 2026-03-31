@@ -11,7 +11,15 @@ from scipy.linalg import null_space
 
 from src.models.ml.adaboost_regressor import build_adaboost_regressor_model, load_adaboost_regressor_params
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
-from src.utils.process import build_measured_supervised_dataset, make_train_test_split, sample_dataset_fraction
+from src.utils.process import (
+    apply_train_test_split_indices,
+    build_cobre_supervised_dataset,
+    build_fractional_input_measured_output_dataset,
+    make_train_test_split,
+    make_train_test_split_indices,
+    sample_dataset_fraction,
+    sample_dataset_split_indices,
+)
 from src.utils.train import tune_tabular_regressor_hyperparameters
 
 
@@ -45,16 +53,32 @@ def _build_tiny_adaboost_params() -> dict[str, object]:
 class MlOrchestrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=32, random_seed=23)
+        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=23)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]
         cls.petersen_matrix = matrix_bundle["petersen_matrix"]
         cls.a_matrix = _compute_a_matrix(cls.petersen_matrix, cls.composition_matrix)
-        cls.measured_dataset = build_measured_supervised_dataset(dataset, metadata, cls.composition_matrix)
+        cls.classical_benchmark_dataset = build_fractional_input_measured_output_dataset(
+            dataset,
+            metadata,
+            cls.composition_matrix,
+        )
+        cls.cobre_dataset = build_cobre_supervised_dataset(dataset, metadata, cls.composition_matrix)
+
+    def test_shared_split_indices_align_classical_benchmark_with_cobre(self) -> None:
+        split_indices = make_train_test_split_indices(self.dataset.index, test_fraction=0.2, random_seed=17)
+        classical_splits = apply_train_test_split_indices(self.classical_benchmark_dataset, split_indices)
+        cobre_splits = apply_train_test_split_indices(self.cobre_dataset, split_indices)
+
+        self.assertTrue(classical_splits.train.features.index.equals(cobre_splits.train.features.index))
+        self.assertTrue(classical_splits.test.features.index.equals(cobre_splits.test.features.index))
+        self.assertTrue(classical_splits.train.features.columns.equals(cobre_splits.train.features.columns))
+        self.assertTrue(classical_splits.test.targets.columns.equals(cobre_splits.test.targets.columns))
 
     def test_optuna_subset_is_drawn_from_training_pool_only(self) -> None:
-        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=17)
+        main_splits = make_train_test_split(self.classical_benchmark_dataset, test_fraction=0.2, random_seed=17)
+        tuning_indices = sample_dataset_split_indices(main_splits.train.features.index, fraction=0.5, random_seed=17)
         tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=17)
         tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=17)
 
@@ -62,10 +86,11 @@ class MlOrchestrationTests(unittest.TestCase):
         self.assertTrue(set(main_splits.test.features.index).isdisjoint(tuning_splits.train.features.index))
         self.assertTrue(set(main_splits.test.features.index).isdisjoint(tuning_splits.test.features.index))
         self.assertLess(len(tuning_dataset.features), len(main_splits.train.features))
+        self.assertEqual(set(tuning_dataset.features.index), set(tuning_indices))
 
     def test_external_tabular_tuning_returns_hyperparameters(self) -> None:
         params = _build_tiny_adaboost_params()
-        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
+        main_splits = make_train_test_split(self.classical_benchmark_dataset, test_fraction=0.2, random_seed=11)
         tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
         tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
 
@@ -87,7 +112,7 @@ class MlOrchestrationTests(unittest.TestCase):
     def test_tabular_tuning_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         params = _build_tiny_adaboost_params()
-        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
+        main_splits = make_train_test_split(self.classical_benchmark_dataset, test_fraction=0.2, random_seed=11)
         tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
         tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
 
@@ -109,7 +134,7 @@ class MlOrchestrationTests(unittest.TestCase):
     def test_tabular_tuning_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         params = _build_tiny_adaboost_params()
-        main_splits = make_train_test_split(self.measured_dataset, test_fraction=0.2, random_seed=11)
+        main_splits = make_train_test_split(self.classical_benchmark_dataset, test_fraction=0.2, random_seed=11)
         tuning_dataset = sample_dataset_fraction(main_splits.train, fraction=0.5, random_seed=11)
         tuning_splits = make_train_test_split(tuning_dataset, test_fraction=0.25, random_seed=11)
 

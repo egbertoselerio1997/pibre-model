@@ -6,7 +6,7 @@ This note explains how orthogonal projection is used in the machine-learning pip
 
 The central distinction is now explicit:
 
-- the classical regressors still train in measured-output space and apply projection afterward in the same measured basis
+- the classical regressors now benchmark on the same operational and influent fractional inputs used by COBRE, while still training measured-output targets and applying projection afterward in measured space
 - COBRE now trains from a fractional-space raw model whose physically admissible state is collapsed into the measured-output basis analytically
 
 Those are related ideas, but they are not the same implementation.
@@ -55,14 +55,18 @@ $$
 
 The helper that builds this projector lives in `src/utils/process.py`.
 
-## 4. Classical regressors: measured-space post-projection
+## 4. Classical regressors: COBRE-aligned inputs with measured-space post-projection
 
 The classical regressors in `src/models/ml` still follow the measured-space path:
 
-1. build measured-space features and measured-space targets
-2. fit an unconstrained regressor in measured-output space
-3. generate raw measured-output predictions
-4. project those predictions onto the affine measured-space invariant set using the measured-space constraint reference
+1. build the same operational-plus-fractional input feature frame used by COBRE
+2. keep the supervised target in measured-output space
+3. keep the projection reference in measured composite space
+4. fit an unconstrained regressor in measured-output space
+5. generate raw measured-output predictions
+6. project those predictions onto the affine measured-space invariant set using the measured-space constraint reference
+
+This benchmark contract makes the direct comparison with COBRE stricter at the input and split level, even though the classical models still remain measured-output regressors rather than fractional-state regressors.
 
 For those models the projected prediction is:
 
@@ -136,6 +140,7 @@ For the classical regressors:
 
 - regression metrics are measured in measured-output space
 - constraint residuals are also measured in measured-output space
+- projection-adjustment diagnostics summarize how far the raw measured prediction moved during post-projection
 
 ### 6.2 COBRE
 
@@ -144,13 +149,13 @@ For COBRE:
 - regression metrics are measured on measured-output predictions after mapping through the composition matrix
 - constraint residuals are measured on the fractional raw and fractional projected states against the fractional influent reference
 
-This is why COBRE now uses a dedicated evaluation helper rather than the generic measured-space reporting path.
+The repository now uses a unified high-level report shape with a direct comparison layer and a separate model-native diagnostic layer.
 
 ## 7. Notebook orchestration implications
 
-The notebook remains the only place where train-test splitting and any Optuna-only subset creation occur. After the strict COBRE refactor, the notebook therefore carries two aligned supervised datasets:
+The notebook remains the only place where train-test splitting and any Optuna-only subset creation occur. After the benchmark refactor, the notebook therefore carries two aligned supervised datasets:
 
-- a measured-space dataset for the classical regressors
+- a classical benchmark dataset with COBRE-aligned operational-plus-fractional inputs, measured-output targets, and measured-space projection references
 - a COBRE-specific dataset with fractional influent features and measured targets
 
 The notebook also keeps both invariant matrices so later classical-regressor cells can continue to use the measured-space projector while the COBRE cells use the strict fractional projector.

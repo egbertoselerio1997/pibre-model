@@ -156,7 +156,7 @@ The exact repository flow is:
 6. form the transformed measured target $\widetilde{Y}$
 7. solve the two-stage least-squares problem using NumPy
 8. recover raw fractional coefficient blocks and the direct effective measured-space coefficient blocks
-9. report raw and projected measured-output metrics together with raw and projected fractional-space constraint residuals
+9. report raw and projected measured-output metrics as the direct comparison layer together with raw and projected fractional-space diagnostics as a separate COBRE-native diagnostic layer
 10. optionally persist the model bundle and metrics using the repository path patterns from `config/paths.json`
 
 The persisted COBRE bundle stores:
@@ -171,6 +171,8 @@ The persisted COBRE bundle stores:
 - named raw and effective coefficient blocks
 - the design schema and scaling metadata
 - the selected hyperparameters and training metadata
+
+The notebook reporting for COBRE now prints a short description before every displayed table. The measured-output aggregate and per-target metric tables are the direct comparison tables. The report metadata, diagnostic summary, and fractional residual summaries are intentionally labeled as COBRE-native diagnostics rather than direct apples-to-apples ranking tables against the classical models.
 
 ### 5.1 Effective coefficient visualization in the notebook
 

@@ -15,6 +15,87 @@ from .metrics import (
 )
 
 
+def _build_report_metadata_frame(
+    *,
+    native_prediction_space: str,
+    comparison_target_space: str,
+    constraint_space: str,
+    direct_comparison_scope: str,
+    diagnostic_scope: str,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "native_prediction_space": native_prediction_space,
+                "comparison_target_space": comparison_target_space,
+                "constraint_space": constraint_space,
+                "direct_comparison_scope": direct_comparison_scope,
+                "diagnostic_scope": diagnostic_scope,
+            }
+        ]
+    )
+
+
+def _compute_projection_adjustment_frame(
+    raw_values: np.ndarray,
+    projected_values: np.ndarray,
+    *,
+    index: pd.Index | None,
+    prefix: str,
+) -> pd.DataFrame:
+    adjustment = np.asarray(projected_values, dtype=float) - np.asarray(raw_values, dtype=float)
+    return pd.DataFrame(
+        {
+            f"{prefix}_adjustment_l2": np.linalg.norm(adjustment, axis=1),
+            f"{prefix}_adjustment_mean_abs": np.mean(np.abs(adjustment), axis=1),
+            f"{prefix}_adjustment_max_abs": np.max(np.abs(adjustment), axis=1),
+        },
+        index=index,
+    )
+
+
+def _summarize_projection_adjustments(
+    raw_values: np.ndarray,
+    projected_values: np.ndarray,
+    *,
+    diagnostic_name: str,
+) -> pd.DataFrame:
+    adjustment = np.asarray(projected_values, dtype=float) - np.asarray(raw_values, dtype=float)
+    adjustment_l2 = np.linalg.norm(adjustment, axis=1)
+
+    return pd.DataFrame(
+        [
+            {
+                "diagnostic_name": diagnostic_name,
+                "prediction_type": "raw_to_projected",
+                "mean_l2": float(np.mean(adjustment_l2)),
+                "max_l2": float(np.max(adjustment_l2)),
+                "mean_abs": float(np.mean(np.abs(adjustment))),
+                "max_abs": float(np.max(np.abs(adjustment))),
+            }
+        ]
+    )
+
+
+def _build_constraint_diagnostic_summary(
+    raw_predictions: np.ndarray,
+    projected_predictions: np.ndarray,
+    constraint_reference: np.ndarray,
+    A_matrix: np.ndarray,
+    *,
+    diagnostic_name: str,
+) -> pd.DataFrame:
+    raw_summary = summarize_mass_balance_residuals(raw_predictions, constraint_reference, A_matrix)
+    projected_summary = summarize_mass_balance_residuals(projected_predictions, constraint_reference, A_matrix)
+
+    return pd.DataFrame(
+        [
+            {"diagnostic_name": diagnostic_name, "prediction_type": "raw", **raw_summary},
+            {"diagnostic_name": diagnostic_name, "prediction_type": "projected", **projected_summary},
+        ]
+    )
+
+
 def build_prediction_frame(
     values: np.ndarray,
     target_columns: Iterable[str],
@@ -42,9 +123,7 @@ def evaluate_prediction_bundle(
 
     target_column_list = list(target_columns)
     raw_metrics = compute_regression_metrics(y_true, raw_predictions)
-    raw_metrics.update(summarize_mass_balance_residuals(raw_predictions, constraint_reference, A_matrix))
     projected_metrics = compute_regression_metrics(y_true, projected_predictions)
-    projected_metrics.update(summarize_mass_balance_residuals(projected_predictions, constraint_reference, A_matrix))
 
     aggregate_report = pd.DataFrame(
         [
@@ -70,8 +149,38 @@ def evaluate_prediction_bundle(
         },
         index=index,
     )
+    projection_adjustments = _compute_projection_adjustment_frame(
+        raw_predictions,
+        projected_predictions,
+        index=index,
+        prefix="measured",
+    )
+    diagnostic_summary = pd.concat(
+        [
+            _build_constraint_diagnostic_summary(
+                raw_predictions,
+                projected_predictions,
+                constraint_reference,
+                A_matrix,
+                diagnostic_name="measured_constraint_residual",
+            ),
+            _summarize_projection_adjustments(
+                raw_predictions,
+                projected_predictions,
+                diagnostic_name="measured_projection_adjustment",
+            ),
+        ],
+        ignore_index=True,
+    )
 
     return {
+        "report_metadata": _build_report_metadata_frame(
+            native_prediction_space="measured",
+            comparison_target_space="measured",
+            constraint_space="measured",
+            direct_comparison_scope="measured_output_metrics_only",
+            diagnostic_scope="model_native_measured_space_diagnostics",
+        ),
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,
         "raw_predictions": build_prediction_frame(raw_predictions, target_column_list, index=index, prefix="Raw_"),
@@ -81,6 +190,8 @@ def evaluate_prediction_bundle(
             index=index,
             prefix="Projected_",
         ),
+        "diagnostic_summary": diagnostic_summary,
+        "projection_diagnostics": projection_adjustments,
         "constraint_residuals": residual_report,
     }
 
@@ -108,11 +219,7 @@ def evaluate_cobre_prediction_bundle(
     projected_measured_predictions = projected_fractional_array @ composition_array.T
 
     raw_metrics = compute_regression_metrics(y_true_measured, raw_measured_predictions)
-    raw_metrics.update(summarize_mass_balance_residuals(raw_fractional_array, constraint_reference, A_matrix))
     projected_metrics = compute_regression_metrics(y_true_measured, projected_measured_predictions)
-    projected_metrics.update(
-        summarize_mass_balance_residuals(projected_fractional_array, constraint_reference, A_matrix)
-    )
 
     aggregate_report = pd.DataFrame(
         [
@@ -148,8 +255,53 @@ def evaluate_cobre_prediction_bundle(
         },
         index=index,
     )
+    measured_projection_adjustments = _compute_projection_adjustment_frame(
+        raw_measured_predictions,
+        projected_measured_predictions,
+        index=index,
+        prefix="measured",
+    )
+    fractional_projection_adjustments = _compute_projection_adjustment_frame(
+        raw_fractional_array,
+        projected_fractional_array,
+        index=index,
+        prefix="fractional",
+    )
+    projection_adjustments = pd.concat(
+        [measured_projection_adjustments, fractional_projection_adjustments],
+        axis=1,
+    )
+    diagnostic_summary = pd.concat(
+        [
+            _build_constraint_diagnostic_summary(
+                raw_fractional_array,
+                projected_fractional_array,
+                constraint_reference,
+                A_matrix,
+                diagnostic_name="fractional_constraint_residual",
+            ),
+            _summarize_projection_adjustments(
+                raw_measured_predictions,
+                projected_measured_predictions,
+                diagnostic_name="measured_projection_adjustment",
+            ),
+            _summarize_projection_adjustments(
+                raw_fractional_array,
+                projected_fractional_array,
+                diagnostic_name="fractional_projection_adjustment",
+            ),
+        ],
+        ignore_index=True,
+    )
 
     return {
+        "report_metadata": _build_report_metadata_frame(
+            native_prediction_space="fractional",
+            comparison_target_space="measured",
+            constraint_space="fractional",
+            direct_comparison_scope="measured_output_metrics_only",
+            diagnostic_scope="model_native_fractional_space_diagnostics",
+        ),
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,
         "raw_predictions": build_prediction_frame(
@@ -176,6 +328,8 @@ def evaluate_cobre_prediction_bundle(
             index=index,
             prefix="ProjectedFractional_",
         ),
+        "diagnostic_summary": diagnostic_summary,
+        "projection_diagnostics": projection_adjustments,
         "constraint_residuals": residual_report,
     }
 

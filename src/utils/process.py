@@ -47,6 +47,14 @@ class TrainTestDatasetSplits:
 
 
 @dataclass(frozen=True)
+class TrainTestSplitIndices:
+	"""Container for authoritative train/test row indices."""
+
+	train: pd.Index
+	test: pd.Index
+
+
+@dataclass(frozen=True)
 class ScalingBundle:
 	"""Fitted scalers and the column order they expect."""
 
@@ -139,6 +147,53 @@ def build_measured_supervised_dataset(
 	)
 
 
+def build_fractional_input_measured_output_dataset(
+	dataset: pd.DataFrame,
+	metadata: dict[str, Any],
+	composition_matrix: np.ndarray,
+) -> SupervisedDatasetFrames:
+	"""Build the COBRE-aligned classical benchmark dataset.
+
+	Features stay in the operational-plus-fractional influent basis so the classical
+	regressors consume the same inputs as COBRE, while the constraint reference
+	remains in measured composite space for post-projection diagnostics.
+	"""
+
+	state_columns = list(metadata["state_columns"])
+	measured_output_columns = list(metadata["measured_output_columns"])
+	operational_columns = list(metadata["operational_columns"])
+	influent_state_columns = [f"In_{column_name}" for column_name in state_columns]
+	target_columns = [f"Out_{column_name}" for column_name in measured_output_columns]
+
+	_ensure_columns_exist(dataset, operational_columns)
+	_ensure_columns_exist(dataset, influent_state_columns)
+	_ensure_columns_exist(dataset, target_columns)
+
+	influent_measured = compute_measured_composites(
+		dataset,
+		state_columns,
+		composition_matrix,
+		measured_output_columns,
+		state_prefix="In_",
+		output_prefix="In_",
+	)
+	features = pd.concat(
+		[
+			dataset.loc[:, operational_columns].copy(),
+			dataset.loc[:, influent_state_columns].copy(),
+		],
+		axis=1,
+	)
+	targets = dataset.loc[:, target_columns].copy()
+	constraint_reference = influent_measured.rename(columns=lambda column_name: column_name.replace("In_", "", 1))
+
+	return SupervisedDatasetFrames(
+		features=features,
+		targets=targets,
+		constraint_reference=constraint_reference,
+	)
+
+
 def build_cobre_supervised_dataset(
 	dataset: pd.DataFrame,
 	metadata: dict[str, Any],
@@ -195,6 +250,76 @@ def _select_dataset_split(
 	)
 
 
+def select_dataset_rows(
+	dataset: SupervisedDatasetFrames | DatasetSplit,
+	indices: pd.Index,
+) -> DatasetSplit:
+	"""Select aligned rows from one supervised dataset using explicit indices."""
+
+	return _select_dataset_split(dataset, pd.Index(indices))
+
+
+def make_train_test_split_indices(
+	indices: pd.Index | np.ndarray | list[Any],
+	*,
+	test_fraction: float,
+	random_seed: int,
+) -> TrainTestSplitIndices:
+	"""Create a reproducible authoritative train/test index split."""
+
+	if not 0.0 < test_fraction < 1.0:
+		raise ValueError("test_fraction must be between 0 and 1.")
+
+	all_indices = pd.Index(indices)
+	train_indices, test_indices = train_test_split(
+		all_indices.to_numpy(),
+		test_size=test_fraction,
+		random_state=random_seed,
+		shuffle=True,
+	)
+
+	return TrainTestSplitIndices(
+		train=pd.Index(train_indices),
+		test=pd.Index(test_indices),
+	)
+
+
+def apply_train_test_split_indices(
+	supervised_dataset: SupervisedDatasetFrames | DatasetSplit,
+	split_indices: TrainTestSplitIndices,
+) -> TrainTestDatasetSplits:
+	"""Apply authoritative train/test indices to one supervised dataset."""
+
+	return TrainTestDatasetSplits(
+		train=_select_dataset_split(supervised_dataset, split_indices.train),
+		test=_select_dataset_split(supervised_dataset, split_indices.test),
+	)
+
+
+def sample_dataset_split_indices(
+	indices: pd.Index | np.ndarray | list[Any],
+	*,
+	fraction: float,
+	random_seed: int,
+) -> pd.Index:
+	"""Sample a reproducible subset of row indices from one prepared split."""
+
+	if not 0.0 < fraction <= 1.0:
+		raise ValueError("fraction must be between 0 and 1.")
+
+	all_indices = pd.Index(indices)
+	if fraction == 1.0:
+		return all_indices.copy()
+
+	sampled_indices, _ = train_test_split(
+		all_indices.to_numpy(),
+		train_size=fraction,
+		random_state=random_seed,
+		shuffle=True,
+	)
+	return pd.Index(sampled_indices)
+
+
 def make_train_test_split(
 	supervised_dataset: SupervisedDatasetFrames | DatasetSplit,
 	*,
@@ -203,24 +328,12 @@ def make_train_test_split(
 ) -> TrainTestDatasetSplits:
 	"""Create a reproducible train/test split with aligned indices."""
 
-	if not 0.0 < test_fraction < 1.0:
-		raise ValueError("test_fraction must be between 0 and 1.")
-
-	all_indices = supervised_dataset.features.index.to_numpy()
-	train_indices, test_indices = train_test_split(
-		all_indices,
-		test_size=test_fraction,
-		random_state=random_seed,
-		shuffle=True,
+	split_indices = make_train_test_split_indices(
+		supervised_dataset.features.index,
+		test_fraction=test_fraction,
+		random_seed=random_seed,
 	)
-
-	train_index = pd.Index(train_indices)
-	test_index = pd.Index(test_indices)
-
-	return TrainTestDatasetSplits(
-		train=_select_dataset_split(supervised_dataset, train_index),
-		test=_select_dataset_split(supervised_dataset, test_index),
-	)
+	return apply_train_test_split_indices(supervised_dataset, split_indices)
 
 
 def sample_dataset_fraction(
@@ -231,9 +344,6 @@ def sample_dataset_fraction(
 ) -> DatasetSplit:
 	"""Sample a reproducible subset from one prepared dataset split."""
 
-	if not 0.0 < fraction <= 1.0:
-		raise ValueError("fraction must be between 0 and 1.")
-
 	if fraction == 1.0:
 		return DatasetSplit(
 			features=dataset_split.features.copy(),
@@ -241,15 +351,12 @@ def sample_dataset_fraction(
 			constraint_reference=dataset_split.constraint_reference.copy(),
 		)
 
-	all_indices = dataset_split.features.index.to_numpy()
-	sampled_indices, _ = train_test_split(
-		all_indices,
-		train_size=fraction,
-		random_state=random_seed,
-		shuffle=True,
+	sampled_indices = sample_dataset_split_indices(
+		dataset_split.features.index,
+		fraction=fraction,
+		random_seed=random_seed,
 	)
-
-	return _select_dataset_split(dataset_split, pd.Index(sampled_indices))
+	return _select_dataset_split(dataset_split, sampled_indices)
 
 
 def make_train_validation_test_splits(
@@ -403,8 +510,14 @@ __all__ = [
 	"inverse_transform_targets",
 	"make_train_validation_test_splits",
 	"make_train_test_split",
+	"make_train_test_split_indices",
 	"project_to_mass_balance",
+	"select_dataset_rows",
+	"apply_train_test_split_indices",
 	"sample_dataset_fraction",
+	"sample_dataset_split_indices",
+	"build_fractional_input_measured_output_dataset",
 	"transform_dataset_split",
 	"transform_dataset_splits",
+	"TrainTestSplitIndices",
 ]

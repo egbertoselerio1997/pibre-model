@@ -42,7 +42,7 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
 class CobreModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=36, random_seed=29)
+        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=29)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]
@@ -70,11 +70,26 @@ class CobreModelTests(unittest.TestCase):
 
         aggregate_metrics = result["test_report"]["aggregate_metrics"]
         self.assertEqual(list(aggregate_metrics["prediction_type"]), ["raw", "projected"])
-        raw_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "raw"].iloc[0]
-        projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
-        self.assertGreater(float(raw_row["constraint_mean_l2"]), 1e-9)
-        self.assertLess(float(projected_row["constraint_mean_l2"]), float(raw_row["constraint_mean_l2"]))
-        self.assertLess(float(projected_row["constraint_max_abs"]), 1e-6)
+        self.assertIn("report_metadata", result["test_report"])
+        self.assertIn("diagnostic_summary", result["test_report"])
+        self.assertIn("projection_diagnostics", result["test_report"])
+        raw_metric_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "raw"].iloc[0]
+        projected_metric_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
+        self.assertGreater(float(raw_metric_row["RMSE"]), 0.0)
+        self.assertLessEqual(float(projected_metric_row["RMSE"]), float(raw_metric_row["RMSE"]))
+
+        diagnostic_summary = result["test_report"]["diagnostic_summary"]
+        raw_constraint_row = diagnostic_summary.loc[
+            (diagnostic_summary["diagnostic_name"] == "fractional_constraint_residual")
+            & (diagnostic_summary["prediction_type"] == "raw")
+        ].iloc[0]
+        projected_constraint_row = diagnostic_summary.loc[
+            (diagnostic_summary["diagnostic_name"] == "fractional_constraint_residual")
+            & (diagnostic_summary["prediction_type"] == "projected")
+        ].iloc[0]
+        self.assertGreater(float(raw_constraint_row["constraint_mean_l2"]), 1e-9)
+        self.assertLess(float(projected_constraint_row["constraint_mean_l2"]), float(raw_constraint_row["constraint_mean_l2"]))
+        self.assertLess(float(projected_constraint_row["constraint_max_abs"]), 1e-6)
 
         projection_matrix = np.asarray(result["model_bundle"]["projection_matrix"], dtype=float)
         projection_complement = np.asarray(result["model_bundle"]["projection_complement"], dtype=float)

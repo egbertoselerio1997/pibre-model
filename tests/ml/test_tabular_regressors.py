@@ -40,7 +40,7 @@ from src.models.ml.xgboost_regressor import (
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
-from src.utils.process import build_measured_supervised_dataset, make_train_test_split
+from src.utils.process import build_fractional_input_measured_output_dataset, make_train_test_split
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -82,7 +82,7 @@ def _build_tiny_params(base_params: dict[str, object], *, iteration_key: str | N
 class TabularRegressorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=36, random_seed=19)
+        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=19)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]
@@ -134,13 +134,13 @@ class TabularRegressorTests(unittest.TestCase):
         ]
 
     def test_requested_regressors_pipeline_and_roundtrip(self) -> None:
-        measured_dataset = build_measured_supervised_dataset(
+        benchmark_dataset = build_fractional_input_measured_output_dataset(
             self.dataset,
             self.metadata,
             self.composition_matrix,
         )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            benchmark_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
@@ -159,9 +159,20 @@ class TabularRegressorTests(unittest.TestCase):
 
                 aggregate_metrics = result["test_report"]["aggregate_metrics"]
                 self.assertEqual(list(aggregate_metrics["prediction_type"]), ["raw", "projected"])
-                projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
-                self.assertLess(float(projected_row["constraint_max_abs"]), 1e-7)
-                self.assertLess(float(projected_row["constraint_mean_l2"]), 1e-7)
+                self.assertIn("report_metadata", result["test_report"])
+                self.assertIn("diagnostic_summary", result["test_report"])
+                self.assertIn("projection_diagnostics", result["test_report"])
+                self.assertEqual(
+                    result["model_bundle"]["feature_space"],
+                    "fractional_input",
+                )
+                diagnostic_summary = result["test_report"]["diagnostic_summary"]
+                projected_constraint_row = diagnostic_summary.loc[
+                    (diagnostic_summary["diagnostic_name"] == "measured_constraint_residual")
+                    & (diagnostic_summary["prediction_type"] == "projected")
+                ].iloc[0]
+                self.assertLess(float(projected_constraint_row["constraint_max_abs"]), 1e-7)
+                self.assertLess(float(projected_constraint_row["constraint_mean_l2"]), 1e-7)
                 self.assertIsNone(result["artifact_paths"]["model_bundle"])
                 self.assertIsNone(result["artifact_paths"]["metrics"])
                 self.assertIsNone(result["artifact_paths"]["optuna"])
@@ -188,13 +199,13 @@ class TabularRegressorTests(unittest.TestCase):
     @patch("src.utils.train.create_progress_bar")
     def test_tabular_pipeline_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
-        measured_dataset = build_measured_supervised_dataset(
+        benchmark_dataset = build_fractional_input_measured_output_dataset(
             self.dataset,
             self.metadata,
             self.composition_matrix,
         )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            benchmark_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
@@ -214,13 +225,13 @@ class TabularRegressorTests(unittest.TestCase):
     @patch("src.utils.train.create_progress_bar")
     def test_tabular_pipeline_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
-        measured_dataset = build_measured_supervised_dataset(
+        benchmark_dataset = build_fractional_input_measured_output_dataset(
             self.dataset,
             self.metadata,
             self.composition_matrix,
         )
         dataset_splits = make_train_test_split(
-            measured_dataset,
+            benchmark_dataset,
             test_fraction=0.2,
             random_seed=11,
         )

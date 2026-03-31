@@ -16,6 +16,7 @@ from .process import (
     DatasetSplit,
     ScalingBundle,
     TrainTestDatasetSplits,
+    build_fractional_input_measured_output_dataset,
     build_measured_supervised_dataset,
     fit_scalers,
     inverse_transform_targets,
@@ -27,6 +28,53 @@ from .test import evaluate_prediction_bundle
 
 
 TabularEstimatorFactory = Callable[[Mapping[str, Any]], Any]
+
+
+def infer_tabular_feature_space(dataset_split: DatasetSplit) -> str:
+    """Infer the feature basis used by one classical training split."""
+
+    influent_feature_columns = [
+        str(column_name).replace("In_", "", 1)
+        for column_name in dataset_split.features.columns
+        if str(column_name).startswith("In_")
+    ]
+    constraint_columns = [str(column_name) for column_name in dataset_split.constraint_reference.columns]
+
+    if influent_feature_columns == constraint_columns:
+        return "measured_composite"
+
+    return "fractional_input"
+
+
+def prepare_tabular_prediction_dataset(
+    dataset: pd.DataFrame,
+    *,
+    metadata: Mapping[str, Any],
+    composition_matrix: np.ndarray,
+    feature_space: str,
+) -> DatasetSplit:
+    """Rebuild the supervised inference frames required by one persisted classical bundle."""
+
+    if feature_space == "measured_composite":
+        prepared_dataset = build_measured_supervised_dataset(
+            dataset,
+            dict(metadata),
+            np.asarray(composition_matrix, dtype=float),
+        )
+    elif feature_space == "fractional_input":
+        prepared_dataset = build_fractional_input_measured_output_dataset(
+            dataset,
+            dict(metadata),
+            np.asarray(composition_matrix, dtype=float),
+        )
+    else:
+        raise ValueError(f"Unsupported tabular feature_space: {feature_space}")
+
+    return DatasetSplit(
+        features=prepared_dataset.features,
+        targets=prepared_dataset.targets,
+        constraint_reference=prepared_dataset.constraint_reference,
+    )
 
 
 def resolve_training_objective_label(
@@ -298,6 +346,9 @@ def build_tabular_model_bundle(
     constraint_columns: list[str],
     A_matrix: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
+    feature_space: str,
+    target_space: str,
+    constraint_space: str,
 ) -> dict[str, Any]:
     """Assemble a persisted bundle for a scikit-compatible tabular regressor."""
 
@@ -310,6 +361,10 @@ def build_tabular_model_bundle(
         "A_matrix": np.asarray(A_matrix, dtype=float),
         "scaling_bundle": scaling_bundle,
         "model_hyperparameters": dict(model_hyperparameters),
+        "feature_space": str(feature_space),
+        "target_space": str(target_space),
+        "constraint_space": str(constraint_space),
+        "direct_comparison_scope": "measured_output_metrics_only",
     }
 
 
@@ -328,13 +383,14 @@ def predict_tabular_regressor_model(
     if isinstance(test_dataset, pd.DataFrame):
         if metadata is None or composition_matrix is None:
             raise ValueError("metadata and composition_matrix are required when predicting from a raw dataset.")
-        measured_dataset = build_measured_supervised_dataset(
+        prepared_dataset = prepare_tabular_prediction_dataset(
             test_dataset,
-            dict(metadata),
-            np.asarray(composition_matrix, dtype=float),
+            metadata=dict(metadata),
+            composition_matrix=np.asarray(composition_matrix, dtype=float),
+            feature_space=str(model_bundle.get("feature_space", "measured_composite")),
         )
-        feature_frame = measured_dataset.features
-        constraint_reference = measured_dataset.constraint_reference
+        feature_frame = prepared_dataset.features
+        constraint_reference = prepared_dataset.constraint_reference
     else:
         feature_frame = pd.DataFrame(test_dataset["features"], columns=scaling_bundle.feature_columns)
         constraint_reference = pd.DataFrame(
@@ -468,6 +524,9 @@ def run_tabular_regressor_pipeline(
             constraint_columns=list(training_split.constraint_reference.columns),
             A_matrix=np.asarray(A_matrix, dtype=float),
             model_hyperparameters=selected_hyperparameters,
+            feature_space=infer_tabular_feature_space(training_split),
+            target_space="measured_output",
+            constraint_space="measured",
         )
 
         dataset_splits = TrainTestDatasetSplits(train=training_split, test=test_split)

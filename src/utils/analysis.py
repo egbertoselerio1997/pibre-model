@@ -16,6 +16,21 @@ from .simulation import load_ml_orchestration_params, load_params_config
 
 ModelRunner = Callable[..., dict[str, Any]]
 
+
+def describe_and_display_table(
+	title: str,
+	description: str,
+	table: Any,
+) -> Any:
+	"""Print a short description before displaying one notebook table."""
+
+	print(title)
+	print(description)
+	from IPython.display import display as ipython_display
+
+	ipython_display(table)
+	return table
+
 _DEFAULT_ANALYSIS_SETTINGS = {
 	"min_total_samples": 100,
 	"max_total_samples": 10000,
@@ -423,16 +438,18 @@ def _build_prediction_table(
 	split_name: str,
 	metadata: Mapping[str, Any],
 ) -> pd.DataFrame:
-	prediction_frame = pd.concat(
-		[
-			dataset_split.targets.add_prefix("Actual_"),
-			report["raw_predictions"],
-			report["projected_predictions"],
-			dataset_split.constraint_reference.add_prefix("ConstraintReference_"),
-			report["constraint_residuals"],
-		],
-		axis=1,
-	)
+	frame_parts = [
+		dataset_split.targets.add_prefix("Actual_"),
+		report["raw_predictions"],
+		report["projected_predictions"],
+		dataset_split.constraint_reference.add_prefix("ConstraintReference_"),
+		report["constraint_residuals"],
+	]
+	projection_diagnostics = report.get("projection_diagnostics")
+	if projection_diagnostics is not None:
+		frame_parts.append(projection_diagnostics)
+
+	prediction_frame = pd.concat(frame_parts, axis=1)
 	prediction_frame.insert(0, "sample_index", prediction_frame.index)
 	prediction_frame.insert(1, "split_name", split_name)
 	return _insert_metadata_columns(prediction_frame, metadata)
@@ -617,6 +634,7 @@ __all__ = [
 	"ModelRunner",
 	"build_cobre_response_surface_prediction_data",
 	"build_dataset_size_schedule",
+	"describe_and_display_table",
 	"load_cobre_response_surface_defaults",
 	"load_analysis_defaults",
 	"run_model_dataset_size_analysis",

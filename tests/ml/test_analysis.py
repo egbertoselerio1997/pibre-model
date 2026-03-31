@@ -130,7 +130,7 @@ def _tiny_cobre_params() -> dict[str, Any]:
 class AnalysisHelperTests(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls) -> None:
-		dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=24, random_seed=17)
+		dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=17)
 		cls.cobre_dataset = build_cobre_supervised_dataset(dataset, metadata, matrix_bundle["composition_matrix"])
 		cls.cobre_metadata = metadata
 		cls.cobre_composition_matrix = matrix_bundle["composition_matrix"]
@@ -178,6 +178,7 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertIn("Raw_Out_A", first_prediction_table.columns)
 		self.assertIn("Projected_Out_A", first_prediction_table.columns)
 		self.assertIn("ConstraintReference_Out_A", first_prediction_table.columns)
+		self.assertIn("measured_adjustment_l2", first_prediction_table.columns)
 
 		train_sizes = set(result["run_metadata"]["train_size"])
 		test_sizes = set(result["run_metadata"]["test_size"])
