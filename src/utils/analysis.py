@@ -441,10 +441,16 @@ def _build_prediction_table(
 	frame_parts = [
 		dataset_split.targets.add_prefix("Actual_"),
 		report["raw_predictions"],
-		report["projected_predictions"],
 		dataset_split.constraint_reference.add_prefix("ConstraintReference_"),
-		report["constraint_residuals"],
 	]
+	projected_predictions = report.get("projected_predictions")
+	if projected_predictions is not None:
+		frame_parts.insert(2, projected_predictions)
+
+	constraint_residuals = report.get("constraint_residuals")
+	if constraint_residuals is not None:
+		frame_parts.append(constraint_residuals)
+
 	projection_diagnostics = report.get("projection_diagnostics")
 	if projection_diagnostics is not None:
 		frame_parts.append(projection_diagnostics)

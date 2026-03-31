@@ -40,7 +40,7 @@ from src.models.ml.xgboost_regressor import (
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
-from src.utils.process import build_fractional_input_measured_output_dataset, make_train_test_split
+from src.utils.process import build_fractional_input_measured_output_dataset, has_active_projection, make_train_test_split
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -88,6 +88,7 @@ class TabularRegressorTests(unittest.TestCase):
         cls.composition_matrix = matrix_bundle["composition_matrix"]
         cls.petersen_matrix = matrix_bundle["petersen_matrix"]
         cls.a_matrix = _compute_a_matrix(cls.petersen_matrix, cls.composition_matrix)
+        cls.projection_active = has_active_projection(cls.a_matrix)
         cls.model_specs = [
             {
                 "name": "xgboost_regressor",
@@ -158,21 +159,35 @@ class TabularRegressorTests(unittest.TestCase):
                 )
 
                 aggregate_metrics = result["test_report"]["aggregate_metrics"]
-                self.assertEqual(list(aggregate_metrics["prediction_type"]), ["raw", "projected"])
+                expected_prediction_types = ["raw", "projected"] if self.projection_active else ["raw"]
+                self.assertEqual(list(aggregate_metrics["prediction_type"]), expected_prediction_types)
                 self.assertIn("report_metadata", result["test_report"])
-                self.assertIn("diagnostic_summary", result["test_report"])
-                self.assertIn("projection_diagnostics", result["test_report"])
+                report_metadata = result["test_report"]["report_metadata"].iloc[0]
+                self.assertEqual(bool(report_metadata["projection_active"]), self.projection_active)
+                self.assertEqual(
+                    str(report_metadata["constraint_status"]),
+                    "active" if self.projection_active else "inactive_trivial_null_space",
+                )
                 self.assertEqual(
                     result["model_bundle"]["feature_space"],
                     "fractional_input",
                 )
-                diagnostic_summary = result["test_report"]["diagnostic_summary"]
-                projected_constraint_row = diagnostic_summary.loc[
-                    (diagnostic_summary["diagnostic_name"] == "measured_constraint_residual")
-                    & (diagnostic_summary["prediction_type"] == "projected")
-                ].iloc[0]
-                self.assertLess(float(projected_constraint_row["constraint_max_abs"]), 1e-7)
-                self.assertLess(float(projected_constraint_row["constraint_mean_l2"]), 1e-7)
+                self.assertEqual(bool(result["model_bundle"]["projection_active"]), self.projection_active)
+                if self.projection_active:
+                    self.assertIn("diagnostic_summary", result["test_report"])
+                    self.assertIn("projection_diagnostics", result["test_report"])
+                    diagnostic_summary = result["test_report"]["diagnostic_summary"]
+                    projected_constraint_row = diagnostic_summary.loc[
+                        (diagnostic_summary["diagnostic_name"] == "measured_constraint_residual")
+                        & (diagnostic_summary["prediction_type"] == "projected")
+                    ].iloc[0]
+                    self.assertLess(float(projected_constraint_row["constraint_max_abs"]), 1e-7)
+                    self.assertLess(float(projected_constraint_row["constraint_mean_l2"]), 1e-7)
+                else:
+                    self.assertNotIn("diagnostic_summary", result["test_report"])
+                    self.assertNotIn("projection_diagnostics", result["test_report"])
+                    self.assertNotIn("constraint_residuals", result["test_report"])
+                    self.assertNotIn("projected_predictions", result["test_report"])
                 self.assertIsNone(result["artifact_paths"]["model_bundle"])
                 self.assertIsNone(result["artifact_paths"]["metrics"])
                 self.assertIsNone(result["artifact_paths"]["optuna"])
@@ -188,13 +203,18 @@ class TabularRegressorTests(unittest.TestCase):
                     )
 
                 expected_output_dim = len(self.metadata["measured_output_columns"])
-                self.assertEqual(prediction_result["projected_predictions"].shape, (6, expected_output_dim))
-                summary = summarize_mass_balance_residuals(
-                    prediction_result["projected_predictions"].to_numpy(dtype=float),
-                    prediction_result["constraint_reference"].to_numpy(dtype=float),
-                    self.a_matrix,
-                )
-                self.assertLess(summary["constraint_max_abs"], 1e-7)
+                self.assertEqual(prediction_result["raw_predictions"].shape, (6, expected_output_dim))
+                self.assertEqual(bool(prediction_result["projection_active"]), self.projection_active)
+                if self.projection_active:
+                    self.assertEqual(prediction_result["projected_predictions"].shape, (6, expected_output_dim))
+                    summary = summarize_mass_balance_residuals(
+                        prediction_result["projected_predictions"].to_numpy(dtype=float),
+                        prediction_result["constraint_reference"].to_numpy(dtype=float),
+                        self.a_matrix,
+                    )
+                    self.assertLess(summary["constraint_max_abs"], 1e-7)
+                else:
+                    self.assertNotIn("projected_predictions", prediction_result)
 
     @patch("src.utils.train.create_progress_bar")
     def test_tabular_pipeline_enables_progress_by_default(self, progress_factory: MagicMock) -> None:

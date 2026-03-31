@@ -19,6 +19,7 @@ from .process import (
     build_fractional_input_measured_output_dataset,
     build_measured_supervised_dataset,
     fit_scalers,
+    has_active_projection,
     inverse_transform_targets,
     project_to_mass_balance,
     transform_dataset_split,
@@ -263,6 +264,9 @@ def predict_tabular_regressor_split(
 
     raw_predictions = _ensure_two_dimensional_predictions(model.predict(dataset_split.features))
     raw_predictions = inverse_transform_targets(raw_predictions, scaling_bundle)
+    if not has_active_projection(A_matrix):
+        return raw_predictions.copy(), raw_predictions
+
     projected_predictions = project_to_mass_balance(
         raw_predictions,
         dataset_split.constraint_reference.to_numpy(dtype=float),
@@ -314,14 +318,15 @@ def tune_tabular_regressor_hyperparameters(
             hyperparameters,
             show_progress=False,
         )
-        projected_predictions, _ = predict_tabular_regressor_split(
+        projected_predictions, raw_predictions = predict_tabular_regressor_split(
             training_result["model"],
             scaled_tuning_test_split,
             scaling_bundle=scaling_bundle,
             A_matrix=A_matrix,
         )
         tuning_targets = inverse_transform_targets(scaled_tuning_test_split.targets, scaling_bundle)
-        return float(mean_squared_error(tuning_targets, projected_predictions))
+        tuned_predictions = projected_predictions if has_active_projection(A_matrix) else raw_predictions
+        return float(mean_squared_error(tuning_targets, tuned_predictions))
 
     optimize_study(
         study,
@@ -359,6 +364,7 @@ def build_tabular_model_bundle(
         "target_columns": target_columns,
         "constraint_columns": constraint_columns,
         "A_matrix": np.asarray(A_matrix, dtype=float),
+        "projection_active": has_active_projection(A_matrix),
         "scaling_bundle": scaling_bundle,
         "model_hyperparameters": dict(model_hyperparameters),
         "feature_space": str(feature_space),
@@ -415,15 +421,18 @@ def predict_tabular_regressor_model(
         A_matrix=np.asarray(model_bundle["A_matrix"], dtype=float),
     )
 
-    return {
+    prediction_result: dict[str, Any] = {
         "raw_predictions": pd.DataFrame(raw_predictions, index=feature_frame.index, columns=model_bundle["target_columns"]),
-        "projected_predictions": pd.DataFrame(
+        "projection_active": bool(model_bundle.get("projection_active", has_active_projection(model_bundle["A_matrix"]))),
+        "constraint_reference": constraint_reference.loc[:, model_bundle["constraint_columns"]].copy(),
+    }
+    if prediction_result["projection_active"]:
+        prediction_result["projected_predictions"] = pd.DataFrame(
             projected_predictions,
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
-        ),
-        "constraint_reference": constraint_reference.loc[:, model_bundle["constraint_columns"]].copy(),
-    }
+        )
+    return prediction_result
 
 
 def run_tabular_regressor_pipeline(

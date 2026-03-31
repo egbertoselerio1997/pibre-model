@@ -13,6 +13,7 @@ from .metrics import (
     compute_regression_metrics,
     summarize_mass_balance_residuals,
 )
+from .process import has_active_projection
 
 
 def _build_report_metadata_frame(
@@ -22,6 +23,8 @@ def _build_report_metadata_frame(
     constraint_space: str,
     direct_comparison_scope: str,
     diagnostic_scope: str,
+    projection_active: bool,
+    constraint_status: str,
 ) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -31,6 +34,8 @@ def _build_report_metadata_frame(
                 "constraint_space": constraint_space,
                 "direct_comparison_scope": direct_comparison_scope,
                 "diagnostic_scope": diagnostic_scope,
+                "projection_active": bool(projection_active),
+                "constraint_status": constraint_status,
             }
         ]
     )
@@ -122,23 +127,44 @@ def evaluate_prediction_bundle(
     """Assemble aggregate, per-target, and residual reports for raw and projected predictions."""
 
     target_column_list = list(target_columns)
+    projection_active = has_active_projection(A_matrix)
     raw_metrics = compute_regression_metrics(y_true, raw_predictions)
-    projected_metrics = compute_regression_metrics(y_true, projected_predictions)
-
-    aggregate_report = pd.DataFrame(
-        [
-            {"prediction_type": "raw", **raw_metrics},
-            {"prediction_type": "projected", **projected_metrics},
-        ]
-    )
+    aggregate_rows = [{"prediction_type": "raw", **raw_metrics}]
+    if projection_active:
+        projected_metrics = compute_regression_metrics(y_true, projected_predictions)
+        aggregate_rows.append({"prediction_type": "projected", **projected_metrics})
+    aggregate_report = pd.DataFrame(aggregate_rows)
 
     raw_per_target = compute_per_target_metrics(y_true, raw_predictions, target_column_list).rename(
         columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
     )
+    per_target_report = raw_per_target
+    report: dict[str, pd.DataFrame] = {
+        "report_metadata": _build_report_metadata_frame(
+            native_prediction_space="measured",
+            comparison_target_space="measured",
+            constraint_space="measured",
+            direct_comparison_scope="measured_output_metrics_only",
+            diagnostic_scope=(
+                "model_native_measured_space_diagnostics"
+                if projection_active
+                else "projection_inactive_trivial_measured_null_space"
+            ),
+            projection_active=projection_active,
+            constraint_status=("active" if projection_active else "inactive_trivial_null_space"),
+        ),
+        "aggregate_metrics": aggregate_report,
+        "per_target_metrics": per_target_report,
+        "raw_predictions": build_prediction_frame(raw_predictions, target_column_list, index=index, prefix="Raw_"),
+    }
+
+    if not projection_active:
+        return report
+
     projected_per_target = compute_per_target_metrics(y_true, projected_predictions, target_column_list).rename(
         columns={metric_name: f"projected_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
     )
-    per_target_report = raw_per_target.merge(projected_per_target, on="target", how="inner")
+    report["per_target_metrics"] = raw_per_target.merge(projected_per_target, on="target", how="inner")
 
     raw_residuals = compute_mass_balance_residuals(raw_predictions, constraint_reference, A_matrix)
     projected_residuals = compute_mass_balance_residuals(projected_predictions, constraint_reference, A_matrix)
@@ -173,27 +199,16 @@ def evaluate_prediction_bundle(
         ignore_index=True,
     )
 
-    return {
-        "report_metadata": _build_report_metadata_frame(
-            native_prediction_space="measured",
-            comparison_target_space="measured",
-            constraint_space="measured",
-            direct_comparison_scope="measured_output_metrics_only",
-            diagnostic_scope="model_native_measured_space_diagnostics",
-        ),
-        "aggregate_metrics": aggregate_report,
-        "per_target_metrics": per_target_report,
-        "raw_predictions": build_prediction_frame(raw_predictions, target_column_list, index=index, prefix="Raw_"),
-        "projected_predictions": build_prediction_frame(
-            projected_predictions,
-            target_column_list,
-            index=index,
-            prefix="Projected_",
-        ),
-        "diagnostic_summary": diagnostic_summary,
-        "projection_diagnostics": projection_adjustments,
-        "constraint_residuals": residual_report,
-    }
+    report["projected_predictions"] = build_prediction_frame(
+        projected_predictions,
+        target_column_list,
+        index=index,
+        prefix="Projected_",
+    )
+    report["diagnostic_summary"] = diagnostic_summary
+    report["projection_diagnostics"] = projection_adjustments
+    report["constraint_residuals"] = residual_report
+    return report
 
 
 def evaluate_cobre_prediction_bundle(
@@ -301,6 +316,8 @@ def evaluate_cobre_prediction_bundle(
             constraint_space="fractional",
             direct_comparison_scope="measured_output_metrics_only",
             diagnostic_scope="model_native_fractional_space_diagnostics",
+            projection_active=True,
+            constraint_status="active",
         ),
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,

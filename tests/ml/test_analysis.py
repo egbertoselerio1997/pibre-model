@@ -185,6 +185,35 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertEqual(train_sizes, {4, 8})
 		self.assertEqual(test_sizes, {2, 3})
 
+	def test_run_model_dataset_size_analysis_omits_projected_outputs_when_projection_inactive(self) -> None:
+		dataset = _build_synthetic_dataset()
+		inactive_a_matrix = np.zeros((0, 2), dtype=float)
+
+		result = run_model_dataset_size_analysis(
+			"synthetic_model",
+			dataset,
+			inactive_a_matrix,
+			_fake_runner,
+			min_total_samples=6,
+			max_total_samples=6,
+			total_sample_step=5,
+			n_repeats=1,
+			test_fraction=0.25,
+			random_seed=13,
+			show_progress=False,
+			show_runner_progress=False,
+		)
+
+		self.assertNotIn("projected_R2", result["per_target_metrics"].columns)
+		self.assertEqual(set(result["aggregate_metrics"]["prediction_type"]), {"raw"})
+
+		first_prediction_table = result["prediction_tables"][0]
+		self.assertIn("Actual_Out_A", first_prediction_table.columns)
+		self.assertIn("Raw_Out_A", first_prediction_table.columns)
+		self.assertIn("ConstraintReference_Out_A", first_prediction_table.columns)
+		self.assertNotIn("Projected_Out_A", first_prediction_table.columns)
+		self.assertNotIn("measured_adjustment_l2", first_prediction_table.columns)
+
 	def test_build_cobre_response_surface_prediction_data_uses_midpoint_profile_and_extended_domain(self) -> None:
 		dataset_splits = make_train_test_split(
 			self.cobre_dataset,

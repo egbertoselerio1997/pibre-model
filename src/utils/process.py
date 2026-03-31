@@ -92,10 +92,25 @@ def compute_measured_composites(
 	return pd.DataFrame(composite_values, index=dataset.index, columns=output_columns)
 
 
+def has_active_projection(A_matrix: np.ndarray) -> bool:
+	"""Return whether an invariant matrix defines a non-trivial projection."""
+
+	constraint_matrix = np.asarray(A_matrix, dtype=float)
+	if constraint_matrix.ndim != 2:
+		raise ValueError("A_matrix must be two-dimensional.")
+
+	return bool(constraint_matrix.shape[0] > 0)
+
+
 def build_projection_operator(A_matrix: np.ndarray) -> np.ndarray:
 	"""Construct the orthogonal projector used to enforce measured-space constraints."""
 
 	constraint_matrix = np.asarray(A_matrix, dtype=float)
+	if constraint_matrix.ndim != 2:
+		raise ValueError("A_matrix must be two-dimensional.")
+	if not has_active_projection(constraint_matrix):
+		return np.zeros((constraint_matrix.shape[1], constraint_matrix.shape[1]), dtype=float)
+
 	gram_matrix = constraint_matrix @ constraint_matrix.T
 	return constraint_matrix.T @ np.linalg.pinv(gram_matrix) @ constraint_matrix
 
@@ -105,10 +120,17 @@ def project_to_mass_balance(
 	constraint_reference: np.ndarray,
 	A_matrix: np.ndarray,
 ) -> np.ndarray:
-	"""Project raw predictions onto the measured-space invariant subspace."""
+	"""Project raw predictions onto the measured-space invariant subspace.
+
+	When the invariant matrix is trivial, projection is inactive and the raw
+	predictions are returned unchanged.
+	"""
+
+	raw_array = np.asarray(raw_predictions, dtype=float)
+	if not has_active_projection(A_matrix):
+		return raw_array.copy()
 
 	projection_operator = build_projection_operator(A_matrix)
-	raw_array = np.asarray(raw_predictions, dtype=float)
 	reference_array = np.asarray(constraint_reference, dtype=float)
 	return raw_array - (raw_array - reference_array) @ projection_operator.T
 
@@ -145,7 +167,6 @@ def build_measured_supervised_dataset(
 		targets=targets,
 		constraint_reference=constraint_reference,
 	)
-
 
 def build_fractional_input_measured_output_dataset(
 	dataset: pd.DataFrame,
@@ -507,6 +528,7 @@ __all__ = [
 	"combine_dataset_splits",
 	"compute_measured_composites",
 	"fit_scalers",
+	"has_active_projection",
 	"inverse_transform_targets",
 	"make_train_validation_test_splits",
 	"make_train_test_split",

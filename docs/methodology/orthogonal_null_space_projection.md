@@ -39,6 +39,16 @@ $$
 
 This measured-space matrix is retained in the notebook because the classical regressors continue to project measured-output predictions directly.
 
+That construction is not guaranteed to be non-trivial. By rank-nullity,
+
+$$
+\dim\bigl(\operatorname{null\_space}(S_{macro})\bigr) = n_{measured} - \operatorname{rank}(S_{macro})
+$$
+
+where $n_{measured}$ is the number of measured-output coordinates. If $S_{macro}$ has full column rank in the measured-output basis, then the null space is zero-dimensional and $A_{measured}$ has shape $(0, n_{measured})$.
+
+In that case the classical measured-space projector is mathematically trivial. There is no non-zero measured-space invariant left to enforce after collapsing the full fractional-state system into the chosen measured-output coordinates. The repository therefore treats the classical projection feature as inactive rather than as a successful zero-violation result.
+
 ## 3. Shared projector formula
 
 Both model families use the same projector construction once an invariant matrix $A$ has been chosen:
@@ -139,8 +149,9 @@ The reporting distinction is now important.
 For the classical regressors:
 
 - regression metrics are measured in measured-output space
-- constraint residuals are also measured in measured-output space
-- projection-adjustment diagnostics summarize how far the raw measured prediction moved during post-projection
+- when $A_{measured}$ is non-trivial, constraint residuals are also measured in measured-output space
+- when $A_{measured}$ is non-trivial, projection-adjustment diagnostics summarize how far the raw measured prediction moved during post-projection
+- when $A_{measured}$ is trivial, the notebook reports only the raw measured-output metrics and marks the classical projection path as inactive
 
 ### 6.2 COBRE
 
@@ -160,6 +171,8 @@ The notebook remains the only place where train-test splitting and any Optuna-on
 
 The notebook also keeps both invariant matrices so later classical-regressor cells can continue to use the measured-space projector while the COBRE cells use the strict fractional projector.
 
+If the measured-space null space collapses to zero dimension, the notebook now prints that status explicitly and suppresses the classical projected-result and measured-space discrepancy tables. This avoids misreading a vacuous projector as evidence that an unconstrained classical regressor satisfied mass balance.
+
 ## 8. Limitations
 
 The present repository design intentionally supports both projection strategies at once. That choice preserves backward compatibility for the classical regressors, but it means a reader must distinguish carefully between:
@@ -168,3 +181,5 @@ The present repository design intentionally supports both projection strategies 
 - the measured-space classical-regressor invariant matrix
 
 Confusing those two objects will lead to incorrect interpretations of the reported residuals or of the fitted coefficient matrices.
+
+There is an additional limitation for the classical measured-space path: after the full fractional system is collapsed into a small measured-output basis, the retained coordinates may no longer preserve a non-trivial null space. When that happens, the repository cannot produce a meaningful measured-space projection or a meaningful measured-space post-projection discrepancy diagnostic for the classical models. Those diagnostics are therefore treated as unavailable, not as identically zero.

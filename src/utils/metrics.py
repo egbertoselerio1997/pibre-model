@@ -74,6 +74,10 @@ def compute_mass_balance_residuals(
 	prediction_array = np.asarray(predictions, dtype=float)
 	reference_array = np.asarray(constraint_reference, dtype=float)
 	constraint_matrix = np.asarray(A_matrix, dtype=float)
+	if constraint_matrix.ndim != 2:
+		raise ValueError("A_matrix must be two-dimensional.")
+	if constraint_matrix.shape[0] == 0:
+		return np.empty((prediction_array.shape[0], 0), dtype=float)
 
 	return (constraint_matrix @ prediction_array.T - constraint_matrix @ reference_array.T).T
 
@@ -88,10 +92,10 @@ def summarize_mass_balance_residuals(
 	residuals = compute_mass_balance_residuals(predictions, constraint_reference, A_matrix)
 	if residuals.size == 0:
 		return {
-			"constraint_mean_l2": 0.0,
-			"constraint_max_l2": 0.0,
-			"constraint_mean_abs": 0.0,
-			"constraint_max_abs": 0.0,
+			"constraint_mean_l2": float("nan"),
+			"constraint_max_l2": float("nan"),
+			"constraint_mean_abs": float("nan"),
+			"constraint_max_abs": float("nan"),
 		}
 
 	l2_values = np.linalg.norm(residuals, axis=1)
