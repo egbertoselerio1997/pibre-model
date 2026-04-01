@@ -924,7 +924,7 @@
       "min_total_samples": 100,
       "max_total_samples": 10000,
       "total_sample_step": 990,
-      "n_repeats": 30,
+      "n_repeats": 10,
       "test_fraction": 0.2,
       "cobre_response_surface": {
         "grid_points_per_axis": 1000,
