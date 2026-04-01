@@ -222,6 +222,7 @@ def evaluate_cobre_prediction_bundle(
     state_columns: Iterable[str],
     *,
     index: pd.Index | None = None,
+    prediction_uncertainty: dict[str, Any] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Assemble COBRE reports with measured-space metrics and fractional-space constraints."""
 
@@ -309,7 +310,7 @@ def evaluate_cobre_prediction_bundle(
         ignore_index=True,
     )
 
-    return {
+    report = {
         "report_metadata": _build_report_metadata_frame(
             native_prediction_space="fractional",
             comparison_target_space="measured",
@@ -349,6 +350,48 @@ def evaluate_cobre_prediction_bundle(
         "projection_diagnostics": projection_adjustments,
         "constraint_residuals": residual_report,
     }
+
+    if prediction_uncertainty is not None:
+        report["uncertainty_metadata"] = pd.DataFrame([dict(prediction_uncertainty["metadata"])])
+        report["projected_prediction_standard_errors"] = build_prediction_frame(
+            prediction_uncertainty["projected_prediction_standard_errors"],
+            target_column_list,
+            index=index,
+            prefix="ProjectedSE_",
+        )
+        report["projected_prediction_confidence_interval_lower"] = build_prediction_frame(
+            prediction_uncertainty["projected_prediction_confidence_interval_lower"],
+            target_column_list,
+            index=index,
+            prefix="ProjectedCI95Lower_",
+        )
+        report["projected_prediction_confidence_interval_upper"] = build_prediction_frame(
+            prediction_uncertainty["projected_prediction_confidence_interval_upper"],
+            target_column_list,
+            index=index,
+            prefix="ProjectedCI95Upper_",
+        )
+        report["projected_prediction_interval_lower"] = build_prediction_frame(
+            prediction_uncertainty["projected_prediction_interval_lower"],
+            target_column_list,
+            index=index,
+            prefix="ProjectedPI95Lower_",
+        )
+        report["projected_prediction_interval_upper"] = build_prediction_frame(
+            prediction_uncertainty["projected_prediction_interval_upper"],
+            target_column_list,
+            index=index,
+            prefix="ProjectedPI95Upper_",
+        )
+        report["projected_prediction_interval_standard_errors"] = build_prediction_frame(
+            prediction_uncertainty["projected_prediction_interval_standard_errors"],
+            target_column_list,
+            index=index,
+            prefix="ProjectedPISE_",
+        )
+        report["prediction_uncertainty_summary"] = prediction_uncertainty["prediction_uncertainty_summary"].copy()
+
+    return report
 
 
 __all__ = ["build_prediction_frame", "evaluate_cobre_prediction_bundle", "evaluate_prediction_bundle"]

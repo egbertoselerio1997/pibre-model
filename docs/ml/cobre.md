@@ -2,258 +2,179 @@
 
 ## 1. Title and model summary
 
-The COBRE module in this repository implements a strict fractional-space Constrained Bilinear Regression model whose final prediction target is the measured macroscopic effluent space. The raw surrogate is trained over operational inputs and influent ASM1 fractions, the physical invariants are derived from the null space of the Petersen matrix, and the physically admissible effluent is collapsed into the measured-output basis through the configured composition matrix.
+This document describes the repository implementation of COBRE as a constrained bilinear regression model over wastewater fractional states. The model predicts measured macroscopic effluent composites while enforcing stoichiometric invariants derived from the configured Petersen matrix.
 
-The implementation is not a neural network and it is not a generic measured-space polynomial regressor. It is a closed-form constrained bilinear surrogate whose training objective is the analytically collapsed measured-output projection derived from the underlying fractional stoichiometric model.
+This file is an implementation companion, not the primary theory source. The authoritative mathematical specification is `docs/article/theoretical_framework.md`. If any notation or derivation in this file conflicts with that article, the article is the source of truth.
 
 ## 2. Background and use case
 
-Biological wastewater process data contain two distinct classes of explanatory variables:
+The repository uses COBRE when an interpretable, closed-form surrogate is preferred over a generic black-box regressor. COBRE separates two physically distinct input roles:
 
-- operational controls, such as hydraulic retention time and aeration
-- influent fraction states, such as soluble substrate, ammonium nitrogen, nitrate nitrogen, phosphate phosphorus, dissolved oxygen, alkalinity, and particulate fractions
+- operational controls $u \in \mathbb{R}^{M_{op}}$
+- influent fractional states $C_{in} \in \mathbb{R}^{F}$
 
-The COBRE model separates those two roles explicitly. The operational controls drive the reactor regime, while the influent fractions define the entering material state that must also anchor the conservation constraints. A purely data-driven regression can fit measured outputs, but without additional structure it can violate invariants implied by microbiology and stoichiometry. COBRE addresses that weakness by combining:
+This separation matters because the effluent must reflect both reactor operating conditions and the invariant structure implied by the influent fractional composition and stoichiometry.
 
-- a bilinear second-order surrogate in the fractional state space
-- a null-space projector derived from the Petersen matrix
-- a composition mapping from fractional states to measured macroscopic outputs
-- a closed-form least-squares calculation of the fitted coefficients
+## 3. Theory-aligned notation
 
-The repository uses COBRE when the goal is an interpretable analytical surrogate that predicts measured effluent composites while remaining consistent with the invariant fractional subspace implied by the configured ASM1 stoichiometry.
+The implementation now follows the article notation in notebook displays and COBRE-specific reports:
 
-## 3. Mathematical definition
+- $u$: operational control vector
+- $C_{in}$: influent fractional state
+- $C_{raw}$: unconstrained fractional prediction
+- $C^*$: constrained fractional prediction
+- $A$: null-space invariant matrix derived from the Petersen matrix
+- $P_{inv} = A^T (A A^T)^{-1} A$: invariant-space projector
+- $P_{adm} = I - P_{inv}$: admissible-space projector
+- $G = I_{comp} P_{adm}$: collapsed admissible operator
+- $H = I_{comp} P_{inv}$: invariant pass-through operator
 
-Let:
+Some persisted bundle keys retain legacy names such as `effective_coefficients` for backward compatibility with the notebook and analysis pipeline. Those keys now represent the measured-space coefficient blocks induced by $G$ and, for the linear influent block, the additional $H$ pass-through term.
 
-- $u \in \mathbb{R}^{M_{op}}$ denote the operational input vector
-- $C_{in} \in \mathbb{R}^{F}$ denote the influent fractional state vector
-- $C_{raw} \in \mathbb{R}^{F}$ denote the raw fractional prediction
-- $I_{comp} \in \mathbb{R}^{K \times F}$ denote the composition matrix that maps fractions to measured composites
-- $\nu \in \mathbb{R}^{R \times F}$ denote the Petersen matrix
+## 4. Mathematical definition
 
-The unconstrained raw fractional model is:
+The unconstrained fractional surrogate is
 
 $$
 C_{raw} = W_u u + W_{in} C_{in} + b + \Theta_{uu}(u \otimes u) + \Theta_{cc}(C_{in} \otimes C_{in}) + \Theta_{uc}(u \otimes C_{in})
 $$
 
-where:
+where the coefficient blocks are stored as 2D matrices over an unsymmetrized Kronecker-style second-order basis.
 
-- $W_u \in \mathbb{R}^{F \times M_{op}}$
-- $W_{in} \in \mathbb{R}^{F \times F}$
-- $b \in \mathbb{R}^{F}$
-- $\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$
-- $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$
-- $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$
-
-The invariant matrix $A$ is built from the null space of the Petersen matrix:
+The invariant matrix is built from the null space of the Petersen matrix $\nu$:
 
 $$
 A = \operatorname{null\_space}(\nu)^T
 $$
 
-The orthogonal projector onto the invariant-error subspace is:
+The constrained fractional prediction is obtained by orthogonal projection:
 
 $$
-P = A^T (A A^T)^+ A
+C^* = P_{adm} C_{raw} + P_{inv} C_{in}
 $$
 
-and the complementary projector is:
+The measured-space prediction uses the configured composition matrix $I_{comp}$:
 
 $$
-P_{\perp} = I - P
+y^* = I_{comp} C^* = G C_{raw} + H C_{in}
 $$
 
-The physically admissible fractional state is therefore:
+After substitution, the measured-space prediction remains a second-order polynomial in $u$ and $C_{in}$, with interpreted coefficient blocks:
+
+- $W_{u,y} = G W_u$
+- $W_{in,y} + H = G W_{in} + H$
+- $b_y = G b$
+- $\Theta_{uu,y} = G \Theta_{uu}$
+- $\Theta_{cc,y} = G \Theta_{cc}$
+- $\Theta_{uc,y} = G \Theta_{uc}$
+
+## 5. Training objective and identifiable parameters
+
+For $N$ samples, the implementation builds a row-oriented design matrix $\Phi \in \mathbb{R}^{N \times D}$ over the operational, influent, bias, and second-order interaction basis. Let $Y \in \mathbb{R}^{N \times K}$ be the measured effluent targets and let $C_{IN} \in \mathbb{R}^{N \times F}$ be the influent fractional states aligned to the same rows.
+
+The transformed target is
 
 $$
-C^* = P_{\perp} C_{raw} + P C_{in}
+\widetilde{Y} = Y - C_{IN} H^T
 $$
 
-The measured composite prediction is:
+and the fitted identifiable measured-space parameter matrix $M \in \mathbb{R}^{K \times D}$ satisfies
 
 $$
-C_{comp}^* = I_{comp} C^* = I_{comp} P_{\perp} C_{raw} + I_{comp} P C_{in}
+\widetilde{Y} = \Phi M^T
 $$
 
-Substituting the raw bilinear model yields the collapsed form:
+The repository solves this projected least-squares problem analytically. The raw fractional parameter matrix is then reconstructed as a minimum-norm solution consistent with the collapsed objective, and the notebook-facing measured coefficient blocks are unpacked from the identified parameter matrix.
 
-$$
-C_{comp}^* = W_{u,eff} u + W_{in,eff} C_{in} + b_{eff} + \Theta_{uu,eff}(u \otimes u) + \Theta_{cc,eff}(C_{in} \otimes C_{in}) + \Theta_{uc,eff}(u \otimes C_{in})
-$$
+## 6. Returned artifacts and persisted bundle fields
 
-with:
+The COBRE training pipeline returns a result bundle that includes:
 
-$$
-W_{u,eff} = I_{comp} P_{\perp} W_u
-$$
+- the fitted model bundle for serialization and later prediction
+- measured-space coefficient blocks for notebook plots and interpretation
+- raw fractional coefficient blocks for lower-level diagnostics
+- metric tables and COBRE-specific evaluation reports
+- coefficient uncertainty summaries when inference succeeds
 
-$$
-W_{in,eff} = I_{comp}(P_{\perp} W_{in} + P)
-$$
+The persisted model bundle stores the matrices and metadata required to reproduce predictions:
 
-$$
-b_{eff} = I_{comp} P_{\perp} b
-$$
-
-and the same left multiplication by $I_{comp} P_{\perp}$ for the three bilinear coefficient tensors.
-
-For $N$ samples the repository uses row-oriented matrices:
-
-- $\Phi \in \mathbb{R}^{N \times D}$ for the engineered design matrix
-- $Y \in \mathbb{R}^{N \times K}$ for the measured targets
-- $C_{IN} \in \mathbb{R}^{N \times F}$ for the influent fractional states
-
-The transformed target used in the implementation is:
-
-$$
-\widetilde{Y} = Y - C_{IN} P^T I_{comp}^T
-$$
-
-and the training equation is:
-
-$$
-\widetilde{Y} = \Phi B^T P_{\perp}^T I_{comp}^T
-$$
-
-where $B \in \mathbb{R}^{F \times D}$ is the raw fractional coefficient matrix assembled from all linear, bias, and bilinear blocks.
-
-The repository does not materialize the full dense Kronecker matrix during normal training. Instead it uses a two-stage least-squares calculation that is mathematically equivalent to the explicit Kronecker solve:
-
-1. solve for the collapsed parameter proxy $M = B^T P_{\perp}^T I_{comp}^T$
-2. solve $I_{comp} P_{\perp} B = M^T$ for a minimum-norm raw fractional coefficient matrix
-
-The equivalence to the explicit Kronecker formulation is covered by the COBRE unit tests in this repository.
-
-## 4. Inputs, outputs, and assumptions
-
-The strict COBRE dataset contract in this repository is:
-
-- feature inputs: the configured operational columns followed by the influent fractional state columns `In_*`
-- targets: the measured effluent outputs `Out_*` in the configured measured-output order
-- constraint reference: the influent fractional state vector, stored without the `In_` prefix so its columns align directly with the fractional $A$ matrix
-
-Important assumptions:
-
-- feature scaling is disabled
-- target scaling is disabled
-- the feature order must remain `[operational_columns, In_state_columns]`
-- the constraint reference columns must match the fractional state ordering used by the Petersen matrix
-- the composition matrix row order must match the measured target ordering used for training and reporting
-
-## 5. Implementation used in this repository
-
-The implementation lives in `src/models/ml/cobre.py`, and the notebook orchestrates the required data preparation in `main.ipynb`.
-
-The exact repository flow is:
-
-1. run the ASM1 simulator to generate the dataset, Petersen matrix, and composition matrix
-2. derive a strict COBRE invariant matrix from `null_space(petersen_matrix)`
-3. build a COBRE-specific supervised dataset whose features stay in fractional space while the targets stay in measured-output space
-4. build the explicit unsymmetrized second-order design matrix over operational inputs and influent fractions
-5. compute $P$, $P_{\perp}$, the collapsed operator $I_{comp} P_{\perp}$, and the pass-through operator $I_{comp} P$
-6. form the transformed measured target $\widetilde{Y}$
-7. solve the two-stage least-squares problem using NumPy
-8. recover raw fractional coefficient blocks and the direct effective measured-space coefficient blocks
-9. report raw and projected measured-output metrics as the direct comparison layer together with raw and projected fractional-space diagnostics as a separate COBRE-native diagnostic layer
-10. optionally persist the model bundle and metrics using the repository path patterns from `config/paths.json`
-
-The persisted COBRE bundle stores:
-
-- the fractional invariant matrix $A$
-- the composition matrix $I_{comp}$
-- the projector $P$ and complement $P_{\perp}$
-- the collapsed and pass-through operators
+- $A$, $P_{inv}$, $P_{adm}$, $G$, and $H$
+- the composition matrix and feature schema
 - the raw fractional parameter matrix
-- the raw measured parameter matrix
-- the effective measured parameter matrix
-- named raw and effective coefficient blocks
-- the design schema and scaling metadata
-- the selected hyperparameters and training metadata
+- the identifiable measured-space parameter matrix
+- unpacked coefficient blocks for backward-compatible downstream use
+- inference metadata and, when available, bootstrap parameter samples
 
-The notebook reporting for COBRE now prints a short description before every displayed table. The measured-output aggregate and per-target metric tables are the direct comparison tables. The report metadata, diagnostic summary, and fractional residual summaries are intentionally labeled as COBRE-native diagnostics rather than direct apples-to-apples ranking tables against the classical models.
+## 7. Coefficient uncertainty
 
-### 5.1 Effective coefficient visualization in the notebook
+COBRE now returns uncertainty information for estimated coefficients at training time.
 
-After the COBRE training cell runs in `main.ipynb`, the notebook renders six figures directly from `cobre_result["model_bundle"]["effective_coefficients"]`:
+The top-level training result includes:
 
-- a heatmap for $W_{u,eff}$ with measured targets on the y-axis and operational variables on the x-axis
-- a heatmap for $W_{in,eff}$ with measured targets on the y-axis and influent fractional variables on the x-axis
-- a bar plot for $b_{eff}$ with measured targets on the x-axis and coefficient value on the y-axis
-- a composite heatmap figure for $\Theta_{uu,eff}$ with one operational-by-operational subplot per measured target
-- a composite heatmap figure for $\Theta_{cc,eff}$ with one influent-by-influent subplot per measured target
-- a composite heatmap figure for $\Theta_{uc,eff}$ with one operational-by-influent subplot per measured target
-- a composite operational response-surface figure with one contour subplot per measured target, using HRT on the x-axis and Aeration on the y-axis
+- `coefficient_inference`: metadata describing the inference method, confidence level, rank diagnostics, and residual degrees of freedom
+- `identifiable_coefficient_uncertainty`: standard errors and interval bounds for the identifiable measured-space parameter matrix estimated from $\widetilde{Y} = \Phi M^T$
+- `effective_coefficient_uncertainty`: the same coefficient intervals after the deterministic $H$ pass-through contribution is added to the linear influent block used for measured-space interpretation
 
-Those tensor figures preserve the repository's unsymmetrized Kronecker-style ordering. The notebook does not symmetrize, reorder, or aggregate the stored interaction blocks before plotting them, so each heatmap axis corresponds exactly to the ordered design basis used during training.
+The implementation chooses the uncertainty method as follows:
 
-The response-surface figure is a post-training diagnostic. The notebook fixes the influent fractional state vector to a common wastewater profile defined as the midpoint of each configured influent-state range, then evaluates the persisted COBRE bundle across an HRT-Aeration grid that extends beyond the original simulation envelope while clipping the lower HRT and Aeration bounds at zero so the operational axes remain physically admissible. The dashed rectangle overlaid on each subplot marks the original training domain, so the user can distinguish interpolation inside the calibrated region from extrapolation outside it. The contour panels therefore help diagnose how the fitted surrogate behaves as the operational variables vary, but they should not be interpreted as a retraining result or as a formal validation study.
+- `auto` uses analytic Gaussian inference when the projected least-squares design is full rank and falls back to bootstrap percentile inference when the design is rank deficient or analytic covariance estimation is not reliable
+- `analytic` forces the analytic covariance path even when the design is rank deficient
+- forced analytic intervals from a rank-deficient design are returned with a caution note because the original design-basis coefficients are not uniquely identifiable coefficientwise
 
-## 6. Architecture details and adopted standard architecture name
+The default confidence level is 0.95, and the default bootstrap fallback is controlled from `config/params.json`.
 
-The adopted architecture is a constrained second-order polynomial regression with bilinear interaction terms and an analytically collapsed orthogonal projector. In machine-learning terms it is a multivariate ordinary least-squares regressor over a hand-built second-order feature map.
-
-It is not a deep-learning architecture and it is not a tree-based ensemble. The closest standard description is:
-
-- multivariate polynomial regression of degree two over a structured feature map
-- augmented with a linear equality-constrained projection derived from null-space stoichiometry
-
-The repository deliberately keeps the quadratic and interaction blocks unsymmetrized so that the stored tensor coefficients correspond exactly to the ordered Kronecker-style feature basis used in the design matrix.
-
-## 7. Training or optimization notes
-
-Training is fully analytical in the current repository implementation.
-
-There is:
-
-- no gradient descent
-- no epoch schedule
-- no early stopping
-- no Optuna tuning path for COBRE
-
-The configured backend is `ols_backend = "numpy_lstsq"`. The implementation uses NumPy least squares twice to avoid explicitly constructing the dense Kronecker matrix while preserving the same mathematical objective.
-
-Progress bars remain enabled by default to comply with the repository-wide machine-learning training visibility rules.
-
-## 8. Prediction workflow
+## 8. Prediction workflow and prediction uncertainty
 
 Prediction proceeds as follows:
 
-1. load the persisted bundle
-2. rebuild the strict COBRE dataset if a raw simulation dataframe is supplied
-3. align the feature frame to the saved operational-plus-fractional feature order
-4. rebuild the design matrix from the saved schema
-5. generate the raw fractional prediction $C_{raw}$
-6. generate the projected fractional prediction $C^* = P_{\perp} C_{raw} + P C_{in}$
-7. map both variants into measured-output space with the composition matrix
-8. return measured raw predictions, measured projected predictions, raw fractional predictions, projected fractional predictions, and the aligned fractional constraint reference
+1. Load the persisted COBRE bundle.
+2. Rebuild or align the feature frame to the saved operational and influent schema.
+3. Rebuild the second-order design matrix.
+4. Compute the raw fractional prediction $C_{raw}$.
+5. Compute the constrained fractional prediction $C^*$.
+6. Map raw and constrained fractional predictions into measured space.
+7. If inference metadata are present, compute measured-space uncertainty for the projected prediction.
 
-## 9. Limitations and expected failure modes
+When available, `predict_cobre_model()` returns a `prediction_uncertainty` payload with:
 
-Important limitations in this repository implementation are:
+- standard errors for the mean projected prediction
+- lower and upper confidence bounds for the mean projected prediction
+- standard errors for a future projected observation
+- lower and upper prediction bounds for a future projected observation
 
-- the model is specific to the configured ASM1 fractional basis and measured-output composition mapping
-- the raw fractional coefficient matrix is not uniquely identifiable; the repository stores a minimum-norm solution consistent with the collapsed least-squares objective
-- extrapolation beyond the simulated operating envelope remains risky, as with any polynomial surrogate
-- the design matrix can become ill-conditioned if the operational inputs and influent fractions do not sufficiently excite the bilinear basis
+Analytic prediction uncertainty uses leverage and residual covariance from the projected least-squares fit. Bootstrap prediction uncertainty uses stored bootstrap parameter samples and residual resampling.
 
-Expected failure modes include:
+## 9. Notebook and downstream compatibility
 
-- mismatched column ordering between notebook-prepared features, targets, and constraint references
-- a composition matrix whose row and column dimensions no longer match the metadata contract
-- a Petersen matrix whose null-space basis changes because of a deliberate simulation-schema revision, requiring notebook reruns and fresh bundles
+The implementation changes preserve the existing downstream workflow while updating symbols to match the article.
 
-## Reference Article
+The protected COBRE notebook sections continue to produce the same functional outputs:
 
-1. The Unconstrained Bilinear Kinetic ModelIn standard data-driven surrogate modeling, the input feature vector $x$ simply concatenates all independent variables. However, to accurately capture the distinct physical roles of reactor hydrodynamics versus influent mass loading in biological wastewater treatment, we explicitly partition the input space into two sub-vectors:$u \in \mathbb{R}^{M_{op}}$: The operational control factors (e.g., Hydraulic Retention Time, Aeration intensity).$C_{in} \in \mathbb{R}^{F}$: The influent concentrations of the fundamental biological fractions (e.g., $S_S, X_S, X_{B,H}$ as defined by ASM1).We formulate the raw, unconstrained kinetic prediction ($C_{raw} \in \mathbb{R}^{F}$) as a partitioned second-order Volterra series acting on the fractional state space. To ensure strict dimensional consistency where the output is a vector rather than a scalar, we express the multivariate bilinear interactions using the Kronecker product ($\otimes$). The data-driven kinetic model is defined as:$$C_{raw} = W_u u + W_{in} C_{in} + b + \underbrace{\Theta_{uu} (u \otimes u)}_{\text{Op. Synergies}} + \underbrace{\Theta_{cc} (C_{in} \otimes C_{in})}_{\text{Loading Synergies}} + \underbrace{\Theta_{uc} (u \otimes C_{in})}_{\text{Op.-Loading Interactions}}$$Where the learned parameter matrices are defined strictly in 2D space:$W_u \in \mathbb{R}^{F \times M_{op}}$ and $W_{in} \in \mathbb{R}^{F \times F}$ are the linear weight matrices.$b \in \mathbb{R}^{F}$ is the learned bias vector.$\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$, $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$, and $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$ are the unrolled interaction weight matrices capturing the multiplicative relationships.This formulation isolates exactly how operational variables ($u$) and influent fractions ($C_{in}$) independently and interactively drive the raw reaction kinetics. However, because $C_{raw}$ relies entirely on statistical loss gradients, it represents a physically naive state that will inevitably violate fundamental thermodynamic and elemental conservation laws governing the biological fractions.2. Derivation of the Invariant Stoichiometric SubspaceTo correct the physical violations of the regression layer, we must mathematically map the boundaries of the feasible physical space governed strictly by the underlying microbiology.Let $\nu \in \mathbb{R}^{R \times F}$ be the Petersen matrix containing the fundamental stoichiometric coefficients for $R$ biological reactions acting on the $F$ fractionated species. Let $r \in \mathbb{R}^R$ be the vector of unobservable internal reaction extents occurring within the reactor.The total change in the biological fractions across the reactor is the linear combination of these fundamental reactions:$$\Delta C = C_{out} - C_{in} = \nu^T r$$In a data-driven context, the internal biological rates ($r$) are unobservable. To eliminate them from our governing equations, we must find a linear transformation matrix $A$ that annihilates the reaction space:$$A \Delta C = A (\nu^T r) = 0 \quad \forall r$$For this to hold universally for any arbitrary reaction vector, the matrix $A$ must satisfy:$$A \nu^T = 0$$By definition, $A$ represents the left null space of the transposed Petersen matrix $\nu^T$. Once calculated via Singular Value Decomposition, it establishes a rigid, reaction-invariant system of affine equality constraints that perfectly balances mass, electrons, and charge across the reactor's fractional components:$$A C^* = A C_{in}$$3. Null-Space Orthogonal Projection (COBRE)To fuse the kinetic accuracy of the partitioned $C_{raw}$ equation with the absolute physical rigidity of matrix $A$, we formulate an orthogonal projection. The goal is to find the physically compliant fractional effluent vector $C^*$ that is geometrically closest to the neural network's raw prediction in Euclidean space.We frame this as a constrained optimization problem:$$\min_{C^*} \quad \frac{1}{2} \|C^* - C_{raw}\|_2^2$$$$\text{subject to} \quad A C^* = A C_{in}$$Proof of the Closed-Form Projection:Using the method of Lagrange multipliers, we define the Lagrangian $\mathcal{L}$ with the multiplier vector $\lambda$:$$\mathcal{L}(C^*, \lambda) = \frac{1}{2}(C^* - C_{raw})^T(C^* - C_{raw}) + \lambda^T(A C^* - A C_{in})$$We compute the gradient of the Lagrangian with respect to the target variable $C^*$ and set it to zero to find the stationary point:$$\nabla_{C^*} \mathcal{L} = (C^* - C_{raw}) + A^T \lambda = 0$$$$C^* = C_{raw} - A^T \lambda$$To solve for the multiplier $\lambda$, we substitute this expression back into the strict mass-balance constraint:$$A (C_{raw} - A^T \lambda) = A C_{in}$$$$A C_{raw} - A A^T \lambda = A C_{in}$$$$A A^T \lambda = A (C_{raw} - C_{in})$$Because the rows of $A$ (the null space basis vectors) are linearly independent, the Gram matrix $(A A^T)$ is strictly positive definite and therefore invertible. Thus:$$\lambda = (A A^T)^{-1} A (C_{raw} - C_{in})$$Substituting $\lambda$ back into the state equation yields the mass-conserving fractional prediction:$$C^* = C_{raw} - A^T (A A^T)^{-1} A (C_{raw} - C_{in})$$4. Derivation of the Collapsed Form for Macroscopic CompositesWhile $C^*$ represents the physically compliant prediction of the fractional compounds, these fractions are notoriously difficult to measure in real-world wastewater treatment plants. Standard sensors measure macroscopic composites ($C_{comp} \in \mathbb{R}^K$) such as COD, BOD, TN, and TSS.Let $I_{comp} \in \mathbb{R}^{K \times F}$ be the composition matrix that defines the contribution of each fundamental fraction to the measurable macroscopic composites. The target prediction of the model is therefore the physically compliant macroscopic composite vector:$$C_{comp}^* = I_{comp} C^*$$To make the model interpretable directly toward these measurable composite variables, we algebraically collapse the projection operator and the composition matrix into the kinetic weights.Let $P = A^T (A A^T)^{-1} A$ be the projection matrix that maps fractional vectors into the mass-balance error space.Let $P_{\perp} = (I_{identity} - P)$ be the complementary orthogonal projection matrix that maps fractional vectors onto the feasible stoichiometric subspace.Starting from the fractional COBRE equation:$$C^* = C_{raw} - P (C_{raw} - C_{in})$$$$C^* = P_{\perp} C_{raw} + P C_{in}$$We map this strictly balanced fractional state to the measurable macroscopic space:$$C_{comp}^* = I_{comp} (P_{\perp} C_{raw} + P C_{in})$$Now, we substitute the dimensionally-corrected Kronecker expansion of $C_{raw}$ (from Section 1) into this equation:$$C_{comp}^* = I_{comp} \Big[ P_{\perp} \big( W_u u + W_{in} C_{in} + b + \Theta_{uu} (u \otimes u) + \Theta_{cc} (C_{in} \otimes C_{in}) + \Theta_{uc} (u \otimes C_{in}) \big) + P C_{in} \Big]$$By distributing the linear operators $I_{comp}$ and $P_{\perp}$ across all terms inside the bracket, and grouping the linear $C_{in}$ terms together, we arrive at the final collapsed architecture targeting macroscopic composites:$$C_{comp}^* = I_{comp} P_{\perp} W_u u + I_{comp}(P_{\perp} W_{in} + P) C_{in} + I_{comp} P_{\perp} b + (I_{comp} P_{\perp} \Theta_{uu}) (u \otimes u) + (I_{comp} P_{\perp} \Theta_{cc}) (C_{in} \otimes C_{in}) + (I_{comp} P_{\perp} \Theta_{uc}) (u \otimes C_{in})$$The Effective, Composite-Targeted COBRE Parameters:This derivation yields a single-layer, highly interpretable polynomial equation mapping directly to the measurable effluent:$$C_{comp}^* = W_{u, eff} u + W_{in, eff} C_{in} + b_{eff} + \Theta_{uu, eff} (u \otimes u) + \Theta_{cc, eff} (C_{in} \otimes C_{in}) + \Theta_{uc, eff} (u \otimes C_{in})$$Where the effective matrices—now mathematically guaranteed to balance biological stoichiometry while directly predicting macroscopic composites—are defined as:Effective Operational Control Matrix: $W_{u, eff} = I_{comp} P_{\perp} W_u$Effective Influent Loading Matrix: $W_{in, eff} = I_{comp} (P_{\perp} W_{in} + P)$Effective Bias: $b_{eff} = I_{comp} P_{\perp} b$Effective Operational Synergies Matrix: $\Theta_{uu, eff} = I_{comp} P_{\perp} \Theta_{uu}$Effective Loading Synergies Matrix: $\Theta_{cc, eff} = I_{comp} P_{\perp} \Theta_{cc}$Effective Operational-Loading Interaction Matrix: $\Theta_{uc, eff} = I_{comp} P_{\perp} \Theta_{uc}$5. Analytical Calculation of the Regression Parameters via Projected Ordinary Least Squares (OLS)Because the unconstrained model $C_{raw}$ is fundamentally linear with respect to its unknown matrix parameters, we can calculate the global optimum analytically using Projected Ordinary Least Squares (OLS), minimizing the error strictly in the measurable macroscopic composite space.Let $N$ be the number of observed experimental samples.Let $Y_{measured} \in \mathbb{R}^{K \times N}$ be the matrix of experimentally measured macroscopic effluent target variables (e.g., effluent COD, TN).Let $C_{IN} \in \mathbb{R}^{F \times N}$ be the matrix of the corresponding fractional influent loadings.First, we aggregate the linear feature vectors and Kronecker-expanded bilinear vectors ($u$, $C_{in}$, $u \otimes u$, $C_{in} \otimes C_{in}$, $u \otimes C_{in}$) alongside a bias term into a single flattened design matrix $\Phi \in \mathbb{R}^{D \times N}$, where $D$ is the total number of engineered features per sample.We concatenate all unknown raw fractional matrices ($W_u$, $W_{in}$, $b$, $\Theta_{uu}$, $\Theta_{cc}$, $\Theta_{uc}$) horizontally into a single unified parameter matrix $B \in \mathbb{R}^{F \times D}$.The unconstrained fractional prediction matrix over all samples is cleanly expressed as:$$Y_{raw} = B \Phi$$Substituting this into the composite projection equation from Section 4, the physically compliant macroscopic prediction matrix $Y_{comp}^* \in \mathbb{R}^{K \times N}$ becomes:$$Y_{comp}^* = I_{comp} P_{\perp} (B \Phi) + I_{comp} P C_{IN}$$To find the optimal parameter matrix $B$, we seek to minimize the Frobenius norm of the error between the model's macroscopic predictions and the real-world macroscopic measurements:$$\min_{B} \quad \| Y_{measured} - (I_{comp} P_{\perp} B \Phi + I_{comp} P C_{IN}) \|_F^2$$By isolating the unknown term, we define our transformed macroscopic target data matrix $\tilde{Y} \in \mathbb{R}^{K \times N}$:$$\tilde{Y} = Y_{measured} - I_{comp} P C_{IN} = I_{comp} P_{\perp} B \Phi$$To solve for $B$, we use the vectorization operator $\text{vec}()$ and the property of Kronecker products ($\text{vec}(XYZ) = (Z^T \otimes X)\text{vec}(Y)$). The equation transforms as follows:$$\text{vec}(\tilde{Y}) = \text{vec}(I_{comp} P_{\perp} B \Phi)$$$$\text{vec}(\tilde{Y}) = (\Phi^T \otimes (I_{comp} P_{\perp})) \text{vec}(B)$$Let $\tilde{y} = \text{vec}(\tilde{Y}) \in \mathbb{R}^{KN \times 1}$ be our transformed continuous target vector.Let $Z = (\Phi^T \otimes (I_{comp} P_{\perp})) \in \mathbb{R}^{KN \times FD}$ be our projected, constraint-aware design matrix.Let $\beta = \text{vec}(B) \in \mathbb{R}^{FD \times 1}$ be the final flattened vector of all raw fractional parameters.The objective function reduces to a standard linear regression problem:$$\tilde{y} = Z \beta$$The global analytical solution for the raw parameters is given by the OLS estimator:$$\hat{\beta} = (Z^T Z)^{-1} Z^T \tilde{y}$$Calculation Protocol:Calculate the transformed macroscopic target $\tilde{y}$ and the Kronecker design matrix $Z$.Solve for $\hat{\beta}$ using the pseudoinverse or standard numerical solvers (e.g., QR decomposition) to ensure numerical stability.Reshape the resulting vector $\hat{\beta}$ back into the $F \times D$ fractional parameter matrix $B$.Disaggregate $B$ horizontally back into the respective linear weight matrices ($W_u$, $W_{in}$, $b$) and interaction matrices ($\Theta_{uu}$, $\Theta_{cc}$, $\Theta_{uc}$).Multiply these raw matrices by the combined operator $I_{comp} P_{\perp}$ to yield the final, macroscopic effective coefficients ($W_{u, eff}$, $W_{in, eff}$, etc.) for direct plant-level interpretation.
+- the COBRE training section still trains, evaluates, serializes, and displays report tables
+- the coefficient-visualization section still renders six measured-space coefficient figures, but now titles them with theory-aligned symbols such as $W_{u,y}$, $W_{in,y} + H$, and $b_y$
+- the COBRE response-surface section still builds the same contour plots and now can also expose prediction uncertainty summaries in the preview data
+- later comparison sections can continue consuming the same report and prediction-table structure because the new uncertainty content is additive
+
+## 10. Architecture details and limitations
+
+The adopted architecture is a constrained second-order polynomial regressor with bilinear interaction terms and an analytically derived orthogonal projection. It is not a neural network and it is not a tree-based ensemble.
+
+Important limitations remain:
+
+- the model is specific to the configured ASM basis, stoichiometric matrix, and measured-output composition mapping
+- the raw fractional parameter matrix is not uniquely identifiable from measured-space supervision alone
+- the unsymmetrized second-order basis can become rank deficient, especially when quadratic terms introduce duplicate interaction columns
+- extrapolation outside the simulated operating envelope remains risky even when the prediction surface looks smooth
+
+Expected failure modes include feature-order mismatches, inconsistent composition-matrix dimensions, or a deliberate stoichiometric-schema revision that changes the null-space basis and invalidates previously saved bundles.
 
 ## 11. References
 
-Henze, M., Gujer, W., Mino, T., and van Loosdrecht, M. Activated Sludge Models ASM1, ASM2, ASM2d and ASM3. IWA Scientific and Technical Report No. 9, 2000.
+For the formal COBRE derivation used as the repository gold standard, see `docs/article/theoretical_framework.md`.
 
-Gujer, W. Systems Analysis for Water Technology. Springer, 2008.
+Additional background references used by the repository include:
 
-Golub, G. H., and Van Loan, C. F. Matrix Computations. Johns Hopkins University Press, 2013.
-
-Bishop, C. M. Pattern Recognition and Machine Learning. Springer, 2006.
+- Henze, M., Gujer, W., Mino, T., and van Loosdrecht, M. Activated Sludge Models ASM1, ASM2, ASM2d and ASM3. IWA Scientific and Technical Report No. 9, 2000.
+- Gujer, W. Systems Analysis for Water Technology. Springer, 2008.
+- Golub, G. H., and Van Loan, C. F. Matrix Computations. Johns Hopkins University Press, 2013.
+- Bishop, C. M. Pattern Recognition and Machine Learning. Springer, 2006.

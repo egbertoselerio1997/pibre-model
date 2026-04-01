@@ -409,6 +409,9 @@ def build_cobre_response_surface_prediction_data(
 		model_path,
 	)
 	projected_predictions = prediction_result["projected_predictions"].copy()
+	projected_prediction_standard_errors = prediction_result.get("projected_prediction_standard_errors")
+	projected_prediction_interval_lower = prediction_result.get("projected_prediction_interval_lower")
+	projected_prediction_interval_upper = prediction_result.get("projected_prediction_interval_upper")
 	per_target_surfaces = {
 		target_name: projected_predictions[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
 		for target_name in projected_predictions.columns
@@ -421,8 +424,25 @@ def build_cobre_response_surface_prediction_data(
 		],
 		axis=1,
 	)
+	if projected_prediction_standard_errors is not None:
+		prediction_table = pd.concat(
+			[
+				prediction_table,
+				projected_prediction_standard_errors.add_prefix("ProjectedSE_"),
+			],
+			axis=1,
+		)
+	if projected_prediction_interval_lower is not None and projected_prediction_interval_upper is not None:
+		prediction_table = pd.concat(
+			[
+				prediction_table,
+				projected_prediction_interval_lower.add_prefix("ProjectedPI95Lower_"),
+				projected_prediction_interval_upper.add_prefix("ProjectedPI95Upper_"),
+			],
+			axis=1,
+		)
 
-	return {
+	result = {
 		"response_surface_config": {
 			"grid_points_per_axis": selected_grid_points,
 			"operational_extension_fraction": selected_extension_fraction,
@@ -445,6 +465,22 @@ def build_cobre_response_surface_prediction_data(
 		"prediction_table": prediction_table,
 		"per_target_surfaces": per_target_surfaces,
 	}
+	if projected_prediction_standard_errors is not None:
+		result["projected_prediction_standard_errors"] = projected_prediction_standard_errors.copy()
+		result["per_target_standard_error_surfaces"] = {
+			target_name: projected_prediction_standard_errors[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
+			for target_name in projected_prediction_standard_errors.columns
+		}
+	if projected_prediction_interval_lower is not None:
+		result["projected_prediction_interval_lower"] = projected_prediction_interval_lower.copy()
+	if projected_prediction_interval_upper is not None:
+		result["projected_prediction_interval_upper"] = projected_prediction_interval_upper.copy()
+	if "prediction_uncertainty_metadata" in prediction_result:
+		result["prediction_uncertainty_metadata"] = dict(prediction_result["prediction_uncertainty_metadata"])
+	if "prediction_uncertainty_summary" in prediction_result:
+		result["prediction_uncertainty_summary"] = prediction_result["prediction_uncertainty_summary"].copy()
+
+	return result
 
 
 def build_dataset_size_schedule(
@@ -567,6 +603,18 @@ def _build_prediction_table(
 	projection_diagnostics = report.get("projection_diagnostics")
 	if projection_diagnostics is not None:
 		frame_parts.append(projection_diagnostics)
+
+	for optional_key in [
+		"projected_prediction_standard_errors",
+		"projected_prediction_confidence_interval_lower",
+		"projected_prediction_confidence_interval_upper",
+		"projected_prediction_interval_lower",
+		"projected_prediction_interval_upper",
+		"projected_prediction_interval_standard_errors",
+	]:
+		optional_frame = report.get(optional_key)
+		if optional_frame is not None:
+			frame_parts.append(optional_frame)
 
 	prediction_frame = pd.concat(frame_parts, axis=1)
 	prediction_frame.insert(0, "sample_index", prediction_frame.index)

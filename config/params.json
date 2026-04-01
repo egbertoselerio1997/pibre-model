@@ -923,7 +923,7 @@
     "analysis": {
       "min_total_samples": 100,
       "max_total_samples": 10000,
-      "total_sample_step": 330,
+      "total_sample_step": 990,
       "n_repeats": 30,
       "test_fraction": 0.2,
       "cobre_response_surface": {
@@ -945,7 +945,11 @@
       "solver": "multivariate_lstsq",
       "ols_backend": "numpy_lstsq",
       "include_bias_term": true,
-      "lstsq_rcond": null
+      "lstsq_rcond": null,
+      "uncertainty_method": "analytic",
+      "confidence_level": 0.95,
+      "bootstrap_samples": 20,
+      "bootstrap_random_seed": 42
     },
     "artifact_options": {
       "persist_model": true,

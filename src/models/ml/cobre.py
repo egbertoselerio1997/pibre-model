@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
+from scipy.stats import t as student_t_distribution
 
 from src.utils.optuna import create_progress_bar
 from src.utils.process import (
@@ -32,6 +33,14 @@ from src.utils.train import (
 
 MODEL_NAME = "cobre"
 VALID_OLS_BACKENDS = {"numpy_lstsq"}
+DEFAULT_CONFIDENCE_LEVEL = 0.95
+DEFAULT_UNCERTAINTY_METHOD = "auto"
+DEFAULT_BOOTSTRAP_SAMPLES = 200
+RANK_DEFICIENT_ANALYTIC_NOTE = (
+    "Analytic coefficient intervals were computed with a non-full-column-rank design matrix; "
+    "the original design-basis coefficients are not uniquely identifiable coefficientwise, "
+    "so interpret these intervals with caution."
+)
 
 
 def load_cobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
@@ -80,6 +89,44 @@ def _validate_composition_shape(
             "COBRE requires composition_matrix shape to match target_columns x constraint_columns."
         )
     return composition_array
+
+
+def _resolve_confidence_level(model_hyperparameters: Mapping[str, Any]) -> float:
+    confidence_level = float(model_hyperparameters.get("confidence_level", DEFAULT_CONFIDENCE_LEVEL))
+    if not 0.0 < confidence_level < 1.0:
+        raise ValueError("COBRE confidence_level must be between 0 and 1.")
+    return confidence_level
+
+
+def _resolve_uncertainty_method(model_hyperparameters: Mapping[str, Any]) -> str:
+    method_name = str(model_hyperparameters.get("uncertainty_method", DEFAULT_UNCERTAINTY_METHOD)).strip().lower()
+    if method_name not in {"auto", "analytic", "bootstrap"}:
+        raise ValueError("COBRE uncertainty_method must be one of: analytic, auto, bootstrap.")
+    return method_name
+
+
+def _resolve_bootstrap_samples(model_hyperparameters: Mapping[str, Any]) -> int:
+    bootstrap_samples = int(model_hyperparameters.get("bootstrap_samples", DEFAULT_BOOTSTRAP_SAMPLES))
+    if bootstrap_samples < 2:
+        raise ValueError("COBRE bootstrap_samples must be at least 2.")
+    return bootstrap_samples
+
+
+def _resolve_bootstrap_random_seed(model_hyperparameters: Mapping[str, Any]) -> int:
+    return int(model_hyperparameters.get("bootstrap_random_seed", model_hyperparameters.get("random_seed", 42)))
+
+
+def _should_use_bootstrap_inference(
+    *,
+    uncertainty_method: str,
+    design_rank: int,
+    design_dimension: int,
+) -> bool:
+    if uncertainty_method == "bootstrap":
+        return True
+    if uncertainty_method == "analytic":
+        return False
+    return bool(design_rank < design_dimension)
 
 
 def _compute_projection_matrices(A_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -259,6 +306,47 @@ def _unpack_parameter_blocks(
     }
 
 
+def _build_block_uncertainty_payload(
+    design_schema: Mapping[str, Any],
+    *,
+    standard_error_matrix: np.ndarray,
+    confidence_interval_lower: np.ndarray,
+    confidence_interval_upper: np.ndarray,
+) -> dict[str, dict[str, np.ndarray]]:
+    return {
+        "W_u": {
+            "standard_error": _unpack_parameter_blocks(standard_error_matrix, design_schema)["W_u"],
+            "confidence_interval_lower": _unpack_parameter_blocks(confidence_interval_lower, design_schema)["W_u"],
+            "confidence_interval_upper": _unpack_parameter_blocks(confidence_interval_upper, design_schema)["W_u"],
+        },
+        "W_in": {
+            "standard_error": _unpack_parameter_blocks(standard_error_matrix, design_schema)["W_in"],
+            "confidence_interval_lower": _unpack_parameter_blocks(confidence_interval_lower, design_schema)["W_in"],
+            "confidence_interval_upper": _unpack_parameter_blocks(confidence_interval_upper, design_schema)["W_in"],
+        },
+        "b": {
+            "standard_error": _unpack_parameter_blocks(standard_error_matrix, design_schema)["b"],
+            "confidence_interval_lower": _unpack_parameter_blocks(confidence_interval_lower, design_schema)["b"],
+            "confidence_interval_upper": _unpack_parameter_blocks(confidence_interval_upper, design_schema)["b"],
+        },
+        "Theta_uu": {
+            "standard_error": _unpack_parameter_blocks(standard_error_matrix, design_schema)["Theta_uu"],
+            "confidence_interval_lower": _unpack_parameter_blocks(confidence_interval_lower, design_schema)["Theta_uu"],
+            "confidence_interval_upper": _unpack_parameter_blocks(confidence_interval_upper, design_schema)["Theta_uu"],
+        },
+        "Theta_cc": {
+            "standard_error": _unpack_parameter_blocks(standard_error_matrix, design_schema)["Theta_cc"],
+            "confidence_interval_lower": _unpack_parameter_blocks(confidence_interval_lower, design_schema)["Theta_cc"],
+            "confidence_interval_upper": _unpack_parameter_blocks(confidence_interval_upper, design_schema)["Theta_cc"],
+        },
+        "Theta_uc": {
+            "standard_error": _unpack_parameter_blocks(standard_error_matrix, design_schema)["Theta_uc"],
+            "confidence_interval_lower": _unpack_parameter_blocks(confidence_interval_lower, design_schema)["Theta_uc"],
+            "confidence_interval_upper": _unpack_parameter_blocks(confidence_interval_upper, design_schema)["Theta_uc"],
+        },
+    }
+
+
 def _build_effective_parameter_matrix(
     raw_parameter_matrix: np.ndarray,
     design_schema: Mapping[str, Any],
@@ -269,11 +357,35 @@ def _build_effective_parameter_matrix(
         collapse_operator,
         dtype=float,
     ).T
-    effective_parameter_matrix[_get_block_slice(design_schema, "linear_influent"), :] += np.asarray(
+    return _add_pass_through_to_parameter_matrix(
+        effective_parameter_matrix,
+        design_schema,
+        np.asarray(pass_through_operator, dtype=float),
+    )
+
+
+def _add_pass_through_to_parameter_matrix(
+    parameter_matrix: np.ndarray,
+    design_schema: Mapping[str, Any],
+    pass_through_operator: np.ndarray,
+) -> np.ndarray:
+    adjusted_parameter_matrix = np.asarray(parameter_matrix, dtype=float).copy()
+    adjusted_parameter_matrix[_get_block_slice(design_schema, "linear_influent"), :] += np.asarray(
         pass_through_operator,
         dtype=float,
     ).T
-    return effective_parameter_matrix
+    return adjusted_parameter_matrix
+
+
+def _build_effective_parameter_samples(
+    identifiable_parameter_samples: np.ndarray,
+    design_schema: Mapping[str, Any],
+    pass_through_operator: np.ndarray,
+) -> np.ndarray:
+    effective_parameter_samples = np.asarray(identifiable_parameter_samples, dtype=float).copy()
+    linear_influent_slice = _get_block_slice(design_schema, "linear_influent")
+    effective_parameter_samples[:, linear_influent_slice, :] += np.asarray(pass_through_operator, dtype=float).T
+    return effective_parameter_samples
 
 
 def _predict_with_parameter_matrix(
@@ -281,6 +393,293 @@ def _predict_with_parameter_matrix(
     parameter_matrix: np.ndarray,
 ) -> np.ndarray:
     return design_frame.to_numpy(dtype=float) @ np.asarray(parameter_matrix, dtype=float)
+
+
+def _estimate_output_covariance(
+    fit_residual_matrix: np.ndarray,
+    *,
+    degrees_of_freedom: int,
+) -> np.ndarray:
+    residual_array = np.asarray(fit_residual_matrix, dtype=float)
+    if degrees_of_freedom <= 0:
+        raise ValueError("COBRE residual degrees of freedom must be positive to estimate analytic covariance.")
+    return residual_array.T @ residual_array / float(degrees_of_freedom)
+
+
+def _compute_interval_bounds(
+    estimate_matrix: np.ndarray,
+    standard_error_matrix: np.ndarray,
+    *,
+    critical_value: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    estimate_array = np.asarray(estimate_matrix, dtype=float)
+    standard_error_array = np.asarray(standard_error_matrix, dtype=float)
+    margin = float(critical_value) * standard_error_array
+    return estimate_array - margin, estimate_array + margin
+
+
+def _compute_prediction_summary_frame(
+    target_columns: list[str],
+    *,
+    mean_standard_errors: np.ndarray,
+    prediction_standard_errors: np.ndarray,
+    confidence_interval_lower: np.ndarray,
+    confidence_interval_upper: np.ndarray,
+    prediction_interval_lower: np.ndarray,
+    prediction_interval_upper: np.ndarray,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "target": target_columns,
+            "mean_standard_error_mean": np.mean(mean_standard_errors, axis=0),
+            "mean_standard_error_max": np.max(mean_standard_errors, axis=0),
+            "prediction_standard_error_mean": np.mean(prediction_standard_errors, axis=0),
+            "prediction_standard_error_max": np.max(prediction_standard_errors, axis=0),
+            "mean_confidence_interval_width_mean": np.mean(
+                confidence_interval_upper - confidence_interval_lower,
+                axis=0,
+            ),
+            "prediction_interval_width_mean": np.mean(
+                prediction_interval_upper - prediction_interval_lower,
+                axis=0,
+            ),
+        }
+    )
+
+
+def _compute_analytic_parameter_inference(
+    identifiable_parameter_matrix: np.ndarray,
+    *,
+    design_matrix: np.ndarray,
+    fit_residual_matrix: np.ndarray,
+    design_rank: int,
+    confidence_level: float,
+) -> dict[str, Any]:
+    design_array = np.asarray(design_matrix, dtype=float)
+    design_dimension = int(design_array.shape[1])
+    degrees_of_freedom = int(design_array.shape[0] - design_rank)
+    effective_degrees_of_freedom = max(degrees_of_freedom, 1)
+    gram_inverse = np.linalg.pinv(design_array.T @ design_array)
+    output_covariance = _estimate_output_covariance(
+        fit_residual_matrix,
+        degrees_of_freedom=effective_degrees_of_freedom,
+    )
+    design_direction_variances = np.clip(np.diag(gram_inverse), a_min=0.0, a_max=None)
+    output_variances = np.clip(np.diag(output_covariance), a_min=0.0, a_max=None)
+    standard_error_matrix = np.sqrt(np.outer(design_direction_variances, output_variances))
+    critical_value = float(
+        student_t_distribution.ppf(
+            0.5 * (1.0 + confidence_level),
+            df=effective_degrees_of_freedom,
+        )
+    )
+    ci_lower, ci_upper = _compute_interval_bounds(
+        identifiable_parameter_matrix,
+        standard_error_matrix,
+        critical_value=critical_value,
+    )
+    return {
+        "method": "analytic",
+        "degrees_of_freedom": degrees_of_freedom,
+        "critical_value": critical_value,
+        "design_gram_inverse": gram_inverse,
+        "output_covariance": output_covariance,
+        "standard_error_matrix": standard_error_matrix,
+        "confidence_interval_lower": ci_lower,
+        "confidence_interval_upper": ci_upper,
+    }
+
+
+def _compute_bootstrap_parameter_inference(
+    identifiable_parameter_matrix: np.ndarray,
+    *,
+    design_matrix: np.ndarray,
+    transformed_target_matrix: np.ndarray,
+    fit_residual_matrix: np.ndarray,
+    confidence_level: float,
+    bootstrap_samples: int,
+    bootstrap_random_seed: int,
+    model_hyperparameters: Mapping[str, Any],
+) -> dict[str, Any]:
+    design_array = np.asarray(design_matrix, dtype=float)
+    transformed_target_array = np.asarray(transformed_target_matrix, dtype=float)
+    sample_count = int(design_array.shape[0])
+    rng = np.random.default_rng(int(bootstrap_random_seed))
+    parameter_samples: list[np.ndarray] = []
+    rcond_value = model_hyperparameters.get("lstsq_rcond")
+
+    for _ in range(int(bootstrap_samples)):
+        sampled_indices = rng.integers(0, sample_count, size=sample_count)
+        bootstrap_result = _solve_with_numpy_lstsq(
+            design_array[sampled_indices, :],
+            transformed_target_array[sampled_indices, :],
+            rcond_value=rcond_value,
+        )
+        parameter_samples.append(np.asarray(bootstrap_result["solution_matrix"], dtype=float))
+
+    parameter_sample_array = np.stack(parameter_samples, axis=0)
+    lower_quantile = 0.5 * (1.0 - confidence_level)
+    upper_quantile = 1.0 - lower_quantile
+    standard_error_matrix = np.std(parameter_sample_array, axis=0, ddof=1)
+    ci_lower = np.quantile(parameter_sample_array, lower_quantile, axis=0)
+    ci_upper = np.quantile(parameter_sample_array, upper_quantile, axis=0)
+    output_covariance = np.cov(np.asarray(fit_residual_matrix, dtype=float), rowvar=False, ddof=1)
+    if np.ndim(output_covariance) == 0:
+        output_covariance = np.asarray([[float(output_covariance)]], dtype=float)
+    return {
+        "method": "bootstrap",
+        "degrees_of_freedom": None,
+        "critical_value": None,
+        "design_gram_inverse": None,
+        "output_covariance": np.asarray(output_covariance, dtype=float),
+        "bootstrap_parameter_samples": parameter_sample_array,
+        "standard_error_matrix": standard_error_matrix,
+        "confidence_interval_lower": ci_lower,
+        "confidence_interval_upper": ci_upper,
+    }
+
+
+def _compute_parameter_inference(
+    identifiable_parameter_matrix: np.ndarray,
+    *,
+    design_matrix: np.ndarray,
+    transformed_target_matrix: np.ndarray,
+    fit_residual_matrix: np.ndarray,
+    design_rank: int,
+    confidence_level: float,
+    model_hyperparameters: Mapping[str, Any],
+) -> dict[str, Any]:
+    uncertainty_method = _resolve_uncertainty_method(model_hyperparameters)
+    design_dimension = int(np.asarray(design_matrix, dtype=float).shape[1])
+    rank_deficient = bool(int(design_rank) < design_dimension)
+    if _should_use_bootstrap_inference(
+        uncertainty_method=uncertainty_method,
+        design_rank=int(design_rank),
+        design_dimension=design_dimension,
+    ):
+        inference_result = _compute_bootstrap_parameter_inference(
+            identifiable_parameter_matrix,
+            design_matrix=design_matrix,
+            transformed_target_matrix=transformed_target_matrix,
+            fit_residual_matrix=fit_residual_matrix,
+            confidence_level=confidence_level,
+            bootstrap_samples=_resolve_bootstrap_samples(model_hyperparameters),
+            bootstrap_random_seed=_resolve_bootstrap_random_seed(model_hyperparameters),
+            model_hyperparameters=model_hyperparameters,
+        )
+    else:
+        inference_result = _compute_analytic_parameter_inference(
+            identifiable_parameter_matrix,
+            design_matrix=design_matrix,
+            fit_residual_matrix=fit_residual_matrix,
+            design_rank=int(design_rank),
+            confidence_level=confidence_level,
+        )
+
+    inference_result["confidence_level"] = float(confidence_level)
+    inference_result["design_dimension"] = design_dimension
+    inference_result["design_rank"] = int(design_rank)
+    inference_result["coefficient_target"] = "identifiable_measured_space_operator"
+    inference_result["rank_deficient"] = rank_deficient
+    inference_result["note"] = (
+        RANK_DEFICIENT_ANALYTIC_NOTE
+        if inference_result["method"] == "analytic" and rank_deficient
+        else None
+    )
+    inference_result["bootstrap_random_seed"] = _resolve_bootstrap_random_seed(model_hyperparameters)
+    inference_result["bootstrap_samples"] = (
+        int(_resolve_bootstrap_samples(model_hyperparameters))
+        if inference_result["method"] == "bootstrap"
+        else None
+    )
+    return inference_result
+
+
+def _compute_prediction_uncertainty_from_bundle(
+    design_frame: pd.DataFrame,
+    model_bundle: Mapping[str, Any],
+    *,
+    target_columns: list[str],
+) -> dict[str, Any] | None:
+    coefficient_inference = model_bundle.get("coefficient_inference")
+    if coefficient_inference is None:
+        return None
+
+    design_matrix = design_frame.to_numpy(dtype=float)
+    effective_parameter_matrix = np.asarray(model_bundle["effective_parameter_matrix"], dtype=float)
+    projected_predictions = design_matrix @ effective_parameter_matrix
+    confidence_level = float(coefficient_inference["confidence_level"])
+    lower_quantile = 0.5 * (1.0 - confidence_level)
+    upper_quantile = 1.0 - lower_quantile
+    method_name = str(coefficient_inference["method"])
+
+    if method_name == "analytic":
+        gram_inverse = np.asarray(coefficient_inference["design_gram_inverse"], dtype=float)
+        output_covariance = np.asarray(coefficient_inference["output_covariance"], dtype=float)
+        critical_value = float(coefficient_inference["critical_value"])
+        leverage = np.einsum("nd,df,nf->n", design_matrix, gram_inverse, design_matrix)
+        leverage = np.clip(leverage, a_min=0.0, a_max=None)
+        output_variances = np.clip(np.diag(output_covariance), a_min=0.0, a_max=None)
+        mean_standard_errors = np.sqrt(np.outer(leverage, output_variances))
+        prediction_standard_errors = np.sqrt(np.outer(1.0 + leverage, output_variances))
+        mean_ci_lower, mean_ci_upper = _compute_interval_bounds(
+            projected_predictions,
+            mean_standard_errors,
+            critical_value=critical_value,
+        )
+        prediction_interval_lower, prediction_interval_upper = _compute_interval_bounds(
+            projected_predictions,
+            prediction_standard_errors,
+            critical_value=critical_value,
+        )
+    else:
+        identifiable_parameter_samples = np.asarray(coefficient_inference["bootstrap_parameter_samples"], dtype=float)
+        effective_parameter_samples = _build_effective_parameter_samples(
+            identifiable_parameter_samples,
+            model_bundle["design_schema"],
+            np.asarray(model_bundle["pass_through_operator"], dtype=float),
+        )
+        predicted_mean_samples = np.einsum("nd,bdk->nbk", design_matrix, effective_parameter_samples)
+        mean_standard_errors = np.std(predicted_mean_samples, axis=1, ddof=1)
+        mean_ci_lower = np.quantile(predicted_mean_samples, lower_quantile, axis=1)
+        mean_ci_upper = np.quantile(predicted_mean_samples, upper_quantile, axis=1)
+
+        fit_residuals = np.asarray(model_bundle["fit_residuals"], dtype=float)
+        rng = np.random.default_rng(int(coefficient_inference["bootstrap_random_seed"]) + int(len(design_frame)))
+        sampled_residual_indices = rng.integers(0, fit_residuals.shape[0], size=(predicted_mean_samples.shape[1], len(design_frame)))
+        sampled_residuals = fit_residuals[sampled_residual_indices, :]
+        predictive_samples = np.transpose(predicted_mean_samples, (1, 0, 2)) + sampled_residuals
+        prediction_standard_errors = np.std(predictive_samples, axis=0, ddof=1)
+        prediction_interval_lower = np.quantile(predictive_samples, lower_quantile, axis=0)
+        prediction_interval_upper = np.quantile(predictive_samples, upper_quantile, axis=0)
+
+    return {
+        "metadata": {
+            "method": method_name,
+            "confidence_level": confidence_level,
+            "coefficient_target": str(coefficient_inference["coefficient_target"]),
+            "rank_deficient": bool(coefficient_inference["rank_deficient"]),
+            "design_rank": int(coefficient_inference["design_rank"]),
+            "design_dimension": int(coefficient_inference["design_dimension"]),
+            "degrees_of_freedom": coefficient_inference["degrees_of_freedom"],
+            "note": coefficient_inference.get("note"),
+        },
+        "projected_prediction_standard_errors": mean_standard_errors,
+        "projected_prediction_confidence_interval_lower": mean_ci_lower,
+        "projected_prediction_confidence_interval_upper": mean_ci_upper,
+        "projected_prediction_interval_lower": prediction_interval_lower,
+        "projected_prediction_interval_upper": prediction_interval_upper,
+        "projected_prediction_interval_standard_errors": prediction_standard_errors,
+        "prediction_uncertainty_summary": _compute_prediction_summary_frame(
+            target_columns,
+            mean_standard_errors=mean_standard_errors,
+            prediction_standard_errors=prediction_standard_errors,
+            confidence_interval_lower=mean_ci_lower,
+            confidence_interval_upper=mean_ci_upper,
+            prediction_interval_lower=prediction_interval_lower,
+            prediction_interval_upper=prediction_interval_upper,
+        ),
+    }
 
 
 def _solve_with_numpy_lstsq(
@@ -357,6 +756,7 @@ def _build_model_bundle(
     training_options: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
+        "model_bundle_schema_version": 2,
         "model_name": MODEL_NAME,
         "feature_columns": feature_columns,
         "target_columns": target_columns,
@@ -369,10 +769,16 @@ def _build_model_bundle(
         "pass_through_operator": np.asarray(training_result["pass_through_operator"], dtype=float),
         "design_schema": dict(training_result["design_schema"]),
         "raw_parameter_matrix": np.asarray(training_result["raw_parameter_matrix"], dtype=float),
+        "identifiable_parameter_matrix": np.asarray(training_result["identifiable_parameter_matrix"], dtype=float),
         "raw_measured_parameter_matrix": np.asarray(training_result["raw_measured_parameter_matrix"], dtype=float),
         "effective_parameter_matrix": np.asarray(training_result["effective_parameter_matrix"], dtype=float),
         "raw_coefficients": dict(training_result["raw_coefficients"]),
+        "identifiable_coefficients": dict(training_result["identifiable_coefficients"]),
         "effective_coefficients": dict(training_result["effective_coefficients"]),
+        "coefficient_inference": dict(training_result["coefficient_inference"]),
+        "identifiable_coefficient_uncertainty": dict(training_result["identifiable_coefficient_uncertainty"]),
+        "effective_coefficient_uncertainty": dict(training_result["effective_coefficient_uncertainty"]),
+        "fit_residuals": np.asarray(training_result["fit_residuals"], dtype=float),
         "ols_metadata": dict(training_result["ols_metadata"]),
         "scaling_bundle": scaling_bundle,
         "model_hyperparameters": dict(model_hyperparameters),
@@ -386,7 +792,7 @@ def _predict_from_bundle(
     model_bundle: Mapping[str, Any],
     *,
     scaling_bundle: ScalingBundle,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
+) -> dict[str, Any]:
     transformed_features = transform_feature_frame(feature_frame, scaling_bundle)
     constraint_columns = list(model_bundle["constraint_columns"])
     selected_constraint_reference = constraint_reference.loc[:, constraint_columns].copy()
@@ -403,13 +809,22 @@ def _predict_from_bundle(
     ).T + selected_constraint_reference.to_numpy(dtype=float) @ np.asarray(model_bundle["projection_matrix"], dtype=float).T
     raw_measured_predictions = raw_fractional_predictions @ np.asarray(model_bundle["composition_matrix"], dtype=float).T
     projected_measured_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["effective_parameter_matrix"])
-    return (
-        raw_measured_predictions,
-        projected_measured_predictions,
-        raw_fractional_predictions,
-        projected_fractional_predictions,
-        selected_constraint_reference,
+    prediction_result = {
+        "design_frame": design_frame,
+        "raw_measured_predictions": raw_measured_predictions,
+        "projected_measured_predictions": projected_measured_predictions,
+        "raw_fractional_predictions": raw_fractional_predictions,
+        "projected_fractional_predictions": projected_fractional_predictions,
+        "constraint_reference": selected_constraint_reference,
+    }
+    prediction_uncertainty = _compute_prediction_uncertainty_from_bundle(
+        design_frame,
+        model_bundle,
+        target_columns=list(model_bundle["target_columns"]),
     )
+    if prediction_uncertainty is not None:
+        prediction_result["prediction_uncertainty"] = prediction_uncertainty
+    return prediction_result
 
 
 def train_cobre_model(
@@ -423,6 +838,7 @@ def train_cobre_model(
     """Fit the strict COBRE estimator on notebook-prepared fractional features and measured targets."""
 
     _validate_scaling_configuration(model_hyperparameters)
+    confidence_level = _resolve_confidence_level(model_hyperparameters)
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
@@ -465,6 +881,7 @@ def train_cobre_model(
             model_hyperparameters,
         )
         raw_parameter_matrix = np.asarray(solve_result["parameter_matrix"], dtype=float)
+        identifiable_parameter_matrix = np.asarray(solve_result["transformed_parameter_matrix"], dtype=float)
         fit_residual_matrix = np.asarray(solve_result["fit_residual_matrix"], dtype=float)
         progress_bar.update(1)
 
@@ -477,7 +894,43 @@ def train_cobre_model(
             pass_through_operator,
         )
         raw_coefficients = _unpack_parameter_blocks(raw_parameter_matrix, design_schema)
+        identifiable_coefficients = _unpack_parameter_blocks(identifiable_parameter_matrix, design_schema)
         effective_coefficients = _unpack_parameter_blocks(effective_parameter_matrix, design_schema)
+        coefficient_inference = _compute_parameter_inference(
+            identifiable_parameter_matrix,
+            design_matrix=design_matrix,
+            transformed_target_matrix=transformed_target_values,
+            fit_residual_matrix=fit_residual_matrix,
+            design_rank=int(solve_result["design_rank"]),
+            confidence_level=confidence_level,
+            model_hyperparameters=model_hyperparameters,
+        )
+        identifiable_coefficient_uncertainty = _build_block_uncertainty_payload(
+            design_schema,
+            standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
+            confidence_interval_lower=np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
+            confidence_interval_upper=np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
+        )
+        effective_coefficient_uncertainty = _build_block_uncertainty_payload(
+            design_schema,
+            standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
+            confidence_interval_lower=np.asarray(
+                _add_pass_through_to_parameter_matrix(
+                    np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
+                    design_schema,
+                    pass_through_operator,
+                ),
+                dtype=float,
+            ),
+            confidence_interval_upper=np.asarray(
+                _add_pass_through_to_parameter_matrix(
+                    np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
+                    design_schema,
+                    pass_through_operator,
+                ),
+                dtype=float,
+            ),
+        )
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="predict", objective=str(options["objective_name"]))
@@ -502,10 +955,15 @@ def train_cobre_model(
         "collapse_operator": collapse_operator,
         "pass_through_operator": pass_through_operator,
         "raw_parameter_matrix": raw_parameter_matrix,
+        "identifiable_parameter_matrix": identifiable_parameter_matrix,
         "raw_measured_parameter_matrix": raw_measured_parameter_matrix,
         "effective_parameter_matrix": effective_parameter_matrix,
         "raw_coefficients": raw_coefficients,
+        "identifiable_coefficients": identifiable_coefficients,
         "effective_coefficients": effective_coefficients,
+        "coefficient_inference": coefficient_inference,
+        "identifiable_coefficient_uncertainty": identifiable_coefficient_uncertainty,
+        "effective_coefficient_uncertainty": effective_coefficient_uncertainty,
         "training_raw_predictions": pd.DataFrame(
             training_raw_predictions,
             index=target_frame.index,
@@ -567,32 +1025,77 @@ def predict_cobre_model(
             columns=model_bundle["constraint_columns"],
         )
 
-    raw_predictions, projected_predictions, raw_fractional, projected_fractional, selected_constraint_reference = _predict_from_bundle(
+    prediction_payload = _predict_from_bundle(
         feature_frame,
         constraint_reference,
         model_bundle,
         scaling_bundle=scaling_bundle,
     )
 
-    return {
-        "raw_predictions": pd.DataFrame(raw_predictions, index=feature_frame.index, columns=model_bundle["target_columns"]),
+    result = {
+        "raw_predictions": pd.DataFrame(
+            prediction_payload["raw_measured_predictions"],
+            index=feature_frame.index,
+            columns=model_bundle["target_columns"],
+        ),
         "projected_predictions": pd.DataFrame(
-            projected_predictions,
+            prediction_payload["projected_measured_predictions"],
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
         "raw_fractional_predictions": pd.DataFrame(
-            raw_fractional,
+            prediction_payload["raw_fractional_predictions"],
             index=feature_frame.index,
             columns=model_bundle["constraint_columns"],
         ),
         "projected_fractional_predictions": pd.DataFrame(
-            projected_fractional,
+            prediction_payload["projected_fractional_predictions"],
             index=feature_frame.index,
             columns=model_bundle["constraint_columns"],
         ),
-        "constraint_reference": selected_constraint_reference,
+        "constraint_reference": prediction_payload["constraint_reference"],
     }
+
+    prediction_uncertainty = prediction_payload.get("prediction_uncertainty")
+    if prediction_uncertainty is not None:
+        result.update(
+            {
+                "prediction_uncertainty_metadata": dict(prediction_uncertainty["metadata"]),
+                "projected_prediction_standard_errors": pd.DataFrame(
+                    prediction_uncertainty["projected_prediction_standard_errors"],
+                    index=feature_frame.index,
+                    columns=model_bundle["target_columns"],
+                ),
+                "projected_prediction_confidence_interval_lower": pd.DataFrame(
+                    prediction_uncertainty["projected_prediction_confidence_interval_lower"],
+                    index=feature_frame.index,
+                    columns=model_bundle["target_columns"],
+                ),
+                "projected_prediction_confidence_interval_upper": pd.DataFrame(
+                    prediction_uncertainty["projected_prediction_confidence_interval_upper"],
+                    index=feature_frame.index,
+                    columns=model_bundle["target_columns"],
+                ),
+                "projected_prediction_interval_lower": pd.DataFrame(
+                    prediction_uncertainty["projected_prediction_interval_lower"],
+                    index=feature_frame.index,
+                    columns=model_bundle["target_columns"],
+                ),
+                "projected_prediction_interval_upper": pd.DataFrame(
+                    prediction_uncertainty["projected_prediction_interval_upper"],
+                    index=feature_frame.index,
+                    columns=model_bundle["target_columns"],
+                ),
+                "projected_prediction_interval_standard_errors": pd.DataFrame(
+                    prediction_uncertainty["projected_prediction_interval_standard_errors"],
+                    index=feature_frame.index,
+                    columns=model_bundle["target_columns"],
+                ),
+                "prediction_uncertainty_summary": prediction_uncertainty["prediction_uncertainty_summary"],
+            }
+        )
+
+    return result
 
 
 def run_cobre_pipeline(
@@ -669,7 +1172,7 @@ def run_cobre_pipeline(
         )
 
         progress_bar.set_postfix(stage="evaluate_train", objective=objective_label)
-        train_raw, train_projected, train_raw_fractional, train_projected_fractional, train_constraint_reference = _predict_from_bundle(
+        train_prediction_payload = _predict_from_bundle(
             scaled_training_split.features,
             scaled_training_split.constraint_reference,
             model_bundle,
@@ -678,7 +1181,7 @@ def run_cobre_pipeline(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="evaluate_test", objective=objective_label)
-        test_raw, test_projected, test_raw_fractional, test_projected_fractional, test_constraint_reference = _predict_from_bundle(
+        test_prediction_payload = _predict_from_bundle(
             scaled_test_split.features,
             scaled_test_split.constraint_reference,
             model_bundle,
@@ -686,25 +1189,27 @@ def run_cobre_pipeline(
         )
         train_report = evaluate_cobre_prediction_bundle(
             training_split.targets.to_numpy(dtype=float),
-            train_raw_fractional,
-            train_projected_fractional,
-            train_constraint_reference.to_numpy(dtype=float),
+            train_prediction_payload["raw_fractional_predictions"],
+            train_prediction_payload["projected_fractional_predictions"],
+            train_prediction_payload["constraint_reference"].to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
             np.asarray(composition_matrix, dtype=float),
             training_split.targets.columns,
             training_split.constraint_reference.columns,
             index=training_split.targets.index,
+            prediction_uncertainty=train_prediction_payload.get("prediction_uncertainty"),
         )
         test_report = evaluate_cobre_prediction_bundle(
             test_split.targets.to_numpy(dtype=float),
-            test_raw_fractional,
-            test_projected_fractional,
-            test_constraint_reference.to_numpy(dtype=float),
+            test_prediction_payload["raw_fractional_predictions"],
+            test_prediction_payload["projected_fractional_predictions"],
+            test_prediction_payload["constraint_reference"].to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
             np.asarray(composition_matrix, dtype=float),
             test_split.targets.columns,
             test_split.constraint_reference.columns,
             index=test_split.targets.index,
+            prediction_uncertainty=test_prediction_payload.get("prediction_uncertainty"),
         )
         progress_bar.update(1)
 
@@ -745,6 +1250,9 @@ def run_cobre_pipeline(
         "train_report": train_report,
         "test_report": test_report,
         "model_bundle": model_bundle,
+        "coefficient_inference": model_bundle["coefficient_inference"],
+        "identifiable_coefficient_uncertainty": model_bundle["identifiable_coefficient_uncertainty"],
+        "effective_coefficient_uncertainty": model_bundle["effective_coefficient_uncertainty"],
         "dataset_splits": dataset_splits,
     }
 

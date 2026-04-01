@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 from scipy.linalg import null_space
 
 from src.models.ml.cobre import (
@@ -21,7 +22,7 @@ from src.models.ml.cobre import (
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
-from src.utils.process import build_cobre_supervised_dataset, build_projection_operator, make_train_test_split
+from src.utils.process import DatasetSplit, build_cobre_supervised_dataset, build_projection_operator, make_train_test_split
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -139,12 +140,108 @@ class CobreModelTests(unittest.TestCase):
 
         expected_output_dim = len(self.metadata["measured_output_columns"])
         self.assertEqual(prediction_result["projected_predictions"].shape, (8, expected_output_dim))
+        self.assertIn("projected_prediction_standard_errors", prediction_result)
+        self.assertEqual(prediction_result["projected_prediction_standard_errors"].shape, (8, expected_output_dim))
         summary = summarize_mass_balance_residuals(
             prediction_result["projected_fractional_predictions"].to_numpy(dtype=float),
             prediction_result["constraint_reference"].to_numpy(dtype=float),
             self.a_matrix,
         )
         self.assertLess(summary["constraint_max_abs"], 5e-7)
+
+    def test_rank_deficient_training_uses_bootstrap_uncertainty_in_auto_mode(self) -> None:
+        params = self._tiny_params()
+        dataset_splits = make_train_test_split(
+            self.cobre_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        result = run_cobre_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        coefficient_inference = result["model_bundle"]["coefficient_inference"]
+        self.assertEqual(coefficient_inference["method"], "bootstrap")
+        self.assertTrue(bool(coefficient_inference["rank_deficient"]))
+        self.assertIn("projected_prediction_standard_errors", result["test_report"])
+        self.assertIn("prediction_uncertainty_summary", result["test_report"])
+
+        effective_uncertainty = result["model_bundle"]["effective_coefficient_uncertainty"]
+        self.assertIn("W_u", effective_uncertainty)
+        self.assertTrue(np.all(np.asarray(effective_uncertainty["W_u"]["standard_error"], dtype=float) >= 0.0))
+
+    def test_rank_deficient_training_allows_forced_analytic_uncertainty(self) -> None:
+        params = self._tiny_params(uncertainty_method="analytic")
+        dataset_splits = make_train_test_split(
+            self.cobre_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        result = run_cobre_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        coefficient_inference = result["model_bundle"]["coefficient_inference"]
+        self.assertEqual(coefficient_inference["method"], "analytic")
+        self.assertTrue(bool(coefficient_inference["rank_deficient"]))
+        self.assertIsInstance(coefficient_inference["note"], str)
+        self.assertTrue(bool(coefficient_inference["note"]))
+        self.assertRegex(
+            str(coefficient_inference["note"]).lower(),
+            r"(rank|non-full-column-rank|not uniquely identifiable)",
+        )
+
+        prediction_metadata = result["test_report"]["uncertainty_metadata"].iloc[0].to_dict()
+        self.assertEqual(prediction_metadata["method"], "analytic")
+        self.assertEqual(prediction_metadata["note"], coefficient_inference["note"])
+        self.assertIn("projected_prediction_standard_errors", result["test_report"])
+        self.assertIn("prediction_uncertainty_summary", result["test_report"])
+
+    def test_full_rank_training_uses_analytic_uncertainty(self) -> None:
+        synthetic_train, synthetic_test, a_matrix, composition_matrix = self._make_full_rank_synthetic_splits()
+        params = self._tiny_params(bootstrap_samples=16)
+
+        result = run_cobre_pipeline(
+            synthetic_train,
+            synthetic_test,
+            a_matrix,
+            composition_matrix=composition_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        coefficient_inference = result["model_bundle"]["coefficient_inference"]
+        self.assertEqual(coefficient_inference["method"], "analytic")
+        self.assertFalse(bool(coefficient_inference["rank_deficient"]))
+        self.assertGreater(int(coefficient_inference["degrees_of_freedom"]), 0)
+
+        uncertainty_frame = result["test_report"]["projected_prediction_standard_errors"]
+        self.assertEqual(list(uncertainty_frame.columns), ["ProjectedSE_Out_Y1", "ProjectedSE_Out_Y2"])
+        self.assertTrue((uncertainty_frame.to_numpy(dtype=float) >= 0.0).all())
+
+        projected_predictions = result["test_report"]["projected_predictions"]
+        ci_lower = result["test_report"]["projected_prediction_confidence_interval_lower"]
+        ci_upper = result["test_report"]["projected_prediction_confidence_interval_upper"]
+        projected_values = projected_predictions.rename(columns=lambda value: str(value).removeprefix("Projected_"))
+        lower_values = ci_lower.rename(columns=lambda value: str(value).removeprefix("ProjectedCI95Lower_"))
+        upper_values = ci_upper.rename(columns=lambda value: str(value).removeprefix("ProjectedCI95Upper_"))
+        self.assertTrue((lower_values.to_numpy(dtype=float) <= projected_values.to_numpy(dtype=float)).all())
+        self.assertTrue((projected_values.to_numpy(dtype=float) <= upper_values.to_numpy(dtype=float)).all())
 
     def test_projected_ols_matches_explicit_kronecker_solution(self) -> None:
         params = self._tiny_params(ols_backend="numpy_lstsq")
@@ -244,7 +341,13 @@ class CobreModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertFalse(progress_factory.call_args.kwargs["enabled"])
 
-    def _tiny_params(self, *, ols_backend: str = "numpy_lstsq") -> dict[str, Any]:
+    def _tiny_params(
+        self,
+        *,
+        ols_backend: str = "numpy_lstsq",
+        bootstrap_samples: int = 32,
+        uncertainty_method: str = "auto",
+    ) -> dict[str, Any]:
         return copy.deepcopy(
             {
                 "hyperparameters": {
@@ -258,12 +361,56 @@ class CobreModelTests(unittest.TestCase):
                     "ols_backend": ols_backend,
                     "include_bias_term": True,
                     "lstsq_rcond": None,
+                    "uncertainty_method": uncertainty_method,
+                    "confidence_level": 0.95,
+                    "bootstrap_samples": bootstrap_samples,
+                    "bootstrap_random_seed": 11,
                 },
                 "artifact_options": {
                     "persist_model": True,
                     "persist_metrics": True,
                 },
             }
+        )
+
+    def _make_full_rank_synthetic_splits(self) -> tuple[DatasetSplit, DatasetSplit, np.ndarray, np.ndarray]:
+        random_generator = np.random.default_rng(17)
+        row_count = 40
+        features = pd.DataFrame(
+            {
+                "HRT": random_generator.uniform(2.0, 12.0, size=row_count),
+                "In_S1": random_generator.uniform(0.5, 4.0, size=row_count),
+            }
+        )
+        constraint_reference = features.loc[:, ["In_S1"]].rename(columns={"In_S1": "S1"})
+        composition_matrix = np.asarray([[1.0], [1.75]], dtype=float)
+        a_matrix = np.zeros((0, 1), dtype=float)
+        design_frame, _ = build_cobre_design_frame(
+            features,
+            list(constraint_reference.columns),
+            include_bias_term=True,
+        )
+        coefficient_matrix = random_generator.normal(loc=0.0, scale=0.2, size=(design_frame.shape[1], 2))
+        targets = pd.DataFrame(
+            design_frame.to_numpy(dtype=float) @ coefficient_matrix + random_generator.normal(0.0, 0.01, size=(row_count, 2)),
+            columns=["Out_Y1", "Out_Y2"],
+        )
+
+        train_indices = features.index[:32]
+        test_indices = features.index[32:]
+        return (
+            DatasetSplit(
+                features=features.loc[train_indices].copy(),
+                targets=targets.loc[train_indices].copy(),
+                constraint_reference=constraint_reference.loc[train_indices].copy(),
+            ),
+            DatasetSplit(
+                features=features.loc[test_indices].copy(),
+                targets=targets.loc[test_indices].copy(),
+                constraint_reference=constraint_reference.loc[test_indices].copy(),
+            ),
+            a_matrix,
+            composition_matrix,
         )
 
 
