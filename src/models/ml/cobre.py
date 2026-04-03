@@ -17,10 +17,15 @@ from src.utils.process import (
     build_cobre_supervised_dataset,
     build_projection_operator,
     fit_scalers,
+    project_to_nonnegative_feasible_set,
     transform_dataset_split,
 )
 from src.utils.simulation import load_model_params
-from src.utils.test import evaluate_cobre_prediction_bundle
+from src.utils.test import (
+    build_cobre_projection_stage_frame,
+    build_cobre_projection_stage_summary,
+    evaluate_cobre_prediction_bundle,
+)
 from src.utils.train import (
     load_model_bundle,
     persist_training_artifacts,
@@ -36,10 +41,24 @@ VALID_OLS_BACKENDS = {"numpy_lstsq"}
 DEFAULT_CONFIDENCE_LEVEL = 0.95
 DEFAULT_UNCERTAINTY_METHOD = "auto"
 DEFAULT_BOOTSTRAP_SAMPLES = 200
+DEFAULT_PROJECTION_SOLVER = "osqp"
+DEFAULT_CONSTRAINT_TOLERANCE = 1e-8
+DEFAULT_NONNEGATIVITY_TOLERANCE = 1e-10
+DEFAULT_OSQP_EPS_ABS = 1e-8
+DEFAULT_OSQP_EPS_REL = 1e-8
+DEFAULT_OSQP_MAX_ITER = 10000
+DEFAULT_OSQP_POLISH = True
+DEFAULT_OSQP_VERBOSE = False
+DEFAULT_OSQP_WARM_START = True
+VALID_PROJECTION_SOLVERS = {"osqp"}
 RANK_DEFICIENT_ANALYTIC_NOTE = (
     "Analytic coefficient intervals were computed with a non-full-column-rank design matrix; "
     "the original design-basis coefficients are not uniquely identifiable coefficientwise, "
     "so interpret these intervals with caution."
+)
+AFFINE_CORE_PREDICTION_UNCERTAINTY_NOTE = (
+    "Prediction uncertainty describes the affine measured-space core only and is not an exact "
+    "interval for the final nonnegative deployed predictor when the OSQP correction is active."
 )
 
 
@@ -114,6 +133,38 @@ def _resolve_bootstrap_samples(model_hyperparameters: Mapping[str, Any]) -> int:
 
 def _resolve_bootstrap_random_seed(model_hyperparameters: Mapping[str, Any]) -> int:
     return int(model_hyperparameters.get("bootstrap_random_seed", model_hyperparameters.get("random_seed", 42)))
+
+
+def _resolve_projection_settings(model_hyperparameters: Mapping[str, Any]) -> dict[str, Any]:
+    solver_name = str(model_hyperparameters.get("projection_solver", DEFAULT_PROJECTION_SOLVER)).strip().lower()
+    if solver_name not in VALID_PROJECTION_SOLVERS:
+        valid_values = ", ".join(sorted(VALID_PROJECTION_SOLVERS))
+        raise ValueError(f"COBRE projection_solver must be one of: {valid_values}.")
+
+    settings = {
+        "projection_solver": solver_name,
+        "constraint_tolerance": float(
+            model_hyperparameters.get("constraint_tolerance", DEFAULT_CONSTRAINT_TOLERANCE)
+        ),
+        "nonnegativity_tolerance": float(
+            model_hyperparameters.get("nonnegativity_tolerance", DEFAULT_NONNEGATIVITY_TOLERANCE)
+        ),
+        "osqp_eps_abs": float(model_hyperparameters.get("osqp_eps_abs", DEFAULT_OSQP_EPS_ABS)),
+        "osqp_eps_rel": float(model_hyperparameters.get("osqp_eps_rel", DEFAULT_OSQP_EPS_REL)),
+        "osqp_max_iter": int(model_hyperparameters.get("osqp_max_iter", DEFAULT_OSQP_MAX_ITER)),
+        "osqp_polish": bool(model_hyperparameters.get("osqp_polish", DEFAULT_OSQP_POLISH)),
+        "osqp_verbose": bool(model_hyperparameters.get("osqp_verbose", DEFAULT_OSQP_VERBOSE)),
+        "osqp_warm_start": bool(model_hyperparameters.get("osqp_warm_start", DEFAULT_OSQP_WARM_START)),
+    }
+    if settings["constraint_tolerance"] <= 0.0:
+        raise ValueError("COBRE constraint_tolerance must be positive.")
+    if settings["nonnegativity_tolerance"] <= 0.0:
+        raise ValueError("COBRE nonnegativity_tolerance must be positive.")
+    if settings["osqp_eps_abs"] <= 0.0 or settings["osqp_eps_rel"] <= 0.0:
+        raise ValueError("COBRE OSQP tolerances must be positive.")
+    if settings["osqp_max_iter"] < 1:
+        raise ValueError("COBRE osqp_max_iter must be at least 1.")
+    return settings
 
 
 def _should_use_bootstrap_inference(
@@ -607,7 +658,7 @@ def _compute_prediction_uncertainty_from_bundle(
 
     design_matrix = design_frame.to_numpy(dtype=float)
     effective_parameter_matrix = np.asarray(model_bundle["effective_parameter_matrix"], dtype=float)
-    projected_predictions = design_matrix @ effective_parameter_matrix
+    affine_core_predictions = design_matrix @ effective_parameter_matrix
     confidence_level = float(coefficient_inference["confidence_level"])
     lower_quantile = 0.5 * (1.0 - confidence_level)
     upper_quantile = 1.0 - lower_quantile
@@ -623,12 +674,12 @@ def _compute_prediction_uncertainty_from_bundle(
         mean_standard_errors = np.sqrt(np.outer(leverage, output_variances))
         prediction_standard_errors = np.sqrt(np.outer(1.0 + leverage, output_variances))
         mean_ci_lower, mean_ci_upper = _compute_interval_bounds(
-            projected_predictions,
+            affine_core_predictions,
             mean_standard_errors,
             critical_value=critical_value,
         )
         prediction_interval_lower, prediction_interval_upper = _compute_interval_bounds(
-            projected_predictions,
+            affine_core_predictions,
             prediction_standard_errors,
             critical_value=critical_value,
         )
@@ -658,18 +709,20 @@ def _compute_prediction_uncertainty_from_bundle(
             "method": method_name,
             "confidence_level": confidence_level,
             "coefficient_target": str(coefficient_inference["coefficient_target"]),
+            "prediction_target": "affine_core_measured_prediction",
             "rank_deficient": bool(coefficient_inference["rank_deficient"]),
             "design_rank": int(coefficient_inference["design_rank"]),
             "design_dimension": int(coefficient_inference["design_dimension"]),
             "degrees_of_freedom": coefficient_inference["degrees_of_freedom"],
             "note": coefficient_inference.get("note"),
+            "deployment_note": AFFINE_CORE_PREDICTION_UNCERTAINTY_NOTE,
         },
-        "projected_prediction_standard_errors": mean_standard_errors,
-        "projected_prediction_confidence_interval_lower": mean_ci_lower,
-        "projected_prediction_confidence_interval_upper": mean_ci_upper,
-        "projected_prediction_interval_lower": prediction_interval_lower,
-        "projected_prediction_interval_upper": prediction_interval_upper,
-        "projected_prediction_interval_standard_errors": prediction_standard_errors,
+        "affine_core_prediction_standard_errors": mean_standard_errors,
+        "affine_core_prediction_confidence_interval_lower": mean_ci_lower,
+        "affine_core_prediction_confidence_interval_upper": mean_ci_upper,
+        "affine_core_prediction_interval_lower": prediction_interval_lower,
+        "affine_core_prediction_interval_upper": prediction_interval_upper,
+        "affine_core_prediction_interval_standard_errors": prediction_standard_errors,
         "prediction_uncertainty_summary": _compute_prediction_summary_frame(
             target_columns,
             mean_standard_errors=mean_standard_errors,
@@ -756,7 +809,7 @@ def _build_model_bundle(
     training_options: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
-        "model_bundle_schema_version": 2,
+        "model_bundle_schema_version": 3,
         "model_name": MODEL_NAME,
         "feature_columns": feature_columns,
         "target_columns": target_columns,
@@ -767,17 +820,21 @@ def _build_model_bundle(
         "projection_complement": np.asarray(training_result["projection_complement"], dtype=float),
         "collapse_operator": np.asarray(training_result["collapse_operator"], dtype=float),
         "pass_through_operator": np.asarray(training_result["pass_through_operator"], dtype=float),
+        "projection_settings": dict(training_result["projection_settings"]),
         "design_schema": dict(training_result["design_schema"]),
         "raw_parameter_matrix": np.asarray(training_result["raw_parameter_matrix"], dtype=float),
         "identifiable_parameter_matrix": np.asarray(training_result["identifiable_parameter_matrix"], dtype=float),
         "raw_measured_parameter_matrix": np.asarray(training_result["raw_measured_parameter_matrix"], dtype=float),
         "effective_parameter_matrix": np.asarray(training_result["effective_parameter_matrix"], dtype=float),
+        "affine_core_parameter_matrix": np.asarray(training_result["effective_parameter_matrix"], dtype=float),
         "raw_coefficients": dict(training_result["raw_coefficients"]),
         "identifiable_coefficients": dict(training_result["identifiable_coefficients"]),
         "effective_coefficients": dict(training_result["effective_coefficients"]),
+        "affine_core_coefficients": dict(training_result["effective_coefficients"]),
         "coefficient_inference": dict(training_result["coefficient_inference"]),
         "identifiable_coefficient_uncertainty": dict(training_result["identifiable_coefficient_uncertainty"]),
         "effective_coefficient_uncertainty": dict(training_result["effective_coefficient_uncertainty"]),
+        "affine_core_coefficient_uncertainty": dict(training_result["effective_coefficient_uncertainty"]),
         "fit_residuals": np.asarray(training_result["fit_residuals"], dtype=float),
         "ols_metadata": dict(training_result["ols_metadata"]),
         "scaling_bundle": scaling_bundle,
@@ -803,19 +860,38 @@ def _predict_from_bundle(
     )
 
     raw_fractional_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["raw_parameter_matrix"])
-    projected_fractional_predictions = raw_fractional_predictions @ np.asarray(
-        model_bundle["projection_complement"],
-        dtype=float,
-    ).T + selected_constraint_reference.to_numpy(dtype=float) @ np.asarray(model_bundle["projection_matrix"], dtype=float).T
+    projection_settings = dict(
+        model_bundle.get(
+            "projection_settings",
+            _resolve_projection_settings(model_bundle.get("model_hyperparameters", {})),
+        )
+    )
+    projection_details = project_to_nonnegative_feasible_set(
+        raw_fractional_predictions,
+        selected_constraint_reference.to_numpy(dtype=float),
+        np.asarray(model_bundle["A_matrix"], dtype=float),
+        projection_operator=np.asarray(model_bundle["projection_matrix"], dtype=float),
+        projection_complement=np.asarray(model_bundle["projection_complement"], dtype=float),
+        **projection_settings,
+    )
+    affine_fractional_predictions = np.asarray(projection_details["affine_predictions"], dtype=float)
+    projected_fractional_predictions = np.asarray(projection_details["projected_predictions"], dtype=float)
     raw_measured_predictions = raw_fractional_predictions @ np.asarray(model_bundle["composition_matrix"], dtype=float).T
-    projected_measured_predictions = _predict_with_parameter_matrix(design_frame, model_bundle["effective_parameter_matrix"])
+    affine_measured_predictions = affine_fractional_predictions @ np.asarray(model_bundle["composition_matrix"], dtype=float).T
+    projected_measured_predictions = projected_fractional_predictions @ np.asarray(
+        model_bundle["composition_matrix"],
+        dtype=float,
+    ).T
     prediction_result = {
         "design_frame": design_frame,
         "raw_measured_predictions": raw_measured_predictions,
+        "affine_measured_predictions": affine_measured_predictions,
         "projected_measured_predictions": projected_measured_predictions,
         "raw_fractional_predictions": raw_fractional_predictions,
+        "affine_fractional_predictions": affine_fractional_predictions,
         "projected_fractional_predictions": projected_fractional_predictions,
         "constraint_reference": selected_constraint_reference,
+        "projection_details": projection_details,
     }
     prediction_uncertainty = _compute_prediction_uncertainty_from_bundle(
         design_frame,
@@ -839,6 +915,7 @@ def train_cobre_model(
 
     _validate_scaling_configuration(model_hyperparameters)
     confidence_level = _resolve_confidence_level(model_hyperparameters)
+    projection_settings = _resolve_projection_settings(model_hyperparameters)
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
@@ -935,9 +1012,26 @@ def train_cobre_model(
 
         progress_bar.set_postfix(stage="predict", objective=str(options["objective_name"]))
         training_raw_fractional_predictions = _predict_with_parameter_matrix(design_frame, raw_parameter_matrix)
-        training_projected_fractional_predictions = training_raw_fractional_predictions @ projection_complement.T + constraint_frame.to_numpy(dtype=float) @ projection_matrix.T
+        training_projection_details = project_to_nonnegative_feasible_set(
+            training_raw_fractional_predictions,
+            constraint_frame.to_numpy(dtype=float),
+            np.asarray(A_matrix, dtype=float),
+            projection_operator=projection_matrix,
+            projection_complement=projection_complement,
+            **projection_settings,
+        )
+        training_affine_fractional_predictions = np.asarray(
+            training_projection_details["affine_predictions"],
+            dtype=float,
+        )
+        training_projected_fractional_predictions = np.asarray(
+            training_projection_details["projected_predictions"],
+            dtype=float,
+        )
         training_raw_predictions = training_raw_fractional_predictions @ composition_array.T
+        training_affine_predictions = training_affine_fractional_predictions @ composition_array.T
         training_projected_predictions = training_projected_fractional_predictions @ composition_array.T
+        train_affine_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_affine_predictions) ** 2))
         train_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_projected_predictions) ** 2))
         progress_bar.set_postfix(
             stage="predict",
@@ -954,6 +1048,7 @@ def train_cobre_model(
         "projection_complement": projection_complement,
         "collapse_operator": collapse_operator,
         "pass_through_operator": pass_through_operator,
+        "projection_settings": projection_settings,
         "raw_parameter_matrix": raw_parameter_matrix,
         "identifiable_parameter_matrix": identifiable_parameter_matrix,
         "raw_measured_parameter_matrix": raw_measured_parameter_matrix,
@@ -969,6 +1064,11 @@ def train_cobre_model(
             index=target_frame.index,
             columns=target_frame.columns,
         ),
+        "training_affine_predictions": pd.DataFrame(
+            training_affine_predictions,
+            index=target_frame.index,
+            columns=target_frame.columns,
+        ),
         "training_projected_predictions": pd.DataFrame(
             training_projected_predictions,
             index=target_frame.index,
@@ -979,12 +1079,19 @@ def train_cobre_model(
             index=constraint_frame.index,
             columns=constraint_frame.columns,
         ),
+        "training_affine_fractional_predictions": pd.DataFrame(
+            training_affine_fractional_predictions,
+            index=constraint_frame.index,
+            columns=constraint_frame.columns,
+        ),
         "training_projected_fractional_predictions": pd.DataFrame(
             training_projected_fractional_predictions,
             index=constraint_frame.index,
             columns=constraint_frame.columns,
         ),
+        "training_affine_mse": train_affine_mse,
         "training_mse": train_mse,
+        "training_projection_details": training_projection_details,
         "fit_residuals": fit_residual_matrix,
         "design_residuals": np.asarray(solve_result["design_residuals"], dtype=float),
         "design_rank": int(solve_result["design_rank"]),
@@ -1038,6 +1145,11 @@ def predict_cobre_model(
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
+        "affine_predictions": pd.DataFrame(
+            prediction_payload["affine_measured_predictions"],
+            index=feature_frame.index,
+            columns=model_bundle["target_columns"],
+        ),
         "projected_predictions": pd.DataFrame(
             prediction_payload["projected_measured_predictions"],
             index=feature_frame.index,
@@ -1048,12 +1160,22 @@ def predict_cobre_model(
             index=feature_frame.index,
             columns=model_bundle["constraint_columns"],
         ),
+        "affine_fractional_predictions": pd.DataFrame(
+            prediction_payload["affine_fractional_predictions"],
+            index=feature_frame.index,
+            columns=model_bundle["constraint_columns"],
+        ),
         "projected_fractional_predictions": pd.DataFrame(
             prediction_payload["projected_fractional_predictions"],
             index=feature_frame.index,
             columns=model_bundle["constraint_columns"],
         ),
         "constraint_reference": prediction_payload["constraint_reference"],
+        "projection_stage_diagnostics": build_cobre_projection_stage_frame(
+            prediction_payload["projection_details"],
+            index=feature_frame.index,
+        ),
+        "projection_stage_summary": build_cobre_projection_stage_summary(prediction_payload["projection_details"]),
     }
 
     prediction_uncertainty = prediction_payload.get("prediction_uncertainty")
@@ -1061,33 +1183,33 @@ def predict_cobre_model(
         result.update(
             {
                 "prediction_uncertainty_metadata": dict(prediction_uncertainty["metadata"]),
-                "projected_prediction_standard_errors": pd.DataFrame(
-                    prediction_uncertainty["projected_prediction_standard_errors"],
+                "affine_core_prediction_standard_errors": pd.DataFrame(
+                    prediction_uncertainty["affine_core_prediction_standard_errors"],
                     index=feature_frame.index,
                     columns=model_bundle["target_columns"],
                 ),
-                "projected_prediction_confidence_interval_lower": pd.DataFrame(
-                    prediction_uncertainty["projected_prediction_confidence_interval_lower"],
+                "affine_core_prediction_confidence_interval_lower": pd.DataFrame(
+                    prediction_uncertainty["affine_core_prediction_confidence_interval_lower"],
                     index=feature_frame.index,
                     columns=model_bundle["target_columns"],
                 ),
-                "projected_prediction_confidence_interval_upper": pd.DataFrame(
-                    prediction_uncertainty["projected_prediction_confidence_interval_upper"],
+                "affine_core_prediction_confidence_interval_upper": pd.DataFrame(
+                    prediction_uncertainty["affine_core_prediction_confidence_interval_upper"],
                     index=feature_frame.index,
                     columns=model_bundle["target_columns"],
                 ),
-                "projected_prediction_interval_lower": pd.DataFrame(
-                    prediction_uncertainty["projected_prediction_interval_lower"],
+                "affine_core_prediction_interval_lower": pd.DataFrame(
+                    prediction_uncertainty["affine_core_prediction_interval_lower"],
                     index=feature_frame.index,
                     columns=model_bundle["target_columns"],
                 ),
-                "projected_prediction_interval_upper": pd.DataFrame(
-                    prediction_uncertainty["projected_prediction_interval_upper"],
+                "affine_core_prediction_interval_upper": pd.DataFrame(
+                    prediction_uncertainty["affine_core_prediction_interval_upper"],
                     index=feature_frame.index,
                     columns=model_bundle["target_columns"],
                 ),
-                "projected_prediction_interval_standard_errors": pd.DataFrame(
-                    prediction_uncertainty["projected_prediction_interval_standard_errors"],
+                "affine_core_prediction_interval_standard_errors": pd.DataFrame(
+                    prediction_uncertainty["affine_core_prediction_interval_standard_errors"],
                     index=feature_frame.index,
                     columns=model_bundle["target_columns"],
                 ),
@@ -1190,6 +1312,7 @@ def run_cobre_pipeline(
         train_report = evaluate_cobre_prediction_bundle(
             training_split.targets.to_numpy(dtype=float),
             train_prediction_payload["raw_fractional_predictions"],
+            train_prediction_payload["affine_fractional_predictions"],
             train_prediction_payload["projected_fractional_predictions"],
             train_prediction_payload["constraint_reference"].to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
@@ -1198,10 +1321,12 @@ def run_cobre_pipeline(
             training_split.constraint_reference.columns,
             index=training_split.targets.index,
             prediction_uncertainty=train_prediction_payload.get("prediction_uncertainty"),
+            projection_details=train_prediction_payload.get("projection_details"),
         )
         test_report = evaluate_cobre_prediction_bundle(
             test_split.targets.to_numpy(dtype=float),
             test_prediction_payload["raw_fractional_predictions"],
+            test_prediction_payload["affine_fractional_predictions"],
             test_prediction_payload["projected_fractional_predictions"],
             test_prediction_payload["constraint_reference"].to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
@@ -1210,6 +1335,7 @@ def run_cobre_pipeline(
             test_split.constraint_reference.columns,
             index=test_split.targets.index,
             prediction_uncertainty=test_prediction_payload.get("prediction_uncertainty"),
+            projection_details=test_prediction_payload.get("projection_details"),
         )
         progress_bar.update(1)
 

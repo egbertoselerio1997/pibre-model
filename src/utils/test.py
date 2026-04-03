@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -99,6 +99,84 @@ def _build_constraint_diagnostic_summary(
             {"diagnostic_name": diagnostic_name, "prediction_type": "projected", **projected_summary},
         ]
     )
+
+
+def _build_constraint_diagnostic_summary_for_prediction_types(
+    predictions_by_type: Mapping[str, np.ndarray],
+    constraint_reference: np.ndarray,
+    A_matrix: np.ndarray,
+    *,
+    diagnostic_name: str,
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "diagnostic_name": diagnostic_name,
+                "prediction_type": str(prediction_type),
+                **summarize_mass_balance_residuals(prediction_values, constraint_reference, A_matrix),
+            }
+            for prediction_type, prediction_values in predictions_by_type.items()
+        ]
+    )
+
+
+def build_cobre_projection_stage_frame(
+    projection_details: Mapping[str, Any],
+    *,
+    index: pd.Index | None = None,
+) -> pd.DataFrame:
+    """Convert staged COBRE projection details into a row-aligned dataframe."""
+
+    return pd.DataFrame(
+        {
+            "projection_stage": np.asarray(projection_details["projection_stage"], dtype=object),
+            "raw_feasible": np.asarray(projection_details["raw_feasible_mask"], dtype=bool),
+            "affine_feasible": np.asarray(projection_details["affine_feasible_mask"], dtype=bool),
+            "qp_active": np.asarray(projection_details["qp_active_mask"], dtype=bool),
+            "solver_status": np.asarray(projection_details["solver_status"], dtype=object),
+            "solver_iterations": np.asarray(projection_details["solver_iterations"], dtype=int),
+            "raw_constraint_max_abs": np.asarray(projection_details["raw_constraint_max_abs"], dtype=float),
+            "affine_constraint_max_abs": np.asarray(projection_details["affine_constraint_max_abs"], dtype=float),
+            "projected_constraint_max_abs": np.asarray(
+                projection_details["projected_constraint_max_abs"],
+                dtype=float,
+            ),
+            "raw_min_component": np.asarray(projection_details["raw_min_component"], dtype=float),
+            "affine_min_component": np.asarray(projection_details["affine_min_component"], dtype=float),
+            "projected_min_component": np.asarray(projection_details["projected_min_component"], dtype=float),
+        },
+        index=index,
+    )
+
+
+def build_cobre_projection_stage_summary(
+    projection_details: Mapping[str, Any],
+) -> pd.DataFrame:
+    """Summarize how often each staged COBRE correction path is used."""
+
+    stage_frame = build_cobre_projection_stage_frame(projection_details)
+    total_samples = int(len(stage_frame))
+    summary = (
+        stage_frame.groupby("projection_stage", dropna=False)
+        .agg(
+            sample_count=("projection_stage", "size"),
+            qp_active_count=("qp_active", "sum"),
+            mean_solver_iterations=("solver_iterations", "mean"),
+            max_solver_iterations=("solver_iterations", "max"),
+            minimum_projected_component=("projected_min_component", "min"),
+        )
+        .reset_index()
+    )
+    summary["sample_share_pct"] = np.where(
+        total_samples > 0,
+        100.0 * summary["sample_count"] / float(total_samples),
+        0.0,
+    )
+    stage_order = {"raw_feasible": 0, "affine_feasible": 1, "qp_corrected": 2, "orthant_clip": 3}
+    return summary.sort_values(
+        by="projection_stage",
+        key=lambda series: series.map(stage_order).fillna(len(stage_order)),
+    ).reset_index(drop=True)
 
 
 def build_prediction_frame(
@@ -214,6 +292,7 @@ def evaluate_prediction_bundle(
 def evaluate_cobre_prediction_bundle(
     y_true_measured: np.ndarray,
     raw_fractional_predictions: np.ndarray,
+    affine_fractional_predictions: np.ndarray,
     projected_fractional_predictions: np.ndarray,
     constraint_reference: np.ndarray,
     A_matrix: np.ndarray,
@@ -223,6 +302,7 @@ def evaluate_cobre_prediction_bundle(
     *,
     index: pd.Index | None = None,
     prediction_uncertainty: dict[str, Any] | None = None,
+    projection_details: Mapping[str, Any] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Assemble COBRE reports with measured-space metrics and fractional-space constraints."""
 
@@ -230,16 +310,20 @@ def evaluate_cobre_prediction_bundle(
     state_column_list = list(state_columns)
     composition_array = np.asarray(composition_matrix, dtype=float)
     raw_fractional_array = np.asarray(raw_fractional_predictions, dtype=float)
+    affine_fractional_array = np.asarray(affine_fractional_predictions, dtype=float)
     projected_fractional_array = np.asarray(projected_fractional_predictions, dtype=float)
     raw_measured_predictions = raw_fractional_array @ composition_array.T
+    affine_measured_predictions = affine_fractional_array @ composition_array.T
     projected_measured_predictions = projected_fractional_array @ composition_array.T
 
     raw_metrics = compute_regression_metrics(y_true_measured, raw_measured_predictions)
+    affine_metrics = compute_regression_metrics(y_true_measured, affine_measured_predictions)
     projected_metrics = compute_regression_metrics(y_true_measured, projected_measured_predictions)
 
     aggregate_report = pd.DataFrame(
         [
             {"prediction_type": "raw", **raw_metrics},
+            {"prediction_type": "affine", **affine_metrics},
             {"prediction_type": "projected", **projected_metrics},
         ]
     )
@@ -249,6 +333,11 @@ def evaluate_cobre_prediction_bundle(
         raw_measured_predictions,
         target_column_list,
     ).rename(columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
+    affine_per_target = compute_per_target_metrics(
+        y_true_measured,
+        affine_measured_predictions,
+        target_column_list,
+    ).rename(columns={metric_name: f"affine_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
     projected_per_target = compute_per_target_metrics(
         y_true_measured,
         projected_measured_predictions,
@@ -256,9 +345,14 @@ def evaluate_cobre_prediction_bundle(
     ).rename(
         columns={metric_name: f"projected_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
     )
-    per_target_report = raw_per_target.merge(projected_per_target, on="target", how="inner")
+    per_target_report = raw_per_target.merge(affine_per_target, on="target", how="inner").merge(
+        projected_per_target,
+        on="target",
+        how="inner",
+    )
 
     raw_residuals = compute_mass_balance_residuals(raw_fractional_array, constraint_reference, A_matrix)
+    affine_residuals = compute_mass_balance_residuals(affine_fractional_array, constraint_reference, A_matrix)
     projected_residuals = compute_mass_balance_residuals(
         projected_fractional_array,
         constraint_reference,
@@ -267,44 +361,105 @@ def evaluate_cobre_prediction_bundle(
     residual_report = pd.DataFrame(
         {
             "raw_constraint_l2": np.linalg.norm(raw_residuals, axis=1),
+            "affine_constraint_l2": np.linalg.norm(affine_residuals, axis=1),
             "projected_constraint_l2": np.linalg.norm(projected_residuals, axis=1),
         },
         index=index,
+    )
+    measured_raw_to_affine_adjustments = _compute_projection_adjustment_frame(
+        raw_measured_predictions,
+        affine_measured_predictions,
+        index=index,
+        prefix="measured_raw_to_affine",
+    )
+    measured_affine_to_projected_adjustments = _compute_projection_adjustment_frame(
+        affine_measured_predictions,
+        projected_measured_predictions,
+        index=index,
+        prefix="measured_affine_to_projected",
     )
     measured_projection_adjustments = _compute_projection_adjustment_frame(
         raw_measured_predictions,
         projected_measured_predictions,
         index=index,
-        prefix="measured",
+        prefix="measured_raw_to_projected",
+    )
+    fractional_raw_to_affine_adjustments = _compute_projection_adjustment_frame(
+        raw_fractional_array,
+        affine_fractional_array,
+        index=index,
+        prefix="fractional_raw_to_affine",
+    )
+    fractional_affine_to_projected_adjustments = _compute_projection_adjustment_frame(
+        affine_fractional_array,
+        projected_fractional_array,
+        index=index,
+        prefix="fractional_affine_to_projected",
     )
     fractional_projection_adjustments = _compute_projection_adjustment_frame(
         raw_fractional_array,
         projected_fractional_array,
         index=index,
-        prefix="fractional",
+        prefix="fractional_raw_to_projected",
     )
     projection_adjustments = pd.concat(
-        [measured_projection_adjustments, fractional_projection_adjustments],
+        [
+            measured_raw_to_affine_adjustments,
+            measured_affine_to_projected_adjustments,
+            measured_projection_adjustments,
+            fractional_raw_to_affine_adjustments,
+            fractional_affine_to_projected_adjustments,
+            fractional_projection_adjustments,
+        ],
         axis=1,
     )
+    projection_stage_summary = None
+    if projection_details is not None:
+        projection_stage_frame = build_cobre_projection_stage_frame(projection_details, index=index)
+        projection_adjustments = pd.concat([projection_adjustments, projection_stage_frame], axis=1)
+        projection_stage_summary = build_cobre_projection_stage_summary(projection_details)
+
     diagnostic_summary = pd.concat(
         [
-            _build_constraint_diagnostic_summary(
-                raw_fractional_array,
-                projected_fractional_array,
+            _build_constraint_diagnostic_summary_for_prediction_types(
+                {
+                    "raw": raw_fractional_array,
+                    "affine": affine_fractional_array,
+                    "projected": projected_fractional_array,
+                },
                 constraint_reference,
                 A_matrix,
                 diagnostic_name="fractional_constraint_residual",
             ),
             _summarize_projection_adjustments(
                 raw_measured_predictions,
+                affine_measured_predictions,
+                diagnostic_name="measured_raw_to_affine_adjustment",
+            ),
+            _summarize_projection_adjustments(
+                affine_measured_predictions,
                 projected_measured_predictions,
-                diagnostic_name="measured_projection_adjustment",
+                diagnostic_name="measured_affine_to_projected_adjustment",
+            ),
+            _summarize_projection_adjustments(
+                raw_measured_predictions,
+                projected_measured_predictions,
+                diagnostic_name="measured_raw_to_projected_adjustment",
+            ),
+            _summarize_projection_adjustments(
+                raw_fractional_array,
+                affine_fractional_array,
+                diagnostic_name="fractional_raw_to_affine_adjustment",
+            ),
+            _summarize_projection_adjustments(
+                affine_fractional_array,
+                projected_fractional_array,
+                diagnostic_name="fractional_affine_to_projected_adjustment",
             ),
             _summarize_projection_adjustments(
                 raw_fractional_array,
                 projected_fractional_array,
-                diagnostic_name="fractional_projection_adjustment",
+                diagnostic_name="fractional_raw_to_projected_adjustment",
             ),
         ],
         ignore_index=True,
@@ -316,9 +471,9 @@ def evaluate_cobre_prediction_bundle(
             comparison_target_space="measured",
             constraint_space="fractional",
             direct_comparison_scope="measured_output_metrics_only",
-            diagnostic_scope="model_native_fractional_space_diagnostics",
+            diagnostic_scope="model_native_fractional_space_nonnegative_qp_diagnostics",
             projection_active=True,
-            constraint_status="active",
+            constraint_status="active_nonnegative_qp",
         ),
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,
@@ -327,6 +482,12 @@ def evaluate_cobre_prediction_bundle(
             target_column_list,
             index=index,
             prefix="Raw_",
+        ),
+        "affine_predictions": build_prediction_frame(
+            affine_measured_predictions,
+            target_column_list,
+            index=index,
+            prefix="Affine_",
         ),
         "projected_predictions": build_prediction_frame(
             projected_measured_predictions,
@@ -340,6 +501,12 @@ def evaluate_cobre_prediction_bundle(
             index=index,
             prefix="RawFractional_",
         ),
+        "affine_fractional_predictions": build_prediction_frame(
+            affine_fractional_array,
+            state_column_list,
+            index=index,
+            prefix="AffineFractional_",
+        ),
         "projected_fractional_predictions": build_prediction_frame(
             projected_fractional_array,
             state_column_list,
@@ -350,48 +517,56 @@ def evaluate_cobre_prediction_bundle(
         "projection_diagnostics": projection_adjustments,
         "constraint_residuals": residual_report,
     }
+    if projection_stage_summary is not None:
+        report["projection_stage_summary"] = projection_stage_summary
 
     if prediction_uncertainty is not None:
         report["uncertainty_metadata"] = pd.DataFrame([dict(prediction_uncertainty["metadata"])])
-        report["projected_prediction_standard_errors"] = build_prediction_frame(
-            prediction_uncertainty["projected_prediction_standard_errors"],
+        report["affine_core_prediction_standard_errors"] = build_prediction_frame(
+            prediction_uncertainty["affine_core_prediction_standard_errors"],
             target_column_list,
             index=index,
-            prefix="ProjectedSE_",
+            prefix="AffineCoreSE_",
         )
-        report["projected_prediction_confidence_interval_lower"] = build_prediction_frame(
-            prediction_uncertainty["projected_prediction_confidence_interval_lower"],
+        report["affine_core_prediction_confidence_interval_lower"] = build_prediction_frame(
+            prediction_uncertainty["affine_core_prediction_confidence_interval_lower"],
             target_column_list,
             index=index,
-            prefix="ProjectedCI95Lower_",
+            prefix="AffineCoreCI95Lower_",
         )
-        report["projected_prediction_confidence_interval_upper"] = build_prediction_frame(
-            prediction_uncertainty["projected_prediction_confidence_interval_upper"],
+        report["affine_core_prediction_confidence_interval_upper"] = build_prediction_frame(
+            prediction_uncertainty["affine_core_prediction_confidence_interval_upper"],
             target_column_list,
             index=index,
-            prefix="ProjectedCI95Upper_",
+            prefix="AffineCoreCI95Upper_",
         )
-        report["projected_prediction_interval_lower"] = build_prediction_frame(
-            prediction_uncertainty["projected_prediction_interval_lower"],
+        report["affine_core_prediction_interval_lower"] = build_prediction_frame(
+            prediction_uncertainty["affine_core_prediction_interval_lower"],
             target_column_list,
             index=index,
-            prefix="ProjectedPI95Lower_",
+            prefix="AffineCorePI95Lower_",
         )
-        report["projected_prediction_interval_upper"] = build_prediction_frame(
-            prediction_uncertainty["projected_prediction_interval_upper"],
+        report["affine_core_prediction_interval_upper"] = build_prediction_frame(
+            prediction_uncertainty["affine_core_prediction_interval_upper"],
             target_column_list,
             index=index,
-            prefix="ProjectedPI95Upper_",
+            prefix="AffineCorePI95Upper_",
         )
-        report["projected_prediction_interval_standard_errors"] = build_prediction_frame(
-            prediction_uncertainty["projected_prediction_interval_standard_errors"],
+        report["affine_core_prediction_interval_standard_errors"] = build_prediction_frame(
+            prediction_uncertainty["affine_core_prediction_interval_standard_errors"],
             target_column_list,
             index=index,
-            prefix="ProjectedPISE_",
+            prefix="AffineCorePISE_",
         )
         report["prediction_uncertainty_summary"] = prediction_uncertainty["prediction_uncertainty_summary"].copy()
 
     return report
 
 
-__all__ = ["build_prediction_frame", "evaluate_cobre_prediction_bundle", "evaluate_prediction_bundle"]
+__all__ = [
+    "build_cobre_projection_stage_frame",
+    "build_cobre_projection_stage_summary",
+    "build_prediction_frame",
+    "evaluate_cobre_prediction_bundle",
+    "evaluate_prediction_bundle",
+]

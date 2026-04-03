@@ -112,13 +112,27 @@ $$
 
 ### 5.2 Projection space
 
-The fractional physically admissible state is:
+The fractional correction is staged rather than purely affine.
+
+The affine invariant reference state is:
 
 $$
-C^* = P_{\perp} C_{raw} + P C_{in}
+C_{aff} = P_{\perp} C_{raw} + P C_{in}
 $$
 
 with $A = A_{frac}$.
+
+If $C_{raw}$ already satisfies the invariant equalities and non-negativity, the repository keeps $C_{raw}$ directly.
+
+If $C_{aff}$ is also non-negative, the repository keeps $C_{aff}$ directly.
+
+Only when the affine reference state still violates componentwise non-negativity does the repository solve the final reduced quadratic program with OSQP:
+
+$$
+C^* = \operatorname{Proj}_{\{C : A C = A C_{in},\; C \ge 0\}}(C_{raw})
+$$
+
+The affine projector therefore remains part of the implementation, but it is now the reference stage and inactive-constraint special case rather than the universal deployed solution.
 
 ### 5.3 Measured-output collapse
 
@@ -128,7 +142,13 @@ $$
 C_{comp}^* = I_{comp} C^*
 $$
 
-so the training objective is built in measured-output space even though the raw model and the constraints live in fractional space.
+The repository also retains the affine measured-space core
+
+$$
+C_{comp,aff} = I_{comp} C_{aff}
+$$
+
+because the least-squares training objective is still built on that affine measured-space relation even though the raw model and the constraints live in fractional space.
 
 ### 5.4 Implemented transformed target
 
@@ -139,6 +159,8 @@ $$
 $$
 
 The repository then solves the analytically collapsed least-squares problem without explicitly building the large Kronecker matrix during normal training.
+
+That affine-core fit is followed at prediction time by the staged raw or affine or OSQP deployment logic described above.
 
 ## 6. Reporting differences between the model families
 
@@ -157,8 +179,10 @@ For the classical regressors:
 
 For COBRE:
 
-- regression metrics are measured on measured-output predictions after mapping through the composition matrix
-- constraint residuals are measured on the fractional raw and fractional projected states against the fractional influent reference
+- regression metrics are reported for raw, affine, and final projected measured-output predictions after mapping through the composition matrix
+- constraint residuals are measured on the fractional raw, affine, and final projected states against the fractional influent reference
+- projection-adjustment diagnostics now distinguish raw-to-affine, affine-to-projected, and raw-to-projected changes
+- staged projection diagnostics report when the raw prediction was already feasible, when the affine reference was sufficient, and when OSQP had to activate
 
 The repository now uses a unified high-level report shape with a direct comparison layer and a separate model-native diagnostic layer.
 

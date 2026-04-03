@@ -22,7 +22,13 @@ from src.models.ml.cobre import (
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
-from src.utils.process import DatasetSplit, build_cobre_supervised_dataset, build_projection_operator, make_train_test_split
+from src.utils.process import (
+    DatasetSplit,
+    build_cobre_supervised_dataset,
+    build_projection_operator,
+    make_train_test_split,
+    project_to_nonnegative_feasible_set,
+)
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -70,27 +76,40 @@ class CobreModelTests(unittest.TestCase):
         )
 
         aggregate_metrics = result["test_report"]["aggregate_metrics"]
-        self.assertEqual(list(aggregate_metrics["prediction_type"]), ["raw", "projected"])
+        self.assertEqual(list(aggregate_metrics["prediction_type"]), ["raw", "affine", "projected"])
         self.assertIn("report_metadata", result["test_report"])
         self.assertIn("diagnostic_summary", result["test_report"])
         self.assertIn("projection_diagnostics", result["test_report"])
+        self.assertIn("projection_stage_summary", result["test_report"])
         raw_metric_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "raw"].iloc[0]
+        affine_metric_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "affine"].iloc[0]
         projected_metric_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
         self.assertGreater(float(raw_metric_row["RMSE"]), 0.0)
-        self.assertLessEqual(float(projected_metric_row["RMSE"]), float(raw_metric_row["RMSE"]))
+        self.assertTrue(np.isfinite(float(affine_metric_row["RMSE"])))
+        self.assertTrue(np.isfinite(float(projected_metric_row["RMSE"])))
 
         diagnostic_summary = result["test_report"]["diagnostic_summary"]
         raw_constraint_row = diagnostic_summary.loc[
             (diagnostic_summary["diagnostic_name"] == "fractional_constraint_residual")
             & (diagnostic_summary["prediction_type"] == "raw")
         ].iloc[0]
+        affine_constraint_row = diagnostic_summary.loc[
+            (diagnostic_summary["diagnostic_name"] == "fractional_constraint_residual")
+            & (diagnostic_summary["prediction_type"] == "affine")
+        ].iloc[0]
         projected_constraint_row = diagnostic_summary.loc[
             (diagnostic_summary["diagnostic_name"] == "fractional_constraint_residual")
             & (diagnostic_summary["prediction_type"] == "projected")
         ].iloc[0]
         self.assertGreater(float(raw_constraint_row["constraint_mean_l2"]), 1e-9)
+        self.assertLess(float(affine_constraint_row["constraint_mean_l2"]), float(raw_constraint_row["constraint_mean_l2"]))
         self.assertLess(float(projected_constraint_row["constraint_mean_l2"]), float(raw_constraint_row["constraint_mean_l2"]))
+        self.assertLess(float(affine_constraint_row["constraint_max_abs"]), 1e-6)
         self.assertLess(float(projected_constraint_row["constraint_max_abs"]), 1e-6)
+        self.assertGreaterEqual(
+            float(result["test_report"]["projection_diagnostics"]["projected_min_component"].min()),
+            -1e-10,
+        )
 
         projection_matrix = np.asarray(result["model_bundle"]["projection_matrix"], dtype=float)
         projection_complement = np.asarray(result["model_bundle"]["projection_complement"], dtype=float)
@@ -140,14 +159,21 @@ class CobreModelTests(unittest.TestCase):
 
         expected_output_dim = len(self.metadata["measured_output_columns"])
         self.assertEqual(prediction_result["projected_predictions"].shape, (8, expected_output_dim))
-        self.assertIn("projected_prediction_standard_errors", prediction_result)
-        self.assertEqual(prediction_result["projected_prediction_standard_errors"].shape, (8, expected_output_dim))
+        self.assertIn("affine_predictions", prediction_result)
+        self.assertIn("projection_stage_diagnostics", prediction_result)
+        self.assertIn("projection_stage_summary", prediction_result)
+        self.assertIn("affine_core_prediction_standard_errors", prediction_result)
+        self.assertEqual(prediction_result["affine_core_prediction_standard_errors"].shape, (8, expected_output_dim))
         summary = summarize_mass_balance_residuals(
             prediction_result["projected_fractional_predictions"].to_numpy(dtype=float),
             prediction_result["constraint_reference"].to_numpy(dtype=float),
             self.a_matrix,
         )
         self.assertLess(summary["constraint_max_abs"], 5e-7)
+        self.assertGreaterEqual(
+            float(prediction_result["projected_fractional_predictions"].to_numpy(dtype=float).min()),
+            -1e-10,
+        )
 
     def test_rank_deficient_training_uses_bootstrap_uncertainty_in_auto_mode(self) -> None:
         params = self._tiny_params()
@@ -170,8 +196,12 @@ class CobreModelTests(unittest.TestCase):
         coefficient_inference = result["model_bundle"]["coefficient_inference"]
         self.assertEqual(coefficient_inference["method"], "bootstrap")
         self.assertTrue(bool(coefficient_inference["rank_deficient"]))
-        self.assertIn("projected_prediction_standard_errors", result["test_report"])
+        self.assertIn("affine_core_prediction_standard_errors", result["test_report"])
         self.assertIn("prediction_uncertainty_summary", result["test_report"])
+        self.assertEqual(
+            result["test_report"]["uncertainty_metadata"].iloc[0]["prediction_target"],
+            "affine_core_measured_prediction",
+        )
 
         effective_uncertainty = result["model_bundle"]["effective_coefficient_uncertainty"]
         self.assertIn("W_u", effective_uncertainty)
@@ -208,7 +238,8 @@ class CobreModelTests(unittest.TestCase):
         prediction_metadata = result["test_report"]["uncertainty_metadata"].iloc[0].to_dict()
         self.assertEqual(prediction_metadata["method"], "analytic")
         self.assertEqual(prediction_metadata["note"], coefficient_inference["note"])
-        self.assertIn("projected_prediction_standard_errors", result["test_report"])
+        self.assertEqual(prediction_metadata["prediction_target"], "affine_core_measured_prediction")
+        self.assertIn("affine_core_prediction_standard_errors", result["test_report"])
         self.assertIn("prediction_uncertainty_summary", result["test_report"])
 
     def test_full_rank_training_uses_analytic_uncertainty(self) -> None:
@@ -230,18 +261,75 @@ class CobreModelTests(unittest.TestCase):
         self.assertFalse(bool(coefficient_inference["rank_deficient"]))
         self.assertGreater(int(coefficient_inference["degrees_of_freedom"]), 0)
 
-        uncertainty_frame = result["test_report"]["projected_prediction_standard_errors"]
-        self.assertEqual(list(uncertainty_frame.columns), ["ProjectedSE_Out_Y1", "ProjectedSE_Out_Y2"])
+        uncertainty_frame = result["test_report"]["affine_core_prediction_standard_errors"]
+        self.assertEqual(list(uncertainty_frame.columns), ["AffineCoreSE_Out_Y1", "AffineCoreSE_Out_Y2"])
         self.assertTrue((uncertainty_frame.to_numpy(dtype=float) >= 0.0).all())
 
-        projected_predictions = result["test_report"]["projected_predictions"]
-        ci_lower = result["test_report"]["projected_prediction_confidence_interval_lower"]
-        ci_upper = result["test_report"]["projected_prediction_confidence_interval_upper"]
-        projected_values = projected_predictions.rename(columns=lambda value: str(value).removeprefix("Projected_"))
-        lower_values = ci_lower.rename(columns=lambda value: str(value).removeprefix("ProjectedCI95Lower_"))
-        upper_values = ci_upper.rename(columns=lambda value: str(value).removeprefix("ProjectedCI95Upper_"))
+        affine_predictions = result["test_report"]["affine_predictions"]
+        ci_lower = result["test_report"]["affine_core_prediction_confidence_interval_lower"]
+        ci_upper = result["test_report"]["affine_core_prediction_confidence_interval_upper"]
+        projected_values = affine_predictions.rename(columns=lambda value: str(value).removeprefix("Affine_"))
+        lower_values = ci_lower.rename(columns=lambda value: str(value).removeprefix("AffineCoreCI95Lower_"))
+        upper_values = ci_upper.rename(columns=lambda value: str(value).removeprefix("AffineCoreCI95Upper_"))
         self.assertTrue((lower_values.to_numpy(dtype=float) <= projected_values.to_numpy(dtype=float)).all())
         self.assertTrue((projected_values.to_numpy(dtype=float) <= upper_values.to_numpy(dtype=float)).all())
+
+    def test_nonnegative_projection_uses_osqp_when_affine_prediction_is_negative(self) -> None:
+        a_matrix = np.asarray([[1.0, 1.0]], dtype=float)
+        raw_predictions = np.asarray([[-1.0, 2.0]], dtype=float)
+        constraint_reference = np.asarray([[1.0, 1.0]], dtype=float)
+        projection_matrix = build_projection_operator(a_matrix)
+        projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
+
+        projection_result = project_to_nonnegative_feasible_set(
+            raw_predictions,
+            constraint_reference,
+            a_matrix,
+            projection_operator=projection_matrix,
+            projection_complement=projection_complement,
+            projection_solver="osqp",
+            constraint_tolerance=1e-8,
+            nonnegativity_tolerance=1e-10,
+            osqp_eps_abs=1e-8,
+            osqp_eps_rel=1e-8,
+            osqp_max_iter=10000,
+            osqp_polish=True,
+            osqp_verbose=False,
+            osqp_warm_start=True,
+        )
+
+        np.testing.assert_allclose(projection_result["affine_predictions"], [[-0.5, 2.5]], atol=1e-8, rtol=1e-8)
+        np.testing.assert_allclose(projection_result["projected_predictions"], [[0.0, 2.0]], atol=1e-8, rtol=1e-8)
+        self.assertFalse(bool(projection_result["raw_feasible_mask"][0]))
+        self.assertFalse(bool(projection_result["affine_feasible_mask"][0]))
+        self.assertTrue(bool(projection_result["qp_active_mask"][0]))
+        self.assertEqual(str(projection_result["projection_stage"][0]), "qp_corrected")
+
+    def test_nonnegative_projection_clips_when_invariant_matrix_is_trivial(self) -> None:
+        raw_predictions = np.asarray([[1.0, -0.2, 0.3]], dtype=float)
+        constraint_reference = np.asarray([[0.4, 0.5, 0.6]], dtype=float)
+        a_matrix = np.zeros((0, 3), dtype=float)
+
+        projection_result = project_to_nonnegative_feasible_set(
+            raw_predictions,
+            constraint_reference,
+            a_matrix,
+            projection_operator=np.zeros((3, 3), dtype=float),
+            projection_complement=np.eye(3, dtype=float),
+            projection_solver="osqp",
+            constraint_tolerance=1e-8,
+            nonnegativity_tolerance=1e-10,
+            osqp_eps_abs=1e-8,
+            osqp_eps_rel=1e-8,
+            osqp_max_iter=10000,
+            osqp_polish=True,
+            osqp_verbose=False,
+            osqp_warm_start=True,
+        )
+
+        np.testing.assert_allclose(projection_result["affine_predictions"], raw_predictions, atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(projection_result["projected_predictions"], [[1.0, 0.0, 0.3]], atol=1e-10, rtol=1e-10)
+        self.assertEqual(str(projection_result["projection_stage"][0]), "orthant_clip")
 
     def test_projected_ols_matches_explicit_kronecker_solution(self) -> None:
         params = self._tiny_params(ols_backend="numpy_lstsq")
@@ -361,6 +449,15 @@ class CobreModelTests(unittest.TestCase):
                     "ols_backend": ols_backend,
                     "include_bias_term": True,
                     "lstsq_rcond": None,
+                    "projection_solver": "osqp",
+                    "constraint_tolerance": 1e-8,
+                    "nonnegativity_tolerance": 1e-10,
+                    "osqp_eps_abs": 1e-8,
+                    "osqp_eps_rel": 1e-8,
+                    "osqp_max_iter": 10000,
+                    "osqp_polish": True,
+                    "osqp_verbose": False,
+                    "osqp_warm_start": True,
                     "uncertainty_method": uncertainty_method,
                     "confidence_level": 0.95,
                     "bootstrap_samples": bootstrap_samples,

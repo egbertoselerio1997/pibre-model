@@ -39,6 +39,8 @@ def _iter_prediction_frames(
 
 	if "raw_predictions" in report:
 		frame_specs.append(("raw", report["raw_predictions"].copy(), "Raw_"))
+	if "affine_predictions" in report:
+		frame_specs.append(("affine", report["affine_predictions"].copy(), "Affine_"))
 	if "projected_predictions" in report:
 		frame_specs.append(("projected", report["projected_predictions"].copy(), "Projected_"))
 	if not frame_specs:
@@ -408,36 +410,37 @@ def build_cobre_response_surface_prediction_data(
 		},
 		model_path,
 	)
+	affine_predictions = prediction_result.get("affine_predictions")
 	projected_predictions = prediction_result["projected_predictions"].copy()
-	projected_prediction_standard_errors = prediction_result.get("projected_prediction_standard_errors")
-	projected_prediction_interval_lower = prediction_result.get("projected_prediction_interval_lower")
-	projected_prediction_interval_upper = prediction_result.get("projected_prediction_interval_upper")
+	affine_core_prediction_standard_errors = prediction_result.get("affine_core_prediction_standard_errors")
+	affine_core_prediction_interval_lower = prediction_result.get("affine_core_prediction_interval_lower")
+	affine_core_prediction_interval_upper = prediction_result.get("affine_core_prediction_interval_upper")
 	per_target_surfaces = {
 		target_name: projected_predictions[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
 		for target_name in projected_predictions.columns
 	}
-	prediction_table = pd.concat(
-		[
-			feature_frame,
-			constraint_reference.add_prefix("ConstraintReference_"),
-			projected_predictions.add_prefix("Projected_"),
-		],
-		axis=1,
-	)
-	if projected_prediction_standard_errors is not None:
+	frame_parts = [feature_frame, constraint_reference.add_prefix("ConstraintReference_")]
+	if affine_predictions is not None:
+		frame_parts.append(affine_predictions.add_prefix("Affine_"))
+	frame_parts.append(projected_predictions.add_prefix("Projected_"))
+	projection_stage_diagnostics = prediction_result.get("projection_stage_diagnostics")
+	if projection_stage_diagnostics is not None:
+		frame_parts.append(projection_stage_diagnostics)
+	prediction_table = pd.concat(frame_parts, axis=1)
+	if affine_core_prediction_standard_errors is not None:
 		prediction_table = pd.concat(
 			[
 				prediction_table,
-				projected_prediction_standard_errors.add_prefix("ProjectedSE_"),
+				affine_core_prediction_standard_errors.add_prefix("AffineCoreSE_"),
 			],
 			axis=1,
 		)
-	if projected_prediction_interval_lower is not None and projected_prediction_interval_upper is not None:
+	if affine_core_prediction_interval_lower is not None and affine_core_prediction_interval_upper is not None:
 		prediction_table = pd.concat(
 			[
 				prediction_table,
-				projected_prediction_interval_lower.add_prefix("ProjectedPI95Lower_"),
-				projected_prediction_interval_upper.add_prefix("ProjectedPI95Upper_"),
+				affine_core_prediction_interval_lower.add_prefix("AffineCorePI95Lower_"),
+				affine_core_prediction_interval_upper.add_prefix("AffineCorePI95Upper_"),
 			],
 			axis=1,
 		)
@@ -465,16 +468,22 @@ def build_cobre_response_surface_prediction_data(
 		"prediction_table": prediction_table,
 		"per_target_surfaces": per_target_surfaces,
 	}
-	if projected_prediction_standard_errors is not None:
-		result["projected_prediction_standard_errors"] = projected_prediction_standard_errors.copy()
+	if affine_predictions is not None:
+		result["affine_predictions"] = affine_predictions.copy()
+	if projection_stage_diagnostics is not None:
+		result["projection_stage_diagnostics"] = projection_stage_diagnostics.copy()
+	if "projection_stage_summary" in prediction_result:
+		result["projection_stage_summary"] = prediction_result["projection_stage_summary"].copy()
+	if affine_core_prediction_standard_errors is not None:
+		result["affine_core_prediction_standard_errors"] = affine_core_prediction_standard_errors.copy()
 		result["per_target_standard_error_surfaces"] = {
-			target_name: projected_prediction_standard_errors[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
-			for target_name in projected_prediction_standard_errors.columns
+			target_name: affine_core_prediction_standard_errors[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
+			for target_name in affine_core_prediction_standard_errors.columns
 		}
-	if projected_prediction_interval_lower is not None:
-		result["projected_prediction_interval_lower"] = projected_prediction_interval_lower.copy()
-	if projected_prediction_interval_upper is not None:
-		result["projected_prediction_interval_upper"] = projected_prediction_interval_upper.copy()
+	if affine_core_prediction_interval_lower is not None:
+		result["affine_core_prediction_interval_lower"] = affine_core_prediction_interval_lower.copy()
+	if affine_core_prediction_interval_upper is not None:
+		result["affine_core_prediction_interval_upper"] = affine_core_prediction_interval_upper.copy()
 	if "prediction_uncertainty_metadata" in prediction_result:
 		result["prediction_uncertainty_metadata"] = dict(prediction_result["prediction_uncertainty_metadata"])
 	if "prediction_uncertainty_summary" in prediction_result:
@@ -592,9 +601,13 @@ def _build_prediction_table(
 		report["raw_predictions"],
 		dataset_split.constraint_reference.add_prefix("ConstraintReference_"),
 	]
+	affine_predictions = report.get("affine_predictions")
+	if affine_predictions is not None:
+		frame_parts.insert(2, affine_predictions)
 	projected_predictions = report.get("projected_predictions")
 	if projected_predictions is not None:
-		frame_parts.insert(2, projected_predictions)
+		insert_position = 3 if affine_predictions is not None else 2
+		frame_parts.insert(insert_position, projected_predictions)
 
 	constraint_residuals = report.get("constraint_residuals")
 	if constraint_residuals is not None:
@@ -605,12 +618,12 @@ def _build_prediction_table(
 		frame_parts.append(projection_diagnostics)
 
 	for optional_key in [
-		"projected_prediction_standard_errors",
-		"projected_prediction_confidence_interval_lower",
-		"projected_prediction_confidence_interval_upper",
-		"projected_prediction_interval_lower",
-		"projected_prediction_interval_upper",
-		"projected_prediction_interval_standard_errors",
+		"affine_core_prediction_standard_errors",
+		"affine_core_prediction_confidence_interval_lower",
+		"affine_core_prediction_confidence_interval_upper",
+		"affine_core_prediction_interval_lower",
+		"affine_core_prediction_interval_upper",
+		"affine_core_prediction_interval_standard_errors",
 	]:
 		optional_frame = report.get(optional_key)
 		if optional_frame is not None:

@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+import osqp
 import numpy as np
 import pandas as pd
+from scipy import sparse
+from scipy.linalg import null_space
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
@@ -133,6 +136,291 @@ def project_to_mass_balance(
 	projection_operator = build_projection_operator(A_matrix)
 	reference_array = np.asarray(constraint_reference, dtype=float)
 	return raw_array - (raw_array - reference_array) @ projection_operator.T
+
+
+def _as_two_dimensional_array(values: np.ndarray, *, name: str) -> np.ndarray:
+	array_values = np.asarray(values, dtype=float)
+	if array_values.ndim == 1:
+		return array_values.reshape(1, -1)
+	if array_values.ndim != 2:
+		raise ValueError(f"{name} must be one- or two-dimensional.")
+	return array_values
+
+
+def build_null_space_basis(A_matrix: np.ndarray) -> np.ndarray:
+	"""Build an orthonormal basis for the admissible null-space directions."""
+
+	constraint_matrix = np.asarray(A_matrix, dtype=float)
+	if constraint_matrix.ndim != 2:
+		raise ValueError("A_matrix must be two-dimensional.")
+	if not has_active_projection(constraint_matrix):
+		return np.eye(constraint_matrix.shape[1], dtype=float)
+
+	basis = null_space(constraint_matrix)
+	if basis.size == 0:
+		return np.zeros((constraint_matrix.shape[1], 0), dtype=float)
+	return np.asarray(basis, dtype=float)
+
+
+def _compute_constraint_residuals(
+	predictions: np.ndarray,
+	constraint_reference: np.ndarray,
+	constraint_matrix: np.ndarray,
+) -> np.ndarray:
+	if not has_active_projection(constraint_matrix):
+		return np.zeros((predictions.shape[0], 0), dtype=float)
+	return (constraint_matrix @ predictions.T - constraint_matrix @ constraint_reference.T).T
+
+
+def _compute_feasibility_diagnostics(
+	predictions: np.ndarray,
+	constraint_reference: np.ndarray,
+	constraint_matrix: np.ndarray,
+	*,
+	constraint_tolerance: float,
+	nonnegativity_tolerance: float,
+) -> dict[str, np.ndarray]:
+	residuals = _compute_constraint_residuals(predictions, constraint_reference, constraint_matrix)
+	if residuals.shape[1] == 0:
+		constraint_max_abs = np.zeros(predictions.shape[0], dtype=float)
+		constraint_feasible = np.ones(predictions.shape[0], dtype=bool)
+	else:
+		constraint_max_abs = np.max(np.abs(residuals), axis=1)
+		constraint_feasible = constraint_max_abs <= float(constraint_tolerance)
+
+	minimum_component = np.min(predictions, axis=1)
+	nonnegative_feasible = minimum_component >= -float(nonnegativity_tolerance)
+	return {
+		"constraint_feasible": constraint_feasible,
+		"constraint_max_abs": constraint_max_abs,
+		"minimum_component": minimum_component,
+		"nonnegative_feasible": nonnegative_feasible,
+	}
+
+
+def _setup_osqp_projection_solver(
+	null_space_basis: np.ndarray,
+	*,
+	osqp_eps_abs: float,
+	osqp_eps_rel: float,
+	osqp_max_iter: int,
+	osqp_polish: bool,
+	osqp_verbose: bool,
+	osqp_warm_start: bool,
+) -> osqp.OSQP | None:
+	variable_dimension = int(null_space_basis.shape[1])
+	if variable_dimension == 0:
+		return None
+
+	solver = osqp.OSQP()
+	constraint_matrix = sparse.csc_matrix(np.asarray(null_space_basis, dtype=float))
+	solver.setup(
+		P=sparse.eye(variable_dimension, format="csc"),
+		q=np.zeros(variable_dimension, dtype=float),
+		A=constraint_matrix,
+		l=np.zeros(null_space_basis.shape[0], dtype=float),
+		u=np.full(null_space_basis.shape[0], np.inf, dtype=float),
+		verbose=bool(osqp_verbose),
+		eps_abs=float(osqp_eps_abs),
+		eps_rel=float(osqp_eps_rel),
+		max_iter=int(osqp_max_iter),
+		polishing=bool(osqp_polish),
+		warm_starting=bool(osqp_warm_start),
+	)
+	return solver
+
+
+def _solve_reduced_nonnegative_projection(
+	affine_point: np.ndarray,
+	constraint_reference: np.ndarray,
+	constraint_matrix: np.ndarray,
+	null_space_basis: np.ndarray,
+	*,
+	solver: osqp.OSQP,
+	constraint_tolerance: float,
+	nonnegativity_tolerance: float,
+) -> tuple[np.ndarray, str, int]:
+	variable_dimension = int(null_space_basis.shape[1])
+	if variable_dimension == 0:
+		return np.asarray(affine_point, dtype=float).copy(), "not_needed", 0
+
+	lower_bound = -np.asarray(affine_point, dtype=float)
+	solver.update(l=lower_bound)
+	solver.warm_start(
+		x=np.zeros(variable_dimension, dtype=float),
+		y=np.zeros(null_space_basis.shape[0], dtype=float),
+	)
+	result = solver.solve()
+	status = str(result.info.status)
+	if result.x is None or status.lower() not in {"solved", "solved inaccurate"}:
+		raise RuntimeError(f"OSQP failed to solve the COBRE nonnegative projection: {status}.")
+
+	projected_point = np.asarray(affine_point, dtype=float) + np.asarray(null_space_basis, dtype=float) @ np.asarray(
+		result.x,
+		dtype=float,
+	)
+	if np.min(projected_point) < -float(nonnegativity_tolerance):
+		raise RuntimeError(
+			"OSQP returned a COBRE projection that still violates the nonnegativity tolerance."
+		)
+	projected_point = projected_point.copy()
+	projected_point[(projected_point < 0.0) & (projected_point >= -float(nonnegativity_tolerance))] = 0.0
+
+	residuals = _compute_constraint_residuals(
+		projected_point.reshape(1, -1),
+		np.asarray(constraint_reference, dtype=float).reshape(1, -1),
+		constraint_matrix,
+	)
+	if residuals.shape[1] > 0 and float(np.max(np.abs(residuals))) > float(constraint_tolerance):
+		raise RuntimeError(
+			"OSQP returned a COBRE projection that violates the invariant-equality tolerance."
+		)
+
+	return projected_point, status, int(result.info.iter)
+
+
+def project_to_nonnegative_feasible_set(
+	raw_predictions: np.ndarray,
+	constraint_reference: np.ndarray,
+	A_matrix: np.ndarray,
+	*,
+	projection_operator: np.ndarray | None = None,
+	projection_complement: np.ndarray | None = None,
+	constraint_tolerance: float,
+	nonnegativity_tolerance: float,
+	projection_solver: str,
+	osqp_eps_abs: float,
+	osqp_eps_rel: float,
+	osqp_max_iter: int,
+	osqp_polish: bool,
+	osqp_verbose: bool,
+	osqp_warm_start: bool,
+) -> dict[str, np.ndarray]:
+	"""Project component predictions onto the invariant-consistent nonnegative set."""
+
+	raw_array = _as_two_dimensional_array(raw_predictions, name="raw_predictions")
+	reference_array = _as_two_dimensional_array(constraint_reference, name="constraint_reference")
+	if raw_array.shape != reference_array.shape:
+		raise ValueError("raw_predictions and constraint_reference must share the same shape.")
+
+	constraint_matrix = np.asarray(A_matrix, dtype=float)
+	if constraint_matrix.ndim != 2:
+		raise ValueError("A_matrix must be two-dimensional.")
+	if constraint_matrix.shape[1] != raw_array.shape[1]:
+		raise ValueError("A_matrix column count must match the prediction dimension.")
+
+	projection_active = has_active_projection(constraint_matrix)
+	if projection_operator is None:
+		projection_operator = build_projection_operator(constraint_matrix)
+	projection_matrix = np.asarray(projection_operator, dtype=float)
+	if projection_matrix.shape != (raw_array.shape[1], raw_array.shape[1]):
+		raise ValueError("projection_operator must be square with the prediction dimension.")
+
+	if projection_complement is None:
+		projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
+	projection_complement_array = np.asarray(projection_complement, dtype=float)
+	if projection_complement_array.shape != projection_matrix.shape:
+		raise ValueError("projection_complement must match projection_operator shape.")
+
+	raw_diagnostics = _compute_feasibility_diagnostics(
+		raw_array,
+		reference_array,
+		constraint_matrix,
+		constraint_tolerance=constraint_tolerance,
+		nonnegativity_tolerance=nonnegativity_tolerance,
+	)
+	raw_feasible_mask = raw_diagnostics["constraint_feasible"] & raw_diagnostics["nonnegative_feasible"]
+
+	if projection_active:
+		affine_predictions = raw_array @ projection_complement_array.T + reference_array @ projection_matrix.T
+	else:
+		affine_predictions = raw_array.copy()
+
+	affine_diagnostics = _compute_feasibility_diagnostics(
+		affine_predictions,
+		reference_array,
+		constraint_matrix,
+		constraint_tolerance=constraint_tolerance,
+		nonnegativity_tolerance=nonnegativity_tolerance,
+	)
+	affine_feasible_mask = affine_diagnostics["constraint_feasible"] & affine_diagnostics["nonnegative_feasible"]
+
+	projected_predictions = affine_predictions.copy()
+	projected_predictions[raw_feasible_mask, :] = raw_array[raw_feasible_mask, :]
+	projection_stage = np.full(raw_array.shape[0], "affine_feasible", dtype=object)
+	projection_stage[raw_feasible_mask] = "raw_feasible"
+	qp_active_mask = np.zeros(raw_array.shape[0], dtype=bool)
+	solver_status = np.full(raw_array.shape[0], "not_needed", dtype=object)
+	solver_iterations = np.zeros(raw_array.shape[0], dtype=int)
+
+	if not projection_active:
+		negative_mask = ~raw_diagnostics["nonnegative_feasible"]
+		if np.any(negative_mask):
+			projected_predictions[negative_mask, :] = np.maximum(raw_array[negative_mask, :], 0.0)
+			projection_stage[negative_mask] = "orthant_clip"
+			solver_status[negative_mask] = "orthant_clip"
+	else:
+		qp_active_mask = ~(raw_feasible_mask | affine_feasible_mask)
+		projection_stage[qp_active_mask] = "qp_corrected"
+		if np.any(qp_active_mask):
+			if str(projection_solver).strip().lower() != "osqp":
+				raise ValueError("COBRE nonnegative projection requires projection_solver='osqp'.")
+			null_space_basis = build_null_space_basis(constraint_matrix)
+			solver = _setup_osqp_projection_solver(
+				null_space_basis,
+				osqp_eps_abs=osqp_eps_abs,
+				osqp_eps_rel=osqp_eps_rel,
+				osqp_max_iter=osqp_max_iter,
+				osqp_polish=osqp_polish,
+				osqp_verbose=osqp_verbose,
+				osqp_warm_start=osqp_warm_start,
+			)
+			if solver is None:
+				projected_predictions[qp_active_mask, :] = affine_predictions[qp_active_mask, :]
+				projection_stage[qp_active_mask] = "affine_feasible"
+			else:
+				for row_index in np.flatnonzero(qp_active_mask):
+					projected_point, row_status, row_iterations = _solve_reduced_nonnegative_projection(
+						affine_predictions[row_index, :],
+						reference_array[row_index, :],
+						constraint_matrix,
+						null_space_basis,
+						solver=solver,
+						constraint_tolerance=constraint_tolerance,
+						nonnegativity_tolerance=nonnegativity_tolerance,
+					)
+					projected_predictions[row_index, :] = projected_point
+					solver_status[row_index] = row_status
+					solver_iterations[row_index] = row_iterations
+
+	projected_diagnostics = _compute_feasibility_diagnostics(
+		projected_predictions,
+		reference_array,
+		constraint_matrix,
+		constraint_tolerance=constraint_tolerance,
+		nonnegativity_tolerance=nonnegativity_tolerance,
+	)
+	projected_feasible_mask = projected_diagnostics["constraint_feasible"] & projected_diagnostics["nonnegative_feasible"]
+	if not bool(np.all(projected_feasible_mask)):
+		raise RuntimeError("COBRE nonnegative projection produced an infeasible deployed component state.")
+
+	return {
+		"affine_predictions": affine_predictions,
+		"projected_predictions": projected_predictions,
+		"raw_feasible_mask": raw_feasible_mask,
+		"affine_feasible_mask": affine_feasible_mask,
+		"qp_active_mask": qp_active_mask,
+		"projection_stage": projection_stage,
+		"solver_status": solver_status,
+		"solver_iterations": solver_iterations,
+		"raw_constraint_max_abs": raw_diagnostics["constraint_max_abs"],
+		"affine_constraint_max_abs": affine_diagnostics["constraint_max_abs"],
+		"projected_constraint_max_abs": projected_diagnostics["constraint_max_abs"],
+		"raw_min_component": raw_diagnostics["minimum_component"],
+		"affine_min_component": affine_diagnostics["minimum_component"],
+		"projected_min_component": projected_diagnostics["minimum_component"],
+		"projection_active": np.full(raw_array.shape[0], projection_active, dtype=bool),
+	}
 
 
 def build_measured_supervised_dataset(
@@ -522,6 +810,7 @@ __all__ = [
 	"ScalingBundle",
 	"SupervisedDatasetFrames",
 	"TrainTestDatasetSplits",
+	"build_null_space_basis",
 	"build_projection_operator",
 	"build_cobre_supervised_dataset",
 	"build_measured_supervised_dataset",
@@ -534,6 +823,7 @@ __all__ = [
 	"make_train_test_split",
 	"make_train_test_split_indices",
 	"project_to_mass_balance",
+	"project_to_nonnegative_feasible_set",
 	"select_dataset_rows",
 	"apply_train_test_split_indices",
 	"sample_dataset_fraction",
