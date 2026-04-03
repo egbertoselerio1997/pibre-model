@@ -529,7 +529,7 @@ def plot_response_surface_contours(
 		contour_labels.append(list(labels))
 		colorbar = figure.colorbar(filled, ax=axis, shrink=0.9, pad=0.02)
 		colorbar.set_label(_format_target_label(target_label))
-		colorbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter(formatter_pattern))
+		colorbar.formatter = mpl.ticker.FormatStrFormatter(formatter_pattern)
 		colorbar.update_ticks()
 		colorbar.ax.tick_params(colors=tokens["primary_text"])
 		colorbars.append(colorbar)
