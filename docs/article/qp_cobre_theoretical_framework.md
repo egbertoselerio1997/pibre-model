@@ -4,7 +4,7 @@
 
 This article presents a non-negative formulation of Constrained Orthogonal Bilinear Regression (COBRE), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of COBRE is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and enforcing non-negativity of the predicted effluent ASM component state. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. An affine invariant projection resolves only part of that mismatch because it restores stoichiometric consistency but can still produce negative component predictions. The non-negative COBRE formulation therefore uses a two-stage correction in component space. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, a convex projection maps that raw prediction onto the intersection of the invariant-consistent affine set and the nonnegative orthant. The corrected component state is then collapsed into measured output space through a linear composition map.
 
-The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a strictly convex quadratic program, and the role of the earlier orthogonal affine projector is retained explicitly as a reference solution and inactive-constraint special case. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved, while the limits of exact closed-form uncertainty analysis for the final inequality-constrained predictor are stated explicitly. The result is a precise formulation of what non-negative COBRE guarantees, what remains estimated by least squares, and what must instead be handled through convex post-estimation correction.
+The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a strictly convex quadratic program, and the role of the earlier orthogonal affine projector is retained explicitly as a reference solution and inactive-constraint special case. In deployment, that quadratic program is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved, while the limits of exact closed-form uncertainty analysis for the final inequality-constrained predictor are stated explicitly. The result is a precise formulation of what non-negative COBRE guarantees, what remains estimated by least squares, and what must instead be handled through convex post-estimation correction.
 
 ## 1. Introduction and Modeling Objective
 
@@ -23,7 +23,7 @@ The model is constructed to answer one precise question:
 
 > Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state must satisfy the conserved quantities implied by the adopted stoichiometric model and must remain non-negative componentwise?
 
-The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to convex non-negative projection, to collapse into measured space, and finally to estimation and uncertainty.
+The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and quadratic-program correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to convex non-negative projection, to collapse into measured space, and finally to estimation and uncertainty.
 
 ## 2. Physical Scope, State Spaces, and Notation
 
@@ -70,6 +70,7 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $A$ | $\mathbb{R}^{q \times F}$ | Full-row-rank matrix whose rows form a basis of $\operatorname{null}(\nu)$ |
 | $P_{inv}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the row space of $A$ |
 | $P_{adm}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the admissible change space, $I_F - P_{inv}$ |
+| $N$ | $\mathbb{R}^{F \times (F-q)}$ | Matrix whose columns form an orthonormal basis of $\operatorname{null}(A)$ |
 | $\phi(u, c_{in})$ | $\mathbb{R}^{D}$ | Engineered second-order feature map |
 | $D$ | scalar | Feature dimension, $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$ |
 | $B$ | $\mathbb{R}^{F \times D}$ | Raw component-space coefficient matrix |
@@ -335,6 +336,40 @@ $$
 
 The objective asks for the smallest Euclidean adjustment in ASM component concentration space that restores both the invariant relations and componentwise non-negativity. Relative to the affine-only correction, the feasible set is smaller but still convex. The problem is therefore a strictly convex quadratic program with linear equality and inequality constraints.
 
+This formulation can be recentered around the orthogonal affine projection without changing the minimizer. For every feasible $c \in \mathcal{S}_+(c_{in}) \subseteq \mathcal{S}(c_{in})$,
+
+$$
+c - c_{raw} = (c - c_{aff}) + (c_{aff} - c_{raw})
+$$
+
+and the defining property of the orthogonal projection implies
+
+$$
+(c - c_{aff})^T(c_{aff} - c_{raw}) = 0
+$$
+
+because $c - c_{aff}$ lies in the admissible subspace parallel to $\mathcal{S}(c_{in})$ whereas $c_{aff} - c_{raw}$ lies in its orthogonal complement. Therefore,
+
+$$
+\lVert c - c_{raw} \rVert_2^2 = \lVert c - c_{aff} \rVert_2^2 + \lVert c_{aff} - c_{raw} \rVert_2^2
+$$
+
+and minimizing over $\mathcal{S}_+(c_{in})$ is equivalent to solving
+
+$$
+\min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{aff} \rVert_2^2
+$$
+
+subject to
+
+$$
+A c = A c_{in},
+\qquad
+c \ge 0
+$$
+
+The affine projector is therefore not only a theoretical reference solution. It is also the natural center of the residual non-negativity correction in the cases where a quadratic program remains necessary.
+
 ### 6.5 Feasibility, existence, and uniqueness
 
 The first question is whether the feasible set can be empty. Under the present modeling assumptions, it is not. If the influent component state is non-negative, then $c = c_{in}$ is feasible because it satisfies
@@ -407,7 +442,65 @@ $$
 
 This result provides continuity with the earlier COBRE theory. The non-negative formulation does not replace the orthogonal affine projector arbitrarily; it extends it to the cases where the affine projector would otherwise leave the physically admissible orthant.
 
-### 6.8 What the projection guarantees and what it does not
+### 6.8 Efficient deployment sequence
+
+The deployed correction should be evaluated in a staged order so that the quadratic program is solved only when it is actually needed.
+
+1. Form the raw component prediction $c_{raw}$.
+2. If $c_{raw}$ already satisfies $A c_{raw} = A c_{in}$ and $c_{raw} \ge 0$, return $c_{raw}$ directly.
+3. Otherwise compute the closed-form affine projection $c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}$.
+4. If $c_{aff} \ge 0$, return $c_{aff}$.
+5. Solve the non-negative quadratic program only when one or more components of $c_{aff}$ remain negative.
+
+This order follows directly from the geometry developed above. The first check avoids unnecessary correction when the raw surrogate already lies in the feasible set. The second check uses the orthogonal affine projector as the cheapest exact repair of invariant violations. The quadratic program is therefore a residual correction step for the subset of samples in which the affine projector still leaves the nonnegative orthant.
+
+One degenerate case is worth noting. If $A$ has zero rows, then there is no non-trivial invariant equality to enforce, $c_{aff} = c_{raw}$, and the correction reduces to Euclidean projection onto the nonnegative orthant, namely componentwise clipping at zero. In that case no quadratic program is required.
+
+### 6.9 Reduced null-space formulation
+
+The affine-centered formulation also leads to a reduced problem that is often easier to solve numerically. Let $N \in \mathbb{R}^{F \times (F-q)}$ have orthonormal columns spanning $\operatorname{null}(A)$. Every point in the affine set can then be written as
+
+$$
+c = c_{aff} + N z
+$$
+
+for some reduced coordinate vector $z \in \mathbb{R}^{F-q}$, because $A c_{aff} = A c_{in}$ and $A N = 0$. The equality constraints are therefore built into the parameterization. Substituting into the affine-centered objective gives
+
+$$
+\min_{z \in \mathbb{R}^{F-q}} \; \frac{1}{2} \lVert N z \rVert_2^2
+$$
+
+subject to
+
+$$
+N z \ge -c_{aff}
+$$
+
+Since $N$ has orthonormal columns,
+
+$$
+\lVert N z \rVert_2^2 = z^T N^T N z = z^T z
+$$
+
+and the reduced problem becomes
+
+$$
+\min_{z \in \mathbb{R}^{F-q}} \; \frac{1}{2} z^T z
+$$
+
+subject to
+
+$$
+N z \ge -c_{aff}
+$$
+
+If a non-orthonormal null-space basis is used instead, the reduced Hessian becomes $N^T N$. The feasible set is unchanged, but the orthonormal basis is preferable because it preserves the Euclidean metric and improves conditioning.
+
+This reduced form makes the computational role of the quadratic program more transparent. The solver is no longer enforcing the affine invariant equalities; those have already been resolved exactly by the affine projector. It is only finding the smallest admissible displacement inside the null-space directions that restores non-negativity.
+
+Implementation note: in a fixed model with fixed $A$, the reduced Hessian and constraint matrix are constant across samples, while the lower bound $-c_{aff}$ changes from sample to sample. That structure is convenient for operator-splitting quadratic-program solvers such as OSQP, especially when warm-started from $z = 0$, which corresponds exactly to the affine projector.
+
+### 6.10 What the projection guarantees and what it does not
 
 The non-negative projection guarantees that
 
@@ -434,7 +527,7 @@ These are not derivation errors. They are the exact consequences of the constrai
 
 ### 7.1 Final measured output equation
 
-Practical prediction targets are usually measured composite variables rather than ASM component concentrations. The final measured output is therefore
+Practical prediction targets are usually measured composite variables rather than ASM component concentrations. The component-space correction is applied before any measurement collapse, and the final measured output is therefore
 
 $$
 y^* = I_{comp} c^*
@@ -504,7 +597,7 @@ $$
 y_{aff} = M \phi(u, c_{in}) + H c_{in}
 $$
 
-This affine relation remains central because it is the identifiable linear core estimated from measured composite data. It is also the exact deployed predictor whenever the non-negativity inequalities are inactive.
+This affine relation remains central because it is the identifiable linear core estimated from measured composite data. It is also the exact deployed predictor whenever the non-negativity inequalities are inactive, so the nonlinear correction is a post-estimation deployment step rather than part of the affine-core fit.
 
 ### 7.4 Final deployed prediction as affine core plus positivity correction
 
@@ -720,7 +813,7 @@ $$
 \widehat c_{raw} = \widehat B \phi(u, c_{in})
 $$
 
-The final deployed non-negative component prediction is then
+The final deployed non-negative component prediction is then obtained by the same staged component-space logic introduced in Section 6: keep $\widehat c_{raw}$ if it is already feasible, otherwise apply the affine projector, and solve the quadratic program only when the affine projector still violates non-negativity. In compact notation,
 
 $$
 \widehat c^* = \operatorname{Proj}_{\mathcal{S}_+(c_{in})}(\widehat c_{raw})
@@ -732,7 +825,7 @@ $$
 \widehat y^* = I_{comp} \widehat c^*
 $$
 
-This last map is deterministic, but it is not globally affine in $\phi(u, c_{in})$. The least-squares coefficients therefore characterize the identifiable affine core of non-negative COBRE, while the final prediction is produced by augmenting that core with a sample-specific convex correction.
+This last map is deterministic, but it is not globally affine in $\phi(u, c_{in})$. The least-squares coefficients therefore characterize the identifiable affine core of non-negative COBRE, while the final prediction is produced by augmenting that core with a sample-specific convex correction applied after estimation and before collapse to measured space.
 
 ## 9. Statistical Inference and Predictive Uncertainty
 
@@ -880,7 +973,7 @@ These limitations should be stated explicitly in any application. Doing so does 
 
 ## 12. Conclusion
 
-Non-negative COBRE combines a partitioned second-order surrogate with a convex projection derived from stoichiometric invariants and componentwise non-negativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies.
+Non-negative COBRE combines a partitioned second-order surrogate with a convex projection derived from stoichiometric invariants and componentwise non-negativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies. In deployment, the correction should be evaluated hierarchically so that the quadratic program is reserved for the subset of samples not already repaired by the closed-form affine projector.
 
 The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by least squares, the final prediction is obtained by projecting the raw component-space state onto the invariant-consistent non-negative set. Under that reading, non-negative COBRE is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
 
