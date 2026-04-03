@@ -109,6 +109,13 @@ def _format_target_label(target_name: str) -> str:
 	return target_name.replace("Out_", "", 1).replace("_", " ")
 
 
+def _format_panel_label(panel_name: str) -> str:
+	panel_label = str(panel_name)
+	if panel_label.startswith("Out_"):
+		return panel_label.removeprefix("Out_")
+	return panel_label
+
+
 def _validate_label_count(labels: list[str], *, expected_size: int, label_name: str) -> list[str]:
 	label_list = [str(label) for label in labels]
 	if len(label_list) != expected_size:
@@ -156,6 +163,62 @@ def _validate_surface_mesh(
 	if x_array.shape != y_array.shape:
 		raise ValueError(f"{value_name} meshes must share the same shape.")
 	return x_array, y_array
+
+
+def _coerce_numeric_dataframe(
+	frame: Any,
+	*,
+	frame_name: str,
+) -> pd.DataFrame:
+	if not isinstance(frame, pd.DataFrame):
+		raise ValueError(f"{frame_name} must be a pandas DataFrame.")
+	if frame.empty:
+		raise ValueError(f"{frame_name} must contain at least one row.")
+
+	try:
+		resolved_frame = frame.astype(float).copy()
+	except ValueError as exc:
+		raise ValueError(f"{frame_name} must contain only numeric values.") from exc
+
+	if not np.isfinite(resolved_frame.to_numpy(dtype=float)).all():
+		raise ValueError(f"{frame_name} must contain only finite numeric values.")
+
+	return resolved_frame
+
+
+def _validate_parity_frames(
+	train_actual: Any,
+	train_predicted: Any,
+	test_actual: Any,
+	test_predicted: Any,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+	train_actual_frame = _coerce_numeric_dataframe(train_actual, frame_name="train_actual")
+	train_predicted_frame = _coerce_numeric_dataframe(train_predicted, frame_name="train_predicted")
+	test_actual_frame = _coerce_numeric_dataframe(test_actual, frame_name="test_actual")
+	test_predicted_frame = _coerce_numeric_dataframe(test_predicted, frame_name="test_predicted")
+
+	if train_actual_frame.shape != train_predicted_frame.shape:
+		raise ValueError("train_actual and train_predicted must share the same shape.")
+	if test_actual_frame.shape != test_predicted_frame.shape:
+		raise ValueError("test_actual and test_predicted must share the same shape.")
+	if not train_actual_frame.index.equals(train_predicted_frame.index):
+		raise ValueError("train_actual and train_predicted must share the same index.")
+	if not test_actual_frame.index.equals(test_predicted_frame.index):
+		raise ValueError("test_actual and test_predicted must share the same index.")
+	if not train_actual_frame.columns.equals(train_predicted_frame.columns):
+		raise ValueError("train_actual and train_predicted must share the same columns.")
+	if not test_actual_frame.columns.equals(test_predicted_frame.columns):
+		raise ValueError("test_actual and test_predicted must share the same columns.")
+	if not train_actual_frame.columns.equals(test_actual_frame.columns):
+		raise ValueError("Train and test parity frames must share the same columns.")
+
+	return (
+		train_actual_frame,
+		train_predicted_frame,
+		test_actual_frame,
+		test_predicted_frame,
+		[str(column_name) for column_name in train_actual_frame.columns],
+	)
 
 
 def plot_coefficient_heatmap(
@@ -382,6 +445,7 @@ def plot_response_surface_contours(
 	y_label: str,
 	training_domain: dict[str, dict[str, float]] | None = None,
 	contour_levels: int = 18,
+	decimal_places: int = 2,
 	figure_size_per_panel: tuple[float, float] = (4.8, 4.0),
 	max_columns: int = 3,
 ) -> tuple[Any, np.ndarray]:
@@ -389,6 +453,8 @@ def plot_response_surface_contours(
 
 	if contour_levels < 2:
 		raise ValueError("contour_levels must be at least 2.")
+	if decimal_places < 0:
+		raise ValueError("decimal_places must be at least 0.")
 
 	mesh_x, mesh_y = _validate_surface_mesh(x_mesh, y_mesh, value_name="response_surface")
 	if isinstance(response_surfaces, pd.Series):
@@ -413,7 +479,9 @@ def plot_response_surface_contours(
 	colorbars: list[Any] = []
 	filled_contours: list[Any] = []
 	line_contours: list[Any] = []
+	contour_labels: list[list[Any]] = []
 	training_patches: list[Any] = []
+	formatter_pattern = f"%.{decimal_places}f"
 
 	for axis_index, axis in enumerate(axes.flat):
 		if axis_index >= len(target_labels):
@@ -448,10 +516,21 @@ def plot_response_surface_contours(
 			linewidths=0.6,
 			alpha=0.55,
 		)
+		labels = axis.clabel(
+			lines,
+			fmt=formatter_pattern,
+			fontsize=8.0,
+			inline=True,
+			inline_spacing=3,
+			colors=tokens["primary_text"],
+		)
 		filled_contours.append(filled)
 		line_contours.append(lines)
+		contour_labels.append(list(labels))
 		colorbar = figure.colorbar(filled, ax=axis, shrink=0.9, pad=0.02)
 		colorbar.set_label(_format_target_label(target_label))
+		colorbar.ax.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter(formatter_pattern))
+		colorbar.update_ticks()
 		colorbar.ax.tick_params(colors=tokens["primary_text"])
 		colorbars.append(colorbar)
 
@@ -477,6 +556,8 @@ def plot_response_surface_contours(
 		axis.set_facecolor(tokens["axes_background"])
 		axis.set_xlim(float(np.min(mesh_x)), float(np.max(mesh_x)))
 		axis.set_ylim(float(np.min(mesh_y)), float(np.max(mesh_y)))
+		axis.xaxis.set_major_formatter(mpl.ticker.FormatStrFormatter(formatter_pattern))
+		axis.yaxis.set_major_formatter(mpl.ticker.FormatStrFormatter(formatter_pattern))
 		axis.grid(which="major", color=tokens["major_grid"], alpha=0.35)
 		axis.grid(which="minor", color=tokens["minor_grid"], alpha=0.2)
 		axis.minorticks_on()
@@ -490,6 +571,7 @@ def plot_response_surface_contours(
 			"colorbars": colorbars,
 			"filled_contours": filled_contours,
 			"line_contours": line_contours,
+			"contour_labels": contour_labels,
 			"training_patches": training_patches,
 			"x_mesh": mesh_x,
 			"y_mesh": mesh_y,
@@ -639,6 +721,139 @@ def plot_train_test_metric_boxplots(
 	return figure, ax
 
 
+def plot_train_test_parity_panels(
+	train_actual: Any,
+	train_predicted: Any,
+	test_actual: Any,
+	test_predicted: Any,
+	*,
+	title: str,
+	x_label: str = "Actual value",
+	y_label: str = "Predicted value",
+	train_label: str = "Train",
+	test_label: str = "Test",
+	parity_label: str = "Parity line",
+	figure_size_per_panel: tuple[float, float] = (4.8, 4.1),
+	max_columns: int = 3,
+) -> tuple[Any, np.ndarray]:
+	"""Plot one parity panel per column with shared train/test styling."""
+
+	(
+		train_actual_frame,
+		train_predicted_frame,
+		test_actual_frame,
+		test_predicted_frame,
+		column_names,
+	) = _validate_parity_frames(
+		train_actual,
+		train_predicted,
+		test_actual,
+		test_predicted,
+	)
+	if max_columns < 1:
+		raise ValueError("max_columns must be at least 1.")
+
+	tokens = apply_pibre_plot_theme()
+	row_count, column_count = _resolve_subplot_grid(len(column_names), max_columns=max_columns)
+	figure, axes = plt.subplots(
+		row_count,
+		column_count,
+		figsize=(figure_size_per_panel[0] * column_count, figure_size_per_panel[1] * row_count),
+		dpi=140,
+		constrained_layout=True,
+		squeeze=False,
+	)
+	train_color = tokens["qualitative_cycle"][0]
+	test_color = tokens["qualitative_cycle"][1]
+	active_axes: list[Any] = []
+	train_scatters: list[Any] = []
+	test_scatters: list[Any] = []
+	parity_lines: list[Any] = []
+
+	for axis_index, axis in enumerate(axes.flat):
+		if axis_index >= len(column_names):
+			axis.set_visible(False)
+			continue
+
+		column_name = column_names[axis_index]
+		active_axes.append(axis)
+		train_x = train_actual_frame[column_name].to_numpy(dtype=float)
+		train_y = train_predicted_frame[column_name].to_numpy(dtype=float)
+		test_x = test_actual_frame[column_name].to_numpy(dtype=float)
+		test_y = test_predicted_frame[column_name].to_numpy(dtype=float)
+		combined_values = np.concatenate([train_x, train_y, test_x, test_y])
+		minimum_value = float(np.min(combined_values))
+		maximum_value = float(np.max(combined_values))
+		value_span = maximum_value - minimum_value
+		if value_span <= 0.0:
+			padding = 1.0 if maximum_value == 0.0 else 0.05 * abs(maximum_value)
+		else:
+			padding = 0.04 * value_span
+		lower_bound = minimum_value - padding
+		upper_bound = maximum_value + padding
+
+		train_scatter = axis.scatter(
+			train_x,
+			train_y,
+			color=train_color,
+			alpha=0.55,
+			s=24.0,
+			marker="o",
+		)
+		test_scatter = axis.scatter(
+			test_x,
+			test_y,
+			color=test_color,
+			alpha=0.72,
+			s=26.0,
+			marker="^",
+		)
+		parity_line = axis.plot(
+			[lower_bound, upper_bound],
+			[lower_bound, upper_bound],
+			color=tokens["secondary_text"],
+			linestyle="--",
+			linewidth=1.2,
+		)[0]
+
+		axis.set_xlim(lower_bound, upper_bound)
+		axis.set_ylim(lower_bound, upper_bound)
+		axis.set_aspect("equal", adjustable="box")
+		axis.set_xlabel(x_label)
+		axis.set_ylabel(y_label)
+		axis.set_title(_format_panel_label(column_name))
+		axis.set_facecolor(tokens["axes_background"])
+		axis.grid(which="major", color=tokens["major_grid"], alpha=0.45)
+		axis.grid(which="minor", color=tokens["minor_grid"], alpha=0.3)
+		axis.minorticks_on()
+
+		train_scatters.append(train_scatter)
+		test_scatters.append(test_scatter)
+		parity_lines.append(parity_line)
+
+	legend_handles = [
+		Line2D([], [], color=train_color, marker="o", linestyle="None", markersize=6.0, label=train_label),
+		Line2D([], [], color=test_color, marker="^", linestyle="None", markersize=6.0, label=test_label),
+		Line2D([], [], color=tokens["secondary_text"], linestyle="--", linewidth=1.2, label=parity_label),
+	]
+	legend = figure.legend(handles=legend_handles, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.02))
+	figure.suptitle(title)
+	setattr(
+		figure,
+		"_pibre_train_test_parity",
+		{
+			"axes": active_axes,
+			"legend": legend,
+			"train_scatters": train_scatters,
+			"test_scatters": test_scatters,
+			"parity_lines": parity_lines,
+			"column_names": column_names,
+		},
+	)
+
+	return figure, axes
+
+
 __all__ = [
 	"PIBRE_THEME_TOKENS",
 	"PROJECTED_METRIC_COLUMNS",
@@ -649,5 +864,6 @@ __all__ = [
 	"plot_coefficient_heatmap",
 	"plot_coefficient_tensor_heatmaps",
 	"plot_response_surface_contours",
+	"plot_train_test_parity_panels",
 	"plot_train_test_metric_boxplots",
 ]

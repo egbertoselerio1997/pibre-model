@@ -18,6 +18,7 @@ from src.utils.plot import (
 	plot_coefficient_heatmap,
 	plot_coefficient_tensor_heatmaps,
 	plot_response_surface_contours,
+	plot_train_test_parity_panels,
 	plot_train_test_metric_boxplots,
 )
 
@@ -74,6 +75,40 @@ def _build_metric_frame() -> pd.DataFrame:
 	return pd.DataFrame(rows)
 
 
+def _build_parity_frames() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+	train_index = pd.Index([0, 1, 2], name="sample_id")
+	test_index = pd.Index([10, 11], name="sample_id")
+	train_actual = pd.DataFrame(
+		{
+			"Out_COD": [100.0, 120.0, 140.0],
+			"Out_TN": [20.0, 25.0, 30.0],
+		},
+		index=train_index,
+	)
+	train_predicted = pd.DataFrame(
+		{
+			"Out_COD": [102.0, 118.0, 143.0],
+			"Out_TN": [19.5, 25.5, 29.5],
+		},
+		index=train_index,
+	)
+	test_actual = pd.DataFrame(
+		{
+			"Out_COD": [110.0, 150.0],
+			"Out_TN": [22.0, 33.0],
+		},
+		index=test_index,
+	)
+	test_predicted = pd.DataFrame(
+		{
+			"Out_COD": [111.0, 147.0],
+			"Out_TN": [21.5, 34.0],
+		},
+		index=test_index,
+	)
+	return train_actual, train_predicted, test_actual, test_predicted
+
+
 class PlotHelperTests(unittest.TestCase):
 	def tearDown(self) -> None:
 		plt.close("all")
@@ -116,6 +151,33 @@ class PlotHelperTests(unittest.TestCase):
 		artist_bundle = getattr(axis, "_pibre_metric_boxplot")
 		self.assertIs(figure, axis.figure)
 		self.assertEqual(artist_bundle["train_mean_line"].get_label(), "Train mean")
+
+	def test_plot_train_test_parity_panels_returns_one_panel_per_column(self) -> None:
+		train_actual, train_predicted, test_actual, test_predicted = _build_parity_frames()
+
+		figure, axes = plot_train_test_parity_panels(
+			train_actual,
+			train_predicted,
+			test_actual,
+			test_predicted,
+			title="COBRE projected parity plots",
+			x_label="Actual value",
+			y_label="Projected prediction",
+		)
+
+		artist_bundle = getattr(figure, "_pibre_train_test_parity")
+		legend_text = [text.get_text() for text in figure.legends[0].texts]
+		self.assertEqual(axes.shape, (1, 2))
+		self.assertEqual(len(artist_bundle["axes"]), 2)
+		self.assertEqual(len(artist_bundle["train_scatters"]), 2)
+		self.assertEqual(len(artist_bundle["test_scatters"]), 2)
+		self.assertEqual(len(artist_bundle["parity_lines"]), 2)
+		self.assertEqual(legend_text, ["Train", "Test", "Parity line"])
+		self.assertEqual(artist_bundle["parity_lines"][0].get_linestyle(), "--")
+		self.assertEqual(artist_bundle["axes"][0].get_xlabel(), "Actual value")
+		self.assertEqual(artist_bundle["axes"][0].get_ylabel(), "Projected prediction")
+		self.assertEqual(artist_bundle["axes"][0].get_title(), "COD")
+		self.assertEqual(artist_bundle["axes"][1].get_title(), "TN")
 
 	def test_plot_train_test_metric_boxplots_rejects_unknown_metric(self) -> None:
 		metric_frame = _build_metric_frame()
@@ -223,11 +285,30 @@ class PlotHelperTests(unittest.TestCase):
 		self.assertEqual(axes.shape, (1, 2))
 		self.assertEqual(len(artist_bundle["axes"]), 2)
 		self.assertEqual(len(artist_bundle["colorbars"]), 2)
+		self.assertEqual(len(artist_bundle["contour_labels"]), 2)
 		self.assertEqual(len(artist_bundle["training_patches"]), 2)
 		self.assertEqual(artist_bundle["axes"][0].get_xlabel(), "HRT")
 		self.assertEqual(artist_bundle["axes"][0].get_ylabel(), "Aeration")
 		self.assertEqual(artist_bundle["axes"][0].get_title(), "COD")
 		self.assertEqual(artist_bundle["colorbars"][0].ax.get_ylabel(), "COD")
+		self.assertGreater(len(artist_bundle["contour_labels"][0]), 0)
+		self.assertIsInstance(
+			artist_bundle["axes"][0].xaxis.get_major_formatter(),
+			matplotlib.ticker.FormatStrFormatter,
+		)
+		self.assertIsInstance(
+			artist_bundle["axes"][0].yaxis.get_major_formatter(),
+			matplotlib.ticker.FormatStrFormatter,
+		)
+		self.assertIsInstance(
+			artist_bundle["colorbars"][0].ax.yaxis.get_major_formatter(),
+			matplotlib.ticker.FormatStrFormatter,
+		)
+		self.assertEqual(artist_bundle["axes"][0].xaxis.get_major_formatter().fmt, "%.2f")
+		self.assertEqual(artist_bundle["axes"][0].yaxis.get_major_formatter().fmt, "%.2f")
+		self.assertEqual(artist_bundle["colorbars"][0].ax.yaxis.get_major_formatter().fmt, "%.2f")
+		first_label = artist_bundle["contour_labels"][0][0].get_text()
+		self.assertRegex(first_label, r"^-?\d+\.\d{2}$")
 		self.assertEqual(len(figure.axes), 4)
 
 	def test_plot_response_surface_contours_rejects_shape_mismatch(self) -> None:

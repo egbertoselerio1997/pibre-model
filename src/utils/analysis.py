@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,22 @@ from .simulation import load_ml_orchestration_params, load_params_config
 
 
 ModelRunner = Callable[..., dict[str, Any]]
+PredictionFrameSpec = tuple[str, str, str]
+
+DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS: tuple[PredictionFrameSpec, ...] = (
+	("raw", "raw_predictions", "Raw_"),
+	("affine", "affine_predictions", "Affine_"),
+	("projected", "projected_predictions", "Projected_"),
+)
+
+COBRE_NEGATIVE_PREDICTION_FAMILY_SPECS: dict[str, tuple[PredictionFrameSpec, ...]] = {
+	"composite": DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS,
+	"fractional": (
+		("raw", "raw_fractional_predictions", "RawFractional_"),
+		("affine", "affine_fractional_predictions", "AffineFractional_"),
+		("projected", "projected_fractional_predictions", "ProjectedFractional_"),
+	),
+}
 
 
 def describe_and_display_table(
@@ -34,30 +50,46 @@ def describe_and_display_table(
 
 def _iter_prediction_frames(
 	report: Mapping[str, pd.DataFrame],
+	*,
+	frame_specs: Sequence[PredictionFrameSpec] = DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS,
 ) -> list[tuple[str, pd.DataFrame, str]]:
-	frame_specs: list[tuple[str, pd.DataFrame, str]] = []
+	resolved_frame_specs = tuple(frame_specs)
+	resolved_frames: list[tuple[str, pd.DataFrame, str]] = []
 
-	if "raw_predictions" in report:
-		frame_specs.append(("raw", report["raw_predictions"].copy(), "Raw_"))
-	if "affine_predictions" in report:
-		frame_specs.append(("affine", report["affine_predictions"].copy(), "Affine_"))
-	if "projected_predictions" in report:
-		frame_specs.append(("projected", report["projected_predictions"].copy(), "Projected_"))
-	if not frame_specs:
-		raise KeyError("Report must include at least one prediction frame.")
+	for prediction_type, frame_key, column_prefix in resolved_frame_specs:
+		if frame_key in report:
+			resolved_frames.append((prediction_type, report[frame_key].copy(), column_prefix))
+	if not resolved_frames:
+		requested_keys = ", ".join(frame_key for _, frame_key, _ in resolved_frame_specs)
+		raise KeyError(
+			"Report must include at least one prediction frame from: "
+			f"{requested_keys}."
+		)
 
-	return frame_specs
+	return resolved_frames
+
+
+def _report_has_prediction_frames(
+	report: Mapping[str, pd.DataFrame],
+	*,
+	frame_specs: Sequence[PredictionFrameSpec],
+) -> bool:
+	return any(frame_key in report for _, frame_key, _ in frame_specs)
 
 
 def _build_negative_prediction_frames(
 	report: Mapping[str, pd.DataFrame],
 	*,
 	split_name: str,
+	frame_specs: Sequence[PredictionFrameSpec] = DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
 	incidence_rows: list[dict[str, Any]] = []
 	per_target_frames: list[pd.DataFrame] = []
 
-	for prediction_type, prediction_frame, column_prefix in _iter_prediction_frames(report):
+	for prediction_type, prediction_frame, column_prefix in _iter_prediction_frames(
+		report,
+		frame_specs=frame_specs,
+	):
 		resolved_prediction_frame = prediction_frame.rename(
 			columns=lambda column_name: str(column_name).removeprefix(column_prefix)
 		)
@@ -134,6 +166,7 @@ def build_negative_prediction_tables(
 		split_summary, split_per_target = _build_negative_prediction_frames(
 			report,
 			split_name=str(split_name),
+			frame_specs=DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS,
 		)
 		summary_frames.append(split_summary)
 		per_target_frames.append(split_per_target)
@@ -145,6 +178,82 @@ def build_negative_prediction_tables(
 			ascending=[True, True, False, True],
 		).reset_index(drop=True),
 	}
+
+
+def build_separated_negative_prediction_tables(
+	reports_by_split: Mapping[str, Mapping[str, pd.DataFrame]],
+	*,
+	family_specs: Mapping[str, Sequence[PredictionFrameSpec]] | None = None,
+) -> dict[str, dict[str, dict[str, pd.DataFrame]]]:
+	"""Summarize negative predictions separately by family and prediction type."""
+
+	if not reports_by_split:
+		raise ValueError("reports_by_split must include at least one split report.")
+
+	resolved_family_specs = dict(family_specs or COBRE_NEGATIVE_PREDICTION_FAMILY_SPECS)
+	separated_tables: dict[str, dict[str, dict[str, pd.DataFrame]]] = {}
+
+	for family_name, frame_specs in resolved_family_specs.items():
+		resolved_frame_specs = tuple(frame_specs)
+		available_split_names = [
+			str(split_name)
+			for split_name, report in reports_by_split.items()
+			if _report_has_prediction_frames(report, frame_specs=resolved_frame_specs)
+		]
+		if not available_split_names:
+			continue
+
+		missing_split_names = [
+			str(split_name)
+			for split_name, report in reports_by_split.items()
+			if not _report_has_prediction_frames(report, frame_specs=resolved_frame_specs)
+		]
+		if missing_split_names:
+			missing_display = ", ".join(missing_split_names)
+			raise KeyError(
+				f"Negative-prediction family '{family_name}' is missing prediction frames for splits: "
+				f"{missing_display}."
+			)
+
+		summary_frames: list[pd.DataFrame] = []
+		per_target_frames: list[pd.DataFrame] = []
+		for split_name, report in reports_by_split.items():
+			split_summary, split_per_target = _build_negative_prediction_frames(
+				report,
+				split_name=str(split_name),
+				frame_specs=resolved_frame_specs,
+			)
+			summary_frames.append(split_summary)
+			per_target_frames.append(split_per_target)
+
+		family_summary = pd.concat(summary_frames, ignore_index=True)
+		family_per_target = pd.concat(per_target_frames, ignore_index=True)
+		family_tables: dict[str, dict[str, pd.DataFrame]] = {}
+		for prediction_type, _, _ in resolved_frame_specs:
+			prediction_summary = family_summary.loc[
+				family_summary["prediction_type"] == prediction_type
+			].reset_index(drop=True)
+			if prediction_summary.empty:
+				continue
+
+			prediction_per_target = family_per_target.loc[
+				family_per_target["prediction_type"] == prediction_type
+			].sort_values(
+				["split", "negative_predictions", "minimum_prediction"],
+				ascending=[True, False, True],
+			).reset_index(drop=True)
+			family_tables[prediction_type] = {
+				"summary": prediction_summary,
+				"per_target": prediction_per_target,
+			}
+
+		if family_tables:
+			separated_tables[str(family_name)] = family_tables
+
+	if not separated_tables:
+		raise KeyError("No matching negative-prediction families were found in the provided reports.")
+
+	return separated_tables
 
 _DEFAULT_ANALYSIS_SETTINGS = {
 	"min_total_samples": 100,

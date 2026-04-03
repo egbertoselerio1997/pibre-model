@@ -15,6 +15,7 @@ from src.models.ml.cobre import run_cobre_pipeline
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.analysis import (
 	build_negative_prediction_tables,
+	build_separated_negative_prediction_tables,
 	build_cobre_response_surface_prediction_data,
 	build_dataset_size_schedule,
 	run_model_dataset_size_analysis,
@@ -287,6 +288,141 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertIn("Out_A", set(per_target["target"]))
 		self.assertIn("Out_B", set(per_target["target"]))
 
+	def test_build_separated_negative_prediction_tables_splits_composite_and_fractional_families(self) -> None:
+		index = pd.Index([0, 1], name="sample_id")
+		reports_by_split = {
+			"train": {
+				"raw_predictions": pd.DataFrame(
+					{
+						"Raw_Out_A": [-1.0, 3.0],
+						"Raw_Out_B": [2.0, -0.5],
+					},
+					index=index,
+				),
+				"affine_predictions": pd.DataFrame(
+					{
+						"Affine_Out_A": [0.2, 3.0],
+						"Affine_Out_B": [2.0, 0.1],
+					},
+					index=index,
+				),
+				"projected_predictions": pd.DataFrame(
+					{
+						"Projected_Out_A": [0.3, 3.0],
+						"Projected_Out_B": [1.5, 0.4],
+					},
+					index=index,
+				),
+				"raw_fractional_predictions": pd.DataFrame(
+					{
+						"RawFractional_S_A": [0.2, -0.4],
+						"RawFractional_S_B": [-0.1, 0.3],
+					},
+					index=index,
+				),
+				"affine_fractional_predictions": pd.DataFrame(
+					{
+						"AffineFractional_S_A": [0.2, 0.4],
+						"AffineFractional_S_B": [0.1, -0.05],
+					},
+					index=index,
+				),
+				"projected_fractional_predictions": pd.DataFrame(
+					{
+						"ProjectedFractional_S_A": [0.2, 0.4],
+						"ProjectedFractional_S_B": [0.1, 0.05],
+					},
+					index=index,
+				),
+			},
+			"test": {
+				"raw_predictions": pd.DataFrame(
+					{
+						"Raw_Out_A": [0.1, 1.0],
+						"Raw_Out_B": [-0.2, 0.3],
+					},
+					index=index,
+				),
+				"affine_predictions": pd.DataFrame(
+					{
+						"Affine_Out_A": [0.2, 1.0],
+						"Affine_Out_B": [0.1, 0.3],
+					},
+					index=index,
+				),
+				"projected_predictions": pd.DataFrame(
+					{
+						"Projected_Out_A": [0.05, 1.0],
+						"Projected_Out_B": [0.1, 0.3],
+					},
+					index=index,
+				),
+				"raw_fractional_predictions": pd.DataFrame(
+					{
+						"RawFractional_S_A": [0.1, 0.0],
+						"RawFractional_S_B": [-0.2, 0.3],
+					},
+					index=index,
+				),
+				"affine_fractional_predictions": pd.DataFrame(
+					{
+						"AffineFractional_S_A": [0.1, 0.0],
+						"AffineFractional_S_B": [0.2, 0.3],
+					},
+					index=index,
+				),
+				"projected_fractional_predictions": pd.DataFrame(
+					{
+						"ProjectedFractional_S_A": [0.1, 0.0],
+						"ProjectedFractional_S_B": [0.2, 0.3],
+					},
+					index=index,
+				),
+			},
+		}
+
+		negative_prediction_tables = build_separated_negative_prediction_tables(reports_by_split)
+
+		self.assertEqual(set(negative_prediction_tables), {"composite", "fractional"})
+		self.assertEqual(
+			list(negative_prediction_tables["composite"]),
+			["raw", "affine", "projected"],
+		)
+		self.assertEqual(
+			list(negative_prediction_tables["fractional"]),
+			["raw", "affine", "projected"],
+		)
+
+		composite_raw_summary = negative_prediction_tables["composite"]["raw"]["summary"]
+		self.assertEqual(list(composite_raw_summary["split"]), ["train", "test"])
+		self.assertEqual(
+			list(composite_raw_summary["negative_predictions"]),
+			[2, 1],
+		)
+
+		fractional_affine_summary = negative_prediction_tables["fractional"]["affine"]["summary"]
+		self.assertEqual(list(fractional_affine_summary["split"]), ["train", "test"])
+		self.assertEqual(
+			list(fractional_affine_summary["negative_predictions"]),
+			[1, 0],
+		)
+
+		fractional_projected_summary = negative_prediction_tables["fractional"]["projected"]["summary"]
+		self.assertTrue((fractional_projected_summary["negative_predictions"] == 0).all())
+
+		fractional_raw_per_target = negative_prediction_tables["fractional"]["raw"]["per_target"]
+		self.assertEqual(set(fractional_raw_per_target["target"]), {"S_A", "S_B"})
+		train_s_a_row = fractional_raw_per_target.loc[
+			(fractional_raw_per_target["split"] == "train")
+			& (fractional_raw_per_target["target"] == "S_A")
+		].iloc[0]
+		self.assertEqual(int(train_s_a_row["negative_predictions"]), 1)
+		self.assertAlmostEqual(float(train_s_a_row["minimum_prediction"]), -0.4)
+
+		composite_projected_per_target = negative_prediction_tables["composite"]["projected"]["per_target"]
+		self.assertEqual(len(composite_projected_per_target), 4)
+		self.assertTrue((composite_projected_per_target["negative_predictions"] == 0).all())
+
 	def test_build_cobre_response_surface_prediction_data_uses_midpoint_profile_and_extended_domain(self) -> None:
 		dataset_splits = make_train_test_split(
 			self.cobre_dataset,
@@ -311,10 +447,15 @@ class AnalysisHelperTests(unittest.TestCase):
 				model_path.name,
 				metadata=self.cobre_metadata,
 				grid_points_per_axis=7,
+				operational_extension_fraction=0.5,
 			)
 
 		self.assertEqual(response_surface["response_surface_config"]["fixed_influent_profile"], "midpoint")
 		self.assertEqual(response_surface["response_surface_config"]["grid_points_per_axis"], 7)
+		self.assertAlmostEqual(
+			response_surface["response_surface_config"]["operational_extension_fraction"],
+			0.5,
+		)
 		self.assertAlmostEqual(response_surface["training_domain"]["HRT"]["min"], 6.0)
 		self.assertAlmostEqual(response_surface["training_domain"]["HRT"]["max"], 36.0)
 		self.assertAlmostEqual(response_surface["extended_domain"]["HRT"]["min"], 0.0)
