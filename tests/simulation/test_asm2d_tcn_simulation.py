@@ -135,7 +135,7 @@ class Asm2dTcnSimulationTests(unittest.TestCase):
         self.assertEqual(matrix_bundle["composition_matrix"].shape, (6, 21))
         self.assertEqual(matrix_bundle["measured_output_columns"], params["measured_output_columns"])
 
-    def test_generate_dataset_reports_composites_only(self) -> None:
+    def test_generate_dataset_reports_fraction_and_composite_columns(self) -> None:
         params = load_asm2d_tcn_simulation_params()
         dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(
             model_params=params,
@@ -143,12 +143,25 @@ class Asm2dTcnSimulationTests(unittest.TestCase):
             random_seed=7,
             parallel_workers=1,
         )
+        state_columns = list(params["workbook"]["state_columns"])
+        measured_output_columns = list(params["measured_output_columns"])
+        expected_influent_fraction = [f"In_{name}" for name in state_columns]
+        expected_influent_composite = [f"In_{name}" for name in measured_output_columns]
+        expected_effluent_fraction = [f"Out_{name}" for name in state_columns]
         expected_independent = metadata["independent_columns"]
         expected_dependent = metadata["dependent_columns"]
+        expected_ignored = metadata["ignored_columns"]
 
-        self.assertEqual(dataset.shape, (12, len(expected_independent) + len(expected_dependent)))
-        self.assertEqual(list(dataset.columns), expected_independent + expected_dependent)
-        self.assertEqual(expected_dependent, [f"Out_{name}" for name in params["measured_output_columns"]])
+        self.assertEqual(expected_independent, metadata["operational_columns"] + expected_influent_fraction)
+        self.assertEqual(expected_dependent, [f"Out_{name}" for name in measured_output_columns])
+        self.assertEqual(expected_ignored, expected_influent_composite + expected_effluent_fraction)
+        self.assertEqual(
+            dataset.shape,
+            (12, len(expected_independent) + len(expected_ignored) + len(expected_dependent)),
+        )
+        self.assertEqual(list(dataset.columns), expected_independent + expected_ignored + expected_dependent)
+        self.assertTrue(all(column_name in dataset.columns for column_name in expected_influent_composite))
+        self.assertTrue(all(column_name in dataset.columns for column_name in expected_effluent_fraction))
         self.assertFalse(any(column_name.startswith("Out_S_") or column_name.startswith("Out_X_") for column_name in expected_dependent))
         self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 21))
         self.assertEqual(matrix_bundle["composition_matrix"].shape, (6, 21))

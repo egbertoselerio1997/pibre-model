@@ -66,6 +66,23 @@ class MlOrchestrationTests(unittest.TestCase):
         )
         cls.cobre_dataset = build_cobre_supervised_dataset(dataset, metadata, cls.composition_matrix)
 
+    def test_expanded_simulation_schema_is_excluded_from_ml_features_and_targets(self) -> None:
+        state_columns = list(self.metadata["state_columns"])
+        measured_output_columns = list(self.metadata["measured_output_columns"])
+        operational_columns = list(self.metadata["operational_columns"])
+
+        self.assertIn("In_COD", self.dataset.columns)
+        self.assertIn("Out_S_A", self.dataset.columns)
+
+        expected_feature_columns = operational_columns + [f"In_{name}" for name in state_columns]
+        expected_target_columns = [f"Out_{name}" for name in measured_output_columns]
+
+        self.assertEqual(list(self.classical_benchmark_dataset.features.columns), expected_feature_columns)
+        self.assertEqual(list(self.classical_benchmark_dataset.targets.columns), expected_target_columns)
+        self.assertNotIn("In_COD", self.classical_benchmark_dataset.features.columns)
+        self.assertNotIn("Out_S_A", self.classical_benchmark_dataset.features.columns)
+        self.assertNotIn("Out_S_A", self.classical_benchmark_dataset.targets.columns)
+
     def test_shared_split_indices_align_classical_benchmark_with_cobre(self) -> None:
         split_indices = make_train_test_split_indices(self.dataset.index, test_fraction=0.2, random_seed=17)
         classical_splits = apply_train_test_split_indices(self.classical_benchmark_dataset, split_indices)

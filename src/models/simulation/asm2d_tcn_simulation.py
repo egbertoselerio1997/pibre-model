@@ -340,7 +340,7 @@ def build_asm2d_tcn_metadata(
     random_seed: int,
     dataset_file: str | None = None,
 ) -> dict[str, Any]:
-    """Create the metadata contract for the ASM2d-TCN composite-only dataset."""
+    """Create the metadata contract for the ASM2d-TCN mixed-schema dataset."""
 
     runtime = _validate_runtime_structure(model_params)
     state_columns = list(runtime["state_columns"])
@@ -348,6 +348,9 @@ def build_asm2d_tcn_metadata(
     process_names = list(runtime["process_names"])
     process_types = list(runtime["process_types"])
     operational_columns = list(runtime["operational_columns"])
+    influent_fraction_columns = [f"In_{name}" for name in state_columns]
+    influent_composite_columns = [f"In_{name}" for name in measured_output_columns]
+    effluent_fraction_columns = [f"Out_{name}" for name in state_columns]
     dependent_columns = [f"Out_{name}" for name in measured_output_columns]
 
     return {
@@ -355,13 +358,17 @@ def build_asm2d_tcn_metadata(
         "n_samples": sample_count,
         "random_seed": random_seed,
         "dependent_columns": dependent_columns,
-        "independent_columns": operational_columns + [f"In_{name}" for name in state_columns],
+        "independent_columns": operational_columns + influent_fraction_columns,
         "identifier_columns": [],
-        "ignored_columns": [],
+        "ignored_columns": influent_composite_columns + effluent_fraction_columns,
         "dataset_file": dataset_file,
         "state_columns": state_columns,
         "measured_output_columns": measured_output_columns,
         "operational_columns": operational_columns,
+        "influent_fraction_columns": influent_fraction_columns,
+        "influent_composite_columns": influent_composite_columns,
+        "effluent_fraction_columns": effluent_fraction_columns,
+        "effluent_composite_columns": dependent_columns,
         "processes": process_names,
         "process_types": process_types,
         "petersen_matrix_shape": [len(process_names), len(state_columns)],
@@ -381,7 +388,7 @@ def generate_asm2d_tcn_dataset(
     show_progress: bool = False,
     progress_description: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
-    """Generate a mechanistic steady-state ASM2d-TCN dataset with composite-only outputs."""
+    """Generate a mechanistic steady-state ASM2d-TCN dataset with input/output fractions and composites."""
 
     params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params()
     runtime = _validate_runtime_structure(params)
@@ -408,7 +415,7 @@ def generate_asm2d_tcn_dataset(
     influent_states = np.zeros((sample_count, len(state_columns)), dtype=float)
     operational = np.zeros((sample_count, len(operational_columns)), dtype=float)
     measured_outputs = np.zeros((sample_count, len(measured_output_columns)), dtype=float)
-    effluent_states = np.zeros((sample_count, len(state_columns)), dtype=float) if include_debug_data else None
+    effluent_states = np.zeros((sample_count, len(state_columns)), dtype=float)
     solver_diagnostic_records: list[dict[str, Any]] = []
     chunk_results: list[tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]]]] = []
     if sample_count > 0:
@@ -464,16 +471,20 @@ def generate_asm2d_tcn_dataset(
         chunk_end = chunk_start + len(chunk_influent)
         influent_states[chunk_start:chunk_end] = chunk_influent
         operational[chunk_start:chunk_end] = chunk_operational
-        if effluent_states is not None:
-            effluent_states[chunk_start:chunk_end] = chunk_effluent
+        effluent_states[chunk_start:chunk_end] = chunk_effluent
         measured_outputs[chunk_start:chunk_end] = chunk_measured
         if include_debug_data:
             solver_diagnostic_records.extend(chunk_diagnostics)
 
     influent_df = pd.DataFrame(influent_states, columns=[f"In_{name}" for name in state_columns])
+    influent_composite_df = pd.DataFrame(
+        influent_states @ np.asarray(matrix_bundle["composition_matrix"], dtype=float).T,
+        columns=[f"In_{name}" for name in measured_output_columns],
+    )
     operational_df = pd.DataFrame(operational, columns=operational_columns)
+    effluent_df = pd.DataFrame(effluent_states, columns=[f"Out_{name}" for name in state_columns])
     measured_df = pd.DataFrame(measured_outputs, columns=[f"Out_{name}" for name in measured_output_columns])
-    dataset = pd.concat([operational_df, influent_df, measured_df], axis=1)
+    dataset = pd.concat([operational_df, influent_df, influent_composite_df, effluent_df, measured_df], axis=1)
 
     metadata = build_asm2d_tcn_metadata(
         params,
@@ -702,7 +713,7 @@ def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, An
     if measured_output_columns != composite_variables:
         raise ValueError(
             "asm2d_tcn_simulation measured_output_columns must match workbook composite_variables for the "
-            "composite-only output contract."
+            "measured-output composition contract."
         )
 
     if len(process_types) != len(process_names):

@@ -4,7 +4,7 @@
 
 The current ASM2d-TCN implementation in this repository provides a mechanistic steady-state simulation workflow plus the canonical workbook contract for a two-step nitrification ASM2d formulation. The simulation module exposes the same high-level bundle shape used by the simulation portion of `main.ipynb`: dataset, metadata, Petersen matrix, composition matrix, matrix bundle, and artifact paths.
 
-The main reporting difference relative to the ASM1 notebook flow is deliberate: ASM2d-TCN reports composite output variables only. The saved dataset therefore contains operational inputs, influent state variables, and effluent composite outputs, but it does not persist raw effluent state variables as dependent columns.
+The notebook-facing dataset now persists both ASM component fractions and composite variables for both influent and effluent sides. The training and testing contract remains metadata-driven: only operational variables plus influent component fractions are independent variables, and only measured effluent composites are dependent variables.
 
 ## 2. Background and system or process context
 
@@ -75,7 +75,7 @@ Inputs to the simulation are configuration-driven:
 
 Outputs of the simulation workflow are:
 
-- a dataset containing operational inputs, influent state variables, and effluent composite outputs only
+- a dataset containing operational variables, influent component fractions, influent composites, effluent component fractions, and effluent measured composites
 - metadata describing the simulation schema and matrix shapes
 - the numeric Petersen and composition matrices used by the notebook
 - optional persisted CSV and JSON artifacts under `data/asm2d-tcn/simulation`
@@ -100,7 +100,7 @@ The repository currently implements:
 5. generating the composition matrix sheet with parameter-linked formulas
 6. building numeric Petersen and composition matrices from the configured workbook contract
 7. sampling operational conditions and influent states
-8. solving mechanistic steady-state effluent states internally and reporting composite outputs only
+8. solving mechanistic steady-state effluent states and persisting both component-fraction and composite views
 9. writing the canonical `.xlsx` file under `data/asm2d-tcn`
 10. persisting simulation artifacts under `data/asm2d-tcn/simulation`
 
@@ -125,7 +125,7 @@ This design ensures that when a parameter value changes in configuration, both t
 The present workflow is:
 
 1. call `run_asm2d_tcn_simulation`
-2. generate a dataset with composite-only output targets
+2. generate a dataset with both fraction and composite columns for influent and effluent states
 3. optionally persist the dataset and metadata under `data/asm2d-tcn/simulation`
 4. inspect the returned Petersen and composition matrices in the notebook
 5. use the same matrices for null-space and constraint analysis
@@ -136,7 +136,7 @@ The companion helper `create_asm2d_tcn_workbook` continues to generate the canon
 
 Current limitations:
 
-- the notebook-facing dataset reports composites only, so raw effluent state trajectories are not persisted as targets
+- the persisted schema is intentionally wider than the supervised learning contract, so consumers must follow metadata `independent_columns`, `dependent_columns`, and `ignored_columns`
 - the implementation is aimed at simulation-notebook reproducibility and matrix analysis, not yet at plant-calibrated prediction
 
 Expected failure modes:
