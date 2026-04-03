@@ -44,6 +44,9 @@ PROJECTED_METRIC_COLUMNS = (
 	"projected_MAPE",
 )
 
+RAW_METRIC_COLUMNS = tuple(column_name.replace("projected_", "raw_", 1) for column_name in PROJECTED_METRIC_COLUMNS)
+SUPPORTED_METRIC_COLUMNS = PROJECTED_METRIC_COLUMNS + RAW_METRIC_COLUMNS
+
 
 def _build_diverging_colormap() -> LinearSegmentedColormap:
 	return LinearSegmentedColormap.from_list(
@@ -505,11 +508,11 @@ def plot_train_test_metric_boxplots(
 	ax: Any | None = None,
 	figure_size: tuple[float, float] = (12.0, 6.5),
 ) -> tuple[Any, Any]:
-	"""Plot train and test boxplots of one projected metric across training sizes."""
+	"""Plot train and test boxplots of one raw or projected metric across training sizes."""
 
-	if metric_name not in PROJECTED_METRIC_COLUMNS:
+	if metric_name not in SUPPORTED_METRIC_COLUMNS:
 		raise ValueError(
-			f"metric_name must be one of {', '.join(PROJECTED_METRIC_COLUMNS)}."
+			f"metric_name must be one of {', '.join(SUPPORTED_METRIC_COLUMNS)}."
 		)
 
 	required_columns = {"target", "split_name", "train_size", metric_name}
@@ -639,6 +642,8 @@ def plot_train_test_metric_boxplots(
 __all__ = [
 	"PIBRE_THEME_TOKENS",
 	"PROJECTED_METRIC_COLUMNS",
+	"RAW_METRIC_COLUMNS",
+	"SUPPORTED_METRIC_COLUMNS",
 	"apply_pibre_plot_theme",
 	"plot_coefficient_bar_chart",
 	"plot_coefficient_heatmap",

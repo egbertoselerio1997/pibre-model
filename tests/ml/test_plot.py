@@ -37,6 +37,11 @@ def _build_metric_frame() -> pd.DataFrame:
 						"run_seed": 10 + repeat_index,
 						"split_name": split_name,
 						"target": "Out_A",
+						"raw_R2": 0.75 + offset + 0.01 * repeat_index,
+						"raw_MSE": 0.25 + offset + 0.01 * repeat_index,
+						"raw_RMSE": 0.45 + offset + 0.01 * repeat_index,
+						"raw_MAE": 0.35 + offset + 0.01 * repeat_index,
+						"raw_MAPE": 0.15 + offset + 0.01 * repeat_index,
 						"projected_R2": 0.8 + offset + 0.01 * repeat_index,
 						"projected_MSE": 0.2 + offset + 0.01 * repeat_index,
 						"projected_RMSE": 0.4 + offset + 0.01 * repeat_index,
@@ -54,6 +59,11 @@ def _build_metric_frame() -> pd.DataFrame:
 			"run_seed": 99,
 			"split_name": "train",
 			"target": "Out_A",
+			"raw_R2": 1.8,
+			"raw_MSE": 1.1,
+			"raw_RMSE": 1.1,
+			"raw_MAE": 1.1,
+			"raw_MAPE": 1.1,
 			"projected_R2": 1.9,
 			"projected_MSE": 1.0,
 			"projected_RMSE": 1.0,
@@ -93,13 +103,27 @@ class PlotHelperTests(unittest.TestCase):
 		self.assertTrue(any(flier.get_marker() == "o" for flier in artist_bundle["train"]["fliers"]))
 		self.assertEqual(axis.get_xlabel(), "Number of training samples")
 
+	def test_plot_train_test_metric_boxplots_accepts_raw_metric(self) -> None:
+		metric_frame = _build_metric_frame()
+
+		figure, axis = plot_train_test_metric_boxplots(
+			metric_frame,
+			metric_name="raw_R2",
+			target_name="Out_A",
+			model_name="Synthetic Model",
+		)
+
+		artist_bundle = getattr(axis, "_pibre_metric_boxplot")
+		self.assertIs(figure, axis.figure)
+		self.assertEqual(artist_bundle["train_mean_line"].get_label(), "Train mean")
+
 	def test_plot_train_test_metric_boxplots_rejects_unknown_metric(self) -> None:
 		metric_frame = _build_metric_frame()
 
 		with self.assertRaises(ValueError):
 			plot_train_test_metric_boxplots(
 				metric_frame,
-				metric_name="raw_R2",
+				metric_name="constraint_R2",
 				target_name="Out_A",
 			)
 

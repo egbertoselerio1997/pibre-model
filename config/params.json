@@ -921,9 +921,9 @@
       "use_optuna": false
     },
     "analysis": {
-      "min_total_samples": 100,
+      "min_total_samples": 500,
       "max_total_samples": 10000,
-      "total_sample_step": 990,
+      "total_sample_step": 950,
       "n_repeats": 10,
       "test_fraction": 0.2,
       "cobre_response_surface": {
