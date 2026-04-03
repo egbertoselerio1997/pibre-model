@@ -928,7 +928,7 @@
       "test_fraction": 0.2,
       "cobre_response_surface": {
         "grid_points_per_axis": 100,
-        "contour_levels": 10,
+        "contour_levels": 20,
         "operational_extension_fraction": 1.5,
         "fixed_influent_profile": "midpoint"
       }
