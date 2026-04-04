@@ -1,14 +1,14 @@
-# Non-Negative Constrained Orthogonal Bilinear Regression (COBRE) for Activated Sludge Surrogate Modeling
+# Non-Negative Invariant-Constrained Second-Order Regression (ICSOR) for Activated Sludge Surrogate Modeling
 
 ## Abstract
 
-This article presents a non-negative formulation of Constrained Orthogonal Bilinear Regression (COBRE), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of COBRE is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and enforcing non-negativity of the predicted effluent ASM component state. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. An affine invariant projection resolves only part of that mismatch because it restores stoichiometric consistency but can still produce negative component predictions. The non-negative COBRE formulation therefore uses a two-stage correction in component space. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, a convex projection maps that raw prediction onto the intersection of the invariant-consistent affine set and the nonnegative orthant. The corrected component state is then collapsed into measured output space through a linear composition map.
+This article presents a non-negative formulation of invariant-constrained second-order regression (ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and enforcing non-negativity of the predicted effluent ASM component state. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. An affine invariant projection resolves only part of that mismatch because it restores stoichiometric consistency but can still produce negative component predictions. The non-negative ICSOR formulation therefore uses a two-stage correction in component space. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, a convex projection maps that raw prediction onto the intersection of the invariant-consistent affine set and the nonnegative orthant. The corrected component state is then collapsed into measured output space through a linear composition map.
 
-The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a strictly convex quadratic program, and the role of the earlier orthogonal affine projector is retained explicitly as a reference solution and inactive-constraint special case. In deployment, that quadratic program is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved, while the limits of exact closed-form uncertainty analysis for the final inequality-constrained predictor are stated explicitly. The result is a precise formulation of what non-negative COBRE guarantees, what remains estimated by least squares, and what must instead be handled through convex post-estimation correction.
+The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a strictly convex quadratic program, and the role of the earlier orthogonal affine projector is retained explicitly as a reference solution and inactive-constraint special case. In deployment, that quadratic program is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved. Accordingly, the affine core is identifiable from measured composite data, whereas the final inequality-constrained deployed predictor is fully specified only after a latent component-space representative has been fixed or additional component-space information has been supplied. The limits of exact closed-form uncertainty analysis for that deployed predictor are stated explicitly. The result is a precise formulation of what non-negative ICSOR guarantees, what remains estimated by least squares, and what must instead be handled through convex post-estimation correction.
 
 ## 1. Introduction and Modeling Objective
 
-Surrogate models are valuable in wastewater engineering because they replace repeated numerical simulation or repeated plant-wide optimization with a direct input-output map. That speed matters when screening operating scenarios, embedding a reactor model in a larger optimization loop, or performing sensitivity studies over many influent conditions. In this article, each sample is assumed to be a steady-state operating condition: the operating variables, influent composition, and effluent response are treated as time-invariant over the control volume being modeled. The usual difficulty is that a generic data-driven regressor can fit observed effluent data while still violating fundamental conservation structure. In activated-sludge modeling, that failure is not a minor technical detail. It undermines the physical credibility of the surrogate because it can imply component inventories that are inconsistent with the adopted reaction network even when the measured aggregates appear plausible.
+Surrogate models are valuable in wastewater engineering because they replace repeated numerical simulation or repeated plant-wide optimization with a direct input-output map. That speed matters when screening operating scenarios, embedding a reactor model in a larger optimization loop, or performing sensitivity studies over many influent conditions. In this article, each sample is assumed to represent a quasi-steady operating condition: the operating variables, influent composition, and effluent response are treated as effectively time-invariant over the control volume being modeled for the sampling window of interest. The usual difficulty is that a generic data-driven regressor can fit observed effluent data while still violating fundamental conservation structure. In activated-sludge modeling, that failure is not a minor technical detail. It undermines the physical credibility of the surrogate because it can imply component inventories that are inconsistent with the adopted reaction network even when the measured aggregates appear plausible.
 
 The source of the problem is a mismatch between two spaces.
 
@@ -17,26 +17,26 @@ The source of the problem is a mismatch between two spaces.
 
 These two spaces are related, but they are not the same. Conservation laws are naturally expressed in the ASM component basis because the stoichiometric matrix acts on individual components. Observations, however, are usually available only after those components have been aggregated into measurable composites. A surrogate that learns only in measured-output space may reproduce the observed aggregates while obscuring physically impossible changes in the underlying component inventory.
 
-Classical COBRE addresses that mismatch by predicting in component space and projecting the raw surrogate output onto the affine set consistent with the stoichiometric invariants. That construction repairs invariant violations, but it does not ensure that the projected component concentrations are non-negative. Negative component predictions are a serious defect in the present setting because component concentrations are themselves physical quantities and because negative components can propagate into implausible reported composites. The non-negative COBRE formulation developed here therefore strengthens the correction step. The affine invariant projection remains part of the derivation, but the deployed predictor is the closest point to the raw surrogate that satisfies both the invariant relations and componentwise non-negativity.
+The earlier affine-only ICSOR formulation addresses that mismatch by predicting in component space and projecting the raw surrogate output onto the affine set consistent with the stoichiometric invariants. That construction repairs invariant violations, but it does not ensure that the projected component concentrations are non-negative. Negative component predictions are a serious defect in the present setting because component concentrations are themselves physical quantities and because negative components can propagate into implausible reported composites. The non-negative ICSOR formulation developed here therefore strengthens the correction step. The affine invariant projection remains part of the derivation, but the deployed predictor is the closest point to the raw surrogate that satisfies both the invariant relations and componentwise non-negativity.
 
 The model is constructed to answer one precise question:
 
 > Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state must satisfy the conserved quantities implied by the adopted stoichiometric model and must remain non-negative componentwise?
 
-The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and quadratic-program correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to convex non-negative projection, to collapse into measured space, and finally to estimation and uncertainty.
+The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. That last point requires care: measured composite data identify the affine core, whereas any component-space inequality correction in deployment requires either a chosen latent representative or additional component-space information. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and quadratic-program correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to convex non-negative projection, to collapse into measured space, and finally to estimation and uncertainty.
 
 ## 2. Physical Scope, State Spaces, and Notation
 
 ### 2.1 Control volume and modeling scope
 
-We consider a fixed reactor block or fixed process unit operated at steady state. The system boundary is the same boundary used to define the influent and effluent state vectors. External sources or sinks that cross that boundary must either be represented explicitly in the adopted stoichiometric model or be excluded from the claim of invariant preservation. This includes transport or removal mechanisms such as bypass streams, gas stripping, chemical dosing, or sludge wastage if they cross the chosen boundary and are not encoded in the stoichiometric description. The theory therefore applies only after the modeler has fixed the following items:
+We consider a fixed reactor block or fixed process unit represented by quasi-steady samples. The system boundary is the same boundary used to define the influent and effluent state vectors. External sources or sinks that cross that boundary must either be represented explicitly in the adopted stoichiometric model or be excluded from the claim of invariant preservation. This includes transport or removal mechanisms such as bypass streams, gas stripping, chemical dosing, or sludge wastage if they cross the chosen boundary and are not encoded in the stoichiometric description. The theory therefore applies only after the modeler has fixed the following items:
 
 1. the reactor or process block being represented,
 2. the ASM component basis used to describe material composition,
 3. the stoichiometric matrix associated with that basis, and
 4. the measurement map used to aggregate component concentrations into observed composite variables.
 
-The framework is steady-state. It does not represent settling dynamics, sludge age dynamics, sensor dynamics, start-up transients, or time-varying trajectories. Changing the system boundary changes the admissible stoichiometric change space and therefore changes the invariant and non-negative feasible sets.
+The framework is steady-state in the sense of quasi-steady samples rather than full dynamic trajectories. It does not represent settling dynamics, sludge age dynamics, sensor dynamics, start-up transients, or time-varying trajectories. In plant applications, the samples would typically correspond to stable operating windows or time-averaged periods rather than literal mathematical equilibria. Changing the system boundary changes the admissible stoichiometric change space and therefore changes the invariant and non-negative feasible sets.
 
 ### 2.2 Why two state spaces are needed
 
@@ -47,7 +47,7 @@ The surrogate must therefore operate across two linked spaces:
 1. ASM component space, where stoichiometry, invariants, and non-negativity are defined.
 2. Measured composite space, where prediction targets are observed and evaluated.
 
-COBRE learns and constrains the prediction in component space and only then maps the result to measured space. That order remains essential in the non-negative formulation. Stoichiometric invariants originate in the component basis, and the componentwise non-negativity claim is also made in that basis. A measured-space-only correction would generally be too weak to control the underlying ASM state.
+ICSOR learns and constrains the prediction in component space and only then maps the result to measured space. That order remains essential in the non-negative formulation. Stoichiometric invariants originate in the component basis, and the componentwise non-negativity claim is also made in that basis. A measured-space-only correction would generally be too weak to control the underlying ASM state.
 
 ### 2.3 Notation
 
@@ -67,10 +67,10 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $I_{comp}$ | $\mathbb{R}^{K \times F}$ | Composition matrix mapping ASM component concentrations to measured composite variables |
 | $\nu$ | $\mathbb{R}^{R \times F}$ | Stoichiometric matrix with $R$ reactions and $F$ ASM components |
 | $\xi$ | $\mathbb{R}^{R}$ | Net reaction progress vector expressed in concentration-equivalent units so that $\nu^T \xi$ has the same units as $c_{out} - c_{in}$ |
-| $A$ | $\mathbb{R}^{q \times F}$ | Full-row-rank matrix whose rows form a basis of $\operatorname{null}(\nu)$ |
+| $A$ | $\mathbb{R}^{q \times F}$ | Full-row-rank matrix whose transposed rows form a basis of $\operatorname{null}(\nu)$, equivalently $A \nu^T = 0$ |
 | $P_{inv}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the row space of $A$ |
 | $P_{adm}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the admissible change space, $I_F - P_{inv}$ |
-| $N$ | $\mathbb{R}^{F \times (F-q)}$ | Matrix whose columns form an orthonormal basis of $\operatorname{null}(A)$ |
+| $N_A$ | $\mathbb{R}^{F \times (F-q)}$ | Matrix whose columns form an orthonormal basis of $\operatorname{null}(A)$ |
 | $\phi(u, c_{in})$ | $\mathbb{R}^{D}$ | Engineered second-order feature map |
 | $D$ | scalar | Feature dimension, $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$ |
 | $B$ | $\mathbb{R}^{F \times D}$ | Raw component-space coefficient matrix |
@@ -84,23 +84,23 @@ $$
 y = I_{comp} c_{out}
 $$
 
-This linear composition map is standard in activated-sludge modeling when measured variables are aggregates of ASM components. For example, total COD or total nitrogen is formed by summing the relevant component concentrations with appropriate conversion factors. In the non-negative COBRE setting, the sign structure of $I_{comp}$ matters because non-negative component predictions imply non-negative measured composites only when the corresponding measurement map is entrywise non-negative.
+This linear composition map is standard in activated-sludge modeling when measured variables are aggregates of ASM components. For example, total COD or total nitrogen is formed by summing the relevant component concentrations with appropriate conversion factors. In the common case of total COD, total nitrogen, total phosphorus, TSS, or VSS built as sums with non-negative conversion factors, the rows of $I_{comp}$ are entrywise non-negative. In the non-negative ICSOR setting, that sign structure matters because non-negative component predictions imply non-negative measured composites only under that condition. Throughout the chapter, $I_{comp}$ is treated as known and fixed; if its coefficients are themselves estimated, that uncertainty lies outside the present error model.
 
 ## 3. Modeling Assumptions
 
 The framework rests on the following assumptions. These are not optional preferences left to the reader. They define the exact model analyzed in this article.
 
-1. **Steady-state scope.** Each sample represents a steady-state input-output condition. The model is not a dynamic state estimator.
+1. **Steady-state scope.** Each sample represents a quasi-steady input-output condition, typically a stable operating epoch or time-averaged window. The model is not a dynamic state estimator.
 2. **Fixed component basis.** The ASM component basis and the associated stoichiometric matrix are fixed before regression begins.
 3. **Consistent system boundary.** The same physical boundary is used to define $c_{in}$, $c_{out}$, and the conservation statement. Any external source or sink outside that boundary is outside the present model.
-4. **Linear composition map.** Measured effluent variables are linear combinations of the underlying ASM component concentrations through $I_{comp}$.
+4. **Linear composition map.** Measured effluent variables are linear combinations of the underlying ASM component concentrations through a known fixed matrix $I_{comp}$.
 5. **Direct effluent-state parameterization.** The surrogate is parameterized to predict the effluent ASM component state $c_{out}$ directly rather than the component change $c_{out} - c_{in}$.
 6. **Second-order surrogate class.** The raw surrogate is a partitioned second-order polynomial model that includes linear, quadratic, and operation-loading interaction terms.
 7. **Euclidean correction metric.** The deployed correction is defined as the smallest Euclidean adjustment in ASM component concentration space that restores the required constraints.
 8. **Constraint scope.** The final projection enforces the stoichiometric invariants implied by the chosen basis and system boundary together with componentwise non-negativity. It does not enforce upper bounds, kinetic feasibility, or thermodynamic admissibility beyond those conditions.
 9. **Influent feasibility.** The influent reference state is assumed non-negative in component space. Under that assumption the non-negative feasible set is non-empty because the influent state itself satisfies the invariant equalities.
 10. **Composite-sign scope.** Non-negative component predictions imply non-negative measured composites only when the relevant rows of $I_{comp}$ are entrywise non-negative. If the measurement convention uses negative coefficients, extra output-space sign constraints would be required for a composite non-negativity guarantee.
-11. **Statistical scope.** Classical least-squares coefficient and affine-core prediction intervals are interpreted under independent-sample multivariate linear-model assumptions. Exact finite-sample $t$-based intervals do not generally extend to the final inequality-constrained deployed predictor.
+11. **Statistical scope.** Classical least-squares coefficient and affine-core prediction intervals are interpreted under independent-sample Gaussian multivariate linear-model assumptions. Exact finite-sample $t$-based intervals require a full-rank affine-core design and do not generally extend to the final inequality-constrained deployed predictor.
 
 These assumptions matter because each one narrows the scientific claim. A prediction that satisfies the invariant relations and componentwise non-negativity is physically better disciplined than the affine-only formulation, but it is still not automatically guaranteed to be fully process-realizable in every operating regime.
 
@@ -108,7 +108,7 @@ These assumptions matter because each one narrows the scientific claim. A predic
 
 ### 4.1 From stoichiometric reactions to component-state change
 
-Let $\nu \in \mathbb{R}^{R \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. For one steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{R}$ so that
+Let $\nu \in \mathbb{R}^{R \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. Its entries are treated here as fixed stoichiometric coefficients in that basis; any scaling needed to express component-state change in concentration units is absorbed into the definition of the reaction-progress vector. For one steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{R}$ so that
 
 $$
 c_{out} - c_{in} = \nu^T \xi
@@ -120,13 +120,13 @@ That definition makes the statement dimensionally coherent: both $c_{out} - c_{i
 
 ### 4.2 Invariant relations implied by the stoichiometric matrix
 
-The reaction progress vector $\xi$ is not part of the surrogate model and is usually not observed. To eliminate it, we introduce a matrix $A \in \mathbb{R}^{q \times F}$ whose rows form a basis of $\operatorname{null}(\nu)$. By construction,
+The reaction progress vector $\xi$ is not part of the surrogate model and is usually not observed. To eliminate it, we introduce a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ whose transposed rows form a basis of $\operatorname{null}(\nu)$. Equivalently, each row $a$ of $A$, viewed as a vector in $\mathbb{R}^{F}$, satisfies
 
 $$
 \nu a^T = 0
 $$
 
-for every row vector $a$ of $A$, and therefore
+and therefore
 
 $$
 A \nu^T = 0
@@ -144,7 +144,7 @@ $$
 A c_{out} = A c_{in}
 $$
 
-Each row of $A$ represents one independent conserved combination of ASM components under the adopted stoichiometric model and system boundary. The exact physical interpretation depends on the chosen basis and stoichiometric matrix. In activated-sludge applications, the conserved combinations often correspond to pools such as COD equivalents, nitrogen equivalents, phosphorus equivalents, or charge-related balances, provided those balances are preserved by the modeled reaction network and the selected boundary.
+Each row of $A$ represents one independent conserved combination of ASM components under the adopted stoichiometric model and system boundary. The exact physical interpretation depends on the chosen basis and stoichiometric matrix. In activated-sludge applications, the conserved combinations may correspond to pools such as COD equivalents, nitrogen equivalents, phosphorus equivalents, or charge-related balances, but only when those balances are actually implied by the adopted reaction network and boundary. The invariants are algebraic consequences of $\nu$ and the boundary definition; they do not acquire physical meaning automatically.
 
 ### 4.3 Why the basis of $A$ is not unique
 
@@ -188,7 +188,57 @@ $$
 c_{out,1} + c_{out,2} = c_{in,1} + c_{in,2}
 $$
 
-The reaction may redistribute material between the two components, but it cannot change the conserved total represented by $c_1 + c_2$. In the non-negative COBRE setting, the feasible effluent set is therefore the non-negative line segment satisfying this equality. The later correction step will select the point on that segment closest to the raw surrogate prediction.
+The reaction may redistribute material between the two components, but it cannot change the conserved total represented by $c_1 + c_2$. In the non-negative ICSOR setting, the feasible effluent set is therefore the non-negative line segment satisfying this equality. The later correction step will select the point on that segment closest to the raw surrogate prediction.
+
+### 4.5 ASM-flavored miniature example
+
+A slightly more ASM-flavored toy example shows why projection must happen before measurement collapse. Suppose the component vector is
+
+$$
+c = \begin{bmatrix} S_S \\ X_S \\ S_{NH} \end{bmatrix}
+$$
+
+where $S_S$ is soluble substrate, $X_S$ is particulate substrate, and $S_{NH}$ is ammonium. Let one simplified reaction convert soluble substrate into particulate substrate without changing ammonium,
+
+$$
+\nu = \begin{bmatrix}
+-1 & 1 & 0
+\end{bmatrix}
+$$
+
+so one admissible invariant basis is
+
+$$
+A = \begin{bmatrix}
+1 & 1 & 0 \\
+0 & 0 & 1
+\end{bmatrix}
+$$
+
+which preserves total COD equivalents in the first two components and preserves ammonium in the third. Suppose the measured outputs are total COD and ammonium,
+
+$$
+I_{comp} = \begin{bmatrix}
+1 & 1 & 0 \\
+0 & 0 & 1
+\end{bmatrix}
+$$
+
+If
+
+$$
+c_{in} = \begin{bmatrix} 10 \\ 10 \\ 5 \end{bmatrix}
+\qquad \text{and} \qquad
+c_{raw} = \begin{bmatrix} -1 \\ 21 \\ 5 \end{bmatrix},
+$$
+
+then the measured output is already
+
+$$
+y_{raw} = I_{comp} c_{raw} = \begin{bmatrix} 20 \\ 5 \end{bmatrix},
+$$
+
+which is exactly the same measured output produced by the feasible state $[0, 20, 5]^T$. A measured-space-only correction cannot distinguish those two component states, because both collapse to the same aggregates. The component-space non-negative projection, however, detects that $c_{raw}$ violates $c \ge 0$ and moves the prediction to the nearest point on the feasible set $A c = A c_{in}$, $c \ge 0$, namely $[0, 20, 5]^T$ in this simple case. The example is still toy-sized, but it captures the key logic of the full framework: invariants and non-negativity are enforced where the stoichiometric state actually lives, then the corrected state is collapsed to measured outputs.
 
 ## 5. Unconstrained Surrogate in ASM Component Space
 
@@ -199,7 +249,7 @@ In activated-sludge systems, operating conditions and influent component concent
 1. Operating variables such as hydraulic retention time, dissolved-oxygen setpoint, or recycle settings alter the process environment.
 2. Influent component concentrations describe the material inventory entering that environment.
 
-Treating those two groups as interchangeable predictors hides an important engineering distinction. COBRE therefore partitions the input into an operational block $u$ and an influent component block $c_{in}$.
+Treating those two groups as interchangeable predictors hides an important engineering distinction. ICSOR therefore partitions the input into an operational block $u$ and an influent component block $c_{in}$.
 
 ### 5.2 Feature map
 
@@ -224,7 +274,7 @@ $$
 D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F
 $$
 
-Retaining the full vectorized quadratic blocks avoids hidden indexing conventions and makes the later estimation problem unambiguous.
+Retaining the full vectorized quadratic blocks avoids hidden indexing conventions and makes the later estimation problem unambiguous. This second-order polynomial basis is a modeling choice rather than a theorem. It is used here because it retains linear terms, self-quadratic curvature, and operation-loading interactions in one explicit design matrix. The cost is rapid growth of $D$; when the sample count is not large relative to $D$, the later coefficient interpretation becomes fragile, as discussed in Section 8.4.
 
 ### 5.3 Raw effluent-state surrogate
 
@@ -260,11 +310,11 @@ Each block has a physical interpretation.
 2. $W_{in} c_{in}$ captures direct carry-through and first-order dependence on influent composition.
 3. $\Theta_{uu}(u \otimes u)$ captures nonlinear interactions among operating variables.
 4. $\Theta_{cc}(c_{in} \otimes c_{in})$ captures nonlinear dependence on influent composition.
-5. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that motivates the COBRE name.
+5. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that remains central to the ICSOR design.
 
-The model is therefore not purely bilinear in the strict algebraic sense because it includes self-quadratic terms as well as cross terms. The name COBRE is retained because the operational-loading interaction remains the defining structural idea, but the mathematical class should be understood precisely as a partitioned second-order regression model with bilinear cross interactions.
+The model is therefore a partitioned second-order regression model. For that reason, the framework is referred to here as invariant-constrained second-order regression (ICSOR): second-order because the surrogate includes linear, self-quadratic, and cross-interaction terms, and invariant-constrained because the deployed correction is defined by stoichiometric invariant equalities together with non-negativity.
 
-The raw surrogate is flexible enough to capture curvature and interaction, but it is data-driven and unconstrained. There is no reason for $c_{raw}$ to satisfy the invariant relation $A c_{raw} = A c_{in}$ or the componentwise non-negativity requirement without an additional correction step. The next section therefore introduces the constrained correction that separates learned variation from physically required structure.
+The raw surrogate is flexible enough to capture curvature and interaction, but it is data-driven and unconstrained. There is no reason for $c_{raw}$ to satisfy the invariant relation $A c_{raw} = A c_{in}$ or the componentwise non-negativity requirement without an additional correction step. At this stage, however, $B$ should be read as a latent component-space parameterization rather than as an identified empirical object. Section 8 shows that measured composite data identify the affine measured-space core $M = G B$, not $B$ uniquely. That distinction is harmless for the affine core but becomes consequential once the positivity correction is executed in component space. The next section therefore introduces the constrained correction that separates learned variation from physically required structure.
 
 ## 6. Projection onto the Invariant-Consistent Non-Negative Set
 
@@ -280,7 +330,7 @@ This set contains exactly those effluent component states whose conserved combin
 
 ### 6.2 Orthogonal affine projection as reference solution
 
-Before imposing non-negativity, COBRE can correct the raw surrogate by solving
+Before imposing non-negativity, ICSOR can correct the raw surrogate by solving
 
 $$
 \min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{raw} \rVert_2^2
@@ -310,7 +360,7 @@ This expression remains important in the present article for two reasons. First,
 
 ### 6.3 Non-negative feasible set
 
-The deployed non-negative COBRE predictor is defined on the smaller feasible set
+The deployed non-negative ICSOR predictor is defined on the smaller feasible set
 
 $$
 \mathcal{S}_+(c_{in}) = \{ c \in \mathbb{R}^{F} : A c = A c_{in}, \; c \ge 0 \}
@@ -320,7 +370,7 @@ where $c \ge 0$ is understood componentwise. This set intersects the invariant-c
 
 ### 6.4 Non-negative correction problem
 
-Non-negative COBRE corrects the raw surrogate by solving
+Non-negative ICSOR corrects the raw surrogate by solving
 
 $$
 \min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{raw} \rVert_2^2
@@ -334,7 +384,7 @@ A c = A c_{in},
 c \ge 0
 $$
 
-The objective asks for the smallest Euclidean adjustment in ASM component concentration space that restores both the invariant relations and componentwise non-negativity. Relative to the affine-only correction, the feasible set is smaller but still convex. The problem is therefore a strictly convex quadratic program with linear equality and inequality constraints.
+The objective asks for the smallest Euclidean adjustment in ASM component concentration space that restores both the invariant relations and componentwise non-negativity. Because that metric is Euclidean in raw concentration coordinates, component scaling influences the magnitude and direction of the correction; a weighted metric would define a different model. Relative to the affine-only correction, the feasible set is smaller but still convex. The problem is therefore a strictly convex quadratic program with linear equality and inequality constraints.
 
 This formulation can be recentered around the orthogonal affine projection without changing the minimizer. For every feasible $c \in \mathcal{S}_+(c_{in}) \subseteq \mathcal{S}(c_{in})$,
 
@@ -372,7 +422,7 @@ The affine projector is therefore not only a theoretical reference solution. It 
 
 ### 6.5 Feasibility, existence, and uniqueness
 
-The first question is whether the feasible set can be empty. Under the present modeling assumptions, it is not. If the influent component state is non-negative, then $c = c_{in}$ is feasible because it satisfies
+The first question is whether the feasible set can be empty. This is where Assumption 9 matters. Under the present modeling assumptions, it is not. If the influent component state is non-negative, then $c = c_{in}$ is feasible because it satisfies
 
 $$
 A c_{in} = A c_{in},
@@ -390,7 +440,7 @@ and the feasible set is non-empty.
 
 Because $\mathcal{S}_+(c_{in})$ is a closed convex set and the objective is continuous, a minimizer exists. Because the Hessian of the objective is $I_F$, the objective is strictly convex, and therefore the minimizer is unique. We denote that unique point by $c^*$.
 
-Thus, for every pair $(c_{raw}, c_{in})$ with $c_{in} \ge 0$, non-negative COBRE produces one and only one corrected component-state prediction $c^*$.
+Thus, for every pair $(c_{raw}, c_{in})$ with $c_{in} \ge 0$, non-negative ICSOR produces one and only one corrected component-state prediction $c^*$. If an upstream reconstruction were to produce negative influent components, that guarantee would fail and feasibility would have to be checked separately.
 
 ### 6.6 KKT characterization
 
@@ -420,6 +470,8 @@ $$
 \mu_i c_i = 0, \qquad i = 1, \dots, F
 $$
 
+For this feasible strictly convex quadratic program with affine constraints, any primal-dual point satisfying the KKT system is the unique minimizer $c^*$.
+
 The stationarity condition shows that the correction from $c_{raw}$ to $c^*$ lies in the sum of two directions: the row space of $A$, which enforces the stoichiometric invariants, and the cone generated by active non-negativity constraints, which prevents components from crossing below zero. Complementary slackness identifies which non-negativity constraints are active at the solution.
 
 ### 6.7 Relation to the orthogonal affine projector
@@ -440,7 +492,7 @@ c^* = c_{aff}
 c_{aff} \ge 0
 $$
 
-This result provides continuity with the earlier COBRE theory. The non-negative formulation does not replace the orthogonal affine projector arbitrarily; it extends it to the cases where the affine projector would otherwise leave the physically admissible orthant.
+This result provides continuity with the earlier affine-only ICSOR theory. The non-negative formulation does not replace the orthogonal affine projector arbitrarily; it extends it to the cases where the affine projector would otherwise leave the physically admissible orthant.
 
 ### 6.8 Efficient deployment sequence
 
@@ -458,28 +510,28 @@ One degenerate case is worth noting. If $A$ has zero rows, then there is no non-
 
 ### 6.9 Reduced null-space formulation
 
-The affine-centered formulation also leads to a reduced problem that is often easier to solve numerically. Let $N \in \mathbb{R}^{F \times (F-q)}$ have orthonormal columns spanning $\operatorname{null}(A)$. Every point in the affine set can then be written as
+The affine-centered formulation also leads to a reduced problem that is often easier to solve numerically. Let $N_A \in \mathbb{R}^{F \times (F-q)}$ have orthonormal columns spanning $\operatorname{null}(A)$. Every point in the affine set can then be written as
 
 $$
-c = c_{aff} + N z
+c = c_{aff} + N_A z
 $$
 
-for some reduced coordinate vector $z \in \mathbb{R}^{F-q}$, because $A c_{aff} = A c_{in}$ and $A N = 0$. The equality constraints are therefore built into the parameterization. Substituting into the affine-centered objective gives
+for some reduced coordinate vector $z \in \mathbb{R}^{F-q}$, because $A c_{aff} = A c_{in}$ and $A N_A = 0$. This parameterization therefore satisfies the equality constraint automatically. Substituting into the affine-centered objective gives
 
 $$
-\min_{z \in \mathbb{R}^{F-q}} \; \frac{1}{2} \lVert N z \rVert_2^2
+\min_{z \in \mathbb{R}^{F-q}} \; \frac{1}{2} \lVert N_A z \rVert_2^2
 $$
 
 subject to
 
 $$
-N z \ge -c_{aff}
+N_A z \ge -c_{aff}
 $$
 
-Since $N$ has orthonormal columns,
+Since $N_A$ has orthonormal columns,
 
 $$
-\lVert N z \rVert_2^2 = z^T N^T N z = z^T z
+\lVert N_A z \rVert_2^2 = z^T N_A^T N_A z = z^T z
 $$
 
 and the reduced problem becomes
@@ -491,10 +543,10 @@ $$
 subject to
 
 $$
-N z \ge -c_{aff}
+N_A z \ge -c_{aff}
 $$
 
-If a non-orthonormal null-space basis is used instead, the reduced Hessian becomes $N^T N$. The feasible set is unchanged, but the orthonormal basis is preferable because it preserves the Euclidean metric and improves conditioning.
+If a non-orthonormal null-space basis is used instead, the reduced Hessian becomes $N_A^T N_A$. The feasible set is unchanged, but the orthonormal basis is preferable because it preserves the Euclidean metric and improves conditioning.
 
 This reduced form makes the computational role of the quadratic program more transparent. The solver is no longer enforcing the affine invariant equalities; those have already been resolved exactly by the affine projector. It is only finding the smallest admissible displacement inside the null-space directions that restores non-negativity.
 
@@ -533,7 +585,7 @@ $$
 y^* = I_{comp} c^*
 $$
 
-This is the deployed prediction reported by non-negative COBRE.
+This is the deployed prediction reported by non-negative ICSOR.
 
 ### 7.2 When component non-negativity implies composite non-negativity
 
@@ -613,7 +665,7 @@ $$
 y^* = y_{aff} + \delta_+(u, c_{in})
 $$
 
-When the affine projector is already non-negative, $\delta_+(u, c_{in}) = 0$. When one or more non-negativity constraints are active, $\delta_+(u, c_{in})$ is a sample-specific correction induced by the active inequality set. This decomposition is useful because it separates the globally affine, data-identifiable part of the model from the local correction needed to enforce physical admissibility.
+When the affine projector is already non-negative, $\delta_+(u, c_{in}) = 0$. When one or more non-negativity constraints are active, $\delta_+(u, c_{in})$ is a sample-specific correction induced by the active inequality set. This decomposition is useful because it separates the globally affine, data-identifiable part of the model from the local correction needed to enforce physical admissibility. It also exposes a key boundary: once inequalities are active, $\delta_+(u, c_{in})$ depends on the chosen component-space raw prediction and therefore is not identified from measured composite data alone unless a latent representative has already been fixed.
 
 ### 7.5 Blockwise affine-core interpretation
 
@@ -668,6 +720,8 @@ $$
 This blockwise expression remains useful for interpretation, but it must now be interpreted correctly. It decomposes the affine core $y_{aff}$, not necessarily the final deployed prediction $y^*$. The final prediction is obtained by adding the sample-specific positivity correction $\delta_+(u, c_{in})$.
 
 ## 8. Estimation and Identifiability from Measured Composite Data
+
+At the estimation stage, three objects must be kept distinct: the latent component-space coefficient matrix $B$, the affine measured-space core, and the final deployed predictor $y^*$. Measured composite data identify an affine-core fit in measured space directly. They do not identify $B$ uniquely without additional component-space structure, and a further representability step may be needed before that measured-space fit can be used in a component-space deployment map of the form $M = G B$.
 
 ### 8.1 Dataset-level affine-core model
 
@@ -777,24 +831,24 @@ $$
 
 The pseudoinverse expression is the general statement. The explicit inverse is only a full-rank special case.
 
-This least-squares stage is unchanged by the introduction of non-negativity. The non-negative COBRE article does not replace coefficient estimation with a nonlinear estimator. It keeps least-squares estimation for the identifiable affine core and applies the non-negative correction after that stage.
+This least-squares stage is unchanged by the introduction of non-negativity. The non-negative ICSOR article does not replace coefficient estimation with a nonlinear estimator. It keeps least-squares estimation for the affine core and applies the non-negative correction after that stage. If one intends to reconstruct a component-space surrogate, Section 8.5 shows that a representability step may still be required before deployment.
 
 ### 8.4 Rank deficiency and interpretability
 
-Second-order feature maps can be high dimensional, and real wastewater datasets may not excite all directions of that design space. If $\Phi$ is rank deficient, the fitted affine-core values remain well defined through the pseudoinverse, but the individual coefficients of $M$ are not uniquely identified. In that case, the minimum-norm pseudoinverse returns one representative coefficient matrix, not a unique physical truth. Under rank deficiency, interpretation should focus on fitted affine-core predictions or on estimable linear functionals rather than on individual coefficients. In practical terms, the modeler then has three defensible options: reduce the feature basis, regularize the estimation problem, or shift the inferential emphasis from coefficients to predicted outputs and their uncertainty.
+Second-order feature maps can be high dimensional, and real wastewater datasets may not excite all directions of that design space. If $N < D$, full column rank is impossible from the outset; even when $N \ge D$, the design may still be rank deficient because some feature directions are weakly or redundantly excited. In those cases, the fitted affine-core values remain well defined through the pseudoinverse, but the individual coefficients of $M$ are not uniquely identified. The minimum-norm pseudoinverse then returns one representative coefficient matrix, not a unique physical truth. Under rank deficiency, interpretation should focus on fitted affine-core predictions or on estimable linear functionals rather than on individual coefficients. In practical terms, the modeler then has three defensible options: reduce the feature basis, regularize the estimation problem, or shift the inferential emphasis from coefficients to predicted outputs and their uncertainty.
 
 ### 8.5 Reconstructing one admissible component-space coefficient matrix
 
-If one needs a component-space coefficient matrix after estimating $M$, it must satisfy
+If one seeks an exact component-space representative for a known affine-core matrix $M$ satisfying
 
 $$
 G B = M
 $$
 
-The minimum-Frobenius-norm solution is
+then the minimum-Frobenius-norm exact representative is
 
 $$
-\widehat B_{min} = G^+ M
+B_{min} = G^+ M
 $$
 
 and the full solution set is
@@ -805,9 +859,29 @@ $$
 
 for arbitrary $Z \in \mathbb{R}^{F \times D}$. The free matrix $Z$ is the algebraic statement of non-identifiability.
 
+After estimation, however, the available object is $\widehat M$ rather than an exact population matrix $M$. The matrix
+
+$$
+\widehat B_{ls} = G^+ \widehat M
+$$
+
+is always defined and gives the minimum-Frobenius-norm least-squares representative because
+
+$$
+G \widehat B_{ls} = G G^+ \widehat M,
+$$
+
+which is the orthogonal projection of $\widehat M$ onto $\operatorname{range}(G)$. Define the compatible affine-core operator
+
+$$
+\widehat M_G = G \widehat B_{ls} = G G^+ \widehat M.
+$$
+
+It satisfies $\widehat M_G = \widehat M$ only when $\widehat M$ already lies in $\operatorname{range}(G)$. Therefore $\widehat B_{ls}$ should be interpreted as a chosen latent representative for deployment, not as an identified physical coefficient matrix, and $\widehat M_G$ is the corresponding representable affine core. Any other representative obtained by adding $(I_F - G^+ G) Z$ leaves that representable affine core unchanged but can alter the component-space raw state used by the later inequality correction.
+
 ### 8.6 Final deployed predictor after estimation
 
-Once an admissible raw coefficient matrix has been chosen, the estimated raw component prediction for a new sample is
+Once a component-space representative $\widehat B$ has been fixed, the estimated raw component prediction for a new sample is
 
 $$
 \widehat c_{raw} = \widehat B \phi(u, c_{in})
@@ -825,7 +899,13 @@ $$
 \widehat y^* = I_{comp} \widehat c^*
 $$
 
-This last map is deterministic, but it is not globally affine in $\phi(u, c_{in})$. The least-squares coefficients therefore characterize the identifiable affine core of non-negative COBRE, while the final prediction is produced by augmenting that core with a sample-specific convex correction applied after estimation and before collapse to measured space.
+This last map is deterministic conditional on the chosen representative $\widehat B$, but it is not globally affine in $\phi(u, c_{in})$. If the non-negativity constraints are inactive, then the deployed prediction collapses to the representable affine core
+
+$$
+\widehat y_{aff,G} = \widehat M_G \phi(u, c_{in}) + H c_{in},
+$$
+
+which equals the unconstrained least-squares affine-core fit only when $\widehat M$ already lies in $\operatorname{range}(G)$ or representability was enforced during estimation. If one or more inequalities activate, different admissible representatives can generate different $\widehat c_{raw}$ and therefore different projected outputs. The least-squares coefficients therefore characterize the measured-space affine-core fit, while the final deployed predictor becomes a fully specified ICSOR model only after one of two additional steps is taken: select a representative such as $\widehat B_{ls} = G^+ \widehat M$, together with its compatible affine core $\widehat M_G = G G^+ \widehat M$, or impose extra component-space structure or data that identify $B$ more tightly.
 
 ## 9. Statistical Inference and Predictive Uncertainty
 
@@ -845,9 +925,21 @@ $$
 
 where $\Omega \in \mathbb{R}^{K \times K}$ is the within-sample covariance across measured outputs. This allows, for example, COD and total nitrogen errors to be correlated within the same sample.
 
+Whenever finite-sample interval formulas are invoked below, the intended regime is the usual full-rank Gaussian multivariate linear model. In particular, $N > D$ and $\Phi$ has full column rank $D$. Define the fitted residual matrix
+
+$$
+\widehat E = \widetilde Y - \Phi \widehat M^T
+$$
+
+and the usual covariance estimator
+
+$$
+\widehat \Omega = \frac{1}{N-D} \widehat E^T \widehat E.
+$$
+
 ### 9.2 Full-rank affine-core coefficient covariance
 
-If $\Phi$ has full column rank $D$, then
+Under those full-rank conditions,
 
 $$
 \widehat M^T = (\Phi^T \Phi)^{-1} \Phi^T \widetilde Y
@@ -946,36 +1038,39 @@ The partitioned feature map separates operating effects, influent-composition ef
 
 The Euclidean correction gives a unique convex projection and keeps the constrained step mathematically clean. At the same time, it is sensitive to the scaling of component coordinates. If one component is numerically much larger or measured in a much different effective scale than another, the Euclidean metric may assign disproportionate influence to that direction. A weighted projection may be preferable in some applications, but that would be a different model from the one defined here.
 
+More explicitly, replacing $\lVert c - c_{raw} \rVert_2^2$ by $(c - c_{raw})^T W (c - c_{raw})$ with positive-definite $W$ would change both the geometry of the correction and the deployed predictor. The present article therefore treats metric choice as part of the model definition rather than as a numerical afterthought.
+
 ### 10.4 Projection before measurement collapse
 
 Enforcing the invariant relations and non-negativity before collapsing to measured space is a substantive modeling decision, not a notational convenience. It preserves the constraints in the space where the stoichiometric matrix is actually defined and where the non-negativity claim is physically meaningful. Once the state is collapsed into measured composites, some physically meaningful directions may no longer be separately visible.
 
 ### 10.5 Affine-core coefficients versus the final deployed predictor
 
-The affine-core coefficients $M$ are the correct objects for direct engineering interpretation because they act directly on observed outputs through the identifiable least-squares stage. The latent component-space coefficients $B$ remain generally non-unique unless extra structure is imposed. The final deployed predictor $y^*$ adds one more layer: even when $M$ is well estimated, the final sample-specific output also depends on which non-negativity constraints are active. That means coefficient interpretation is clearest for the affine core, whereas the final prediction should be read as affine signal plus convex feasibility correction.
+The affine-core coefficients $M$ are the correct objects for direct engineering interpretation because they act directly on observed outputs through the identifiable least-squares stage. The latent component-space coefficients $B$ remain generally non-unique unless extra structure is imposed. The final deployed predictor $y^*$ adds one more layer: even when $M$ is well estimated, the final sample-specific output depends on which non-negativity constraints are active and, when those constraints do activate, on the chosen latent representative used to form $c_{raw}$. That means coefficient interpretation is clearest for the affine core, whereas the final prediction should be read as affine signal plus a representative-dependent convex feasibility correction.
 
 ## 11. Limitations
 
-Non-negative COBRE is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
+Non-negative ICSOR is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
 
-1. It is steady-state and does not represent temporal dynamics or path dependence.
+1. It is steady-state in the quasi-steady-sample sense and does not represent temporal dynamics or path dependence.
 2. It enforces only the invariant relations encoded by the chosen stoichiometric basis and system boundary together with componentwise non-negativity.
 3. Non-negative component concentrations do not guarantee full kinetic, biological, or thermodynamic feasibility.
 4. Non-negative component predictions imply non-negative measured composites only when the adopted composition matrix has the appropriate sign structure.
 5. The correction depends on the chosen metric and is therefore sensitive to component scaling.
 6. The final deployed predictor is not globally representable by one affine measured-space coefficient matrix once non-negativity constraints become active.
-7. Exact closed-form prediction intervals are available for the affine core under the usual linear-model assumptions, but not in general for the final non-negative deployed predictor.
-8. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear.
-9. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct projection onto the wrong physical constraint set.
-10. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the affine-core output-noise covariance formulas derived here.
+7. When positivity constraints activate, the final deployed predictor is not identified from measured composite data alone unless a component-space representative is chosen or extra component-space information is supplied.
+8. Exact closed-form prediction intervals are available for the affine core under the usual linear-model assumptions, but not in general for the final non-negative deployed predictor.
+9. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear.
+10. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct projection onto the wrong physical constraint set.
+11. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the affine-core output-noise covariance formulas derived here.
 
 These limitations should be stated explicitly in any application. Doing so does not weaken the model. It defines the scope of its claims correctly.
 
 ## 12. Conclusion
 
-Non-negative COBRE combines a partitioned second-order surrogate with a convex projection derived from stoichiometric invariants and componentwise non-negativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies. In deployment, the correction should be evaluated hierarchically so that the quadratic program is reserved for the subset of samples not already repaired by the closed-form affine projector.
+Non-negative ICSOR combines a partitioned second-order surrogate with a convex projection derived from stoichiometric invariants and componentwise non-negativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies. In deployment, the correction should be evaluated hierarchically so that the quadratic program is reserved for the subset of samples not already repaired by the closed-form affine projector.
 
-The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by least squares, the final prediction is obtained by projecting the raw component-space state onto the invariant-consistent non-negative set. Under that reading, non-negative COBRE is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
+The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by least squares, the final prediction is obtained by projecting a chosen raw component-space state onto the invariant-consistent non-negative set. When inequalities are inactive, that deployed prediction collapses exactly to the identifiable affine core. When inequalities are active, deployment additionally requires a chosen component-space representative or extra component-space information, because measured composite data alone do not identify the corrected component-space map uniquely. Under that reading, non-negative ICSOR is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
 
 ## References
 

@@ -11,6 +11,21 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from scipy.linalg import null_space
 
+from src.models.ml.ann_deep_regressor import (
+    load_ann_deep_regressor_params,
+    predict_ann_deep_regressor_model,
+    run_ann_deep_regressor_pipeline,
+)
+from src.models.ml.ann_medium_regressor import (
+    load_ann_medium_regressor_params,
+    predict_ann_medium_regressor_model,
+    run_ann_medium_regressor_pipeline,
+)
+from src.models.ml.ann_shallow_regressor import (
+    load_ann_shallow_regressor_params,
+    predict_ann_shallow_regressor_model,
+    run_ann_shallow_regressor_pipeline,
+)
 from src.models.ml.adaboost_regressor import (
     load_adaboost_regressor_params,
     predict_adaboost_regressor_model,
@@ -26,6 +41,8 @@ from src.models.ml.lightgbm_regressor import (
     predict_lightgbm_regressor_model,
     run_lightgbm_regressor_pipeline,
 )
+from src.models.ml.knn_regressor import load_knn_regressor_params, predict_knn_regressor_model, run_knn_regressor_pipeline
+from src.models.ml.pls_regressor import load_pls_regressor_params, predict_pls_regressor_model, run_pls_regressor_pipeline
 from src.models.ml.random_forest_regressor import (
     load_random_forest_regressor_params,
     predict_random_forest_regressor_model,
@@ -67,14 +84,29 @@ def _build_tiny_params(base_params: dict[str, object], *, iteration_key: str | N
         "persist_optuna": True,
     }
 
+    if "batch_size" in params["training_defaults"]:
+        params["training_defaults"]["batch_size"] = 8
+    if "hidden_layer_sizes" in params["training_defaults"]:
+        params["training_defaults"]["learning_rate_init"] = 0.01
+        params["training_defaults"]["tol"] = 0.01
+
     if iteration_key is not None and iteration_key in params["training_defaults"]:
-        params["training_defaults"][iteration_key] = 12
-        params["search_space"][iteration_key] = {
-            "type": "int",
-            "low": 8,
-            "high": 12,
-            "log": False,
-        }
+        if iteration_key == "max_iter":
+            params["training_defaults"][iteration_key] = 50
+            params["search_space"][iteration_key] = {
+                "type": "int",
+                "low": 20,
+                "high": 50,
+                "log": False,
+            }
+        else:
+            params["training_defaults"][iteration_key] = 12
+            params["search_space"][iteration_key] = {
+                "type": "int",
+                "low": 8,
+                "high": 12,
+                "log": False,
+            }
 
     return params
 
@@ -90,6 +122,41 @@ class TabularRegressorTests(unittest.TestCase):
         cls.a_matrix = _compute_a_matrix(cls.petersen_matrix, cls.composition_matrix)
         cls.projection_active = has_active_projection(cls.a_matrix)
         cls.model_specs = [
+            {
+                "name": "knn_regressor",
+                "load_params": load_knn_regressor_params,
+                "run_pipeline": run_knn_regressor_pipeline,
+                "predict_model": predict_knn_regressor_model,
+                "iteration_key": None,
+            },
+            {
+                "name": "pls_regressor",
+                "load_params": load_pls_regressor_params,
+                "run_pipeline": run_pls_regressor_pipeline,
+                "predict_model": predict_pls_regressor_model,
+                "iteration_key": "max_iter",
+            },
+            {
+                "name": "ann_shallow_regressor",
+                "load_params": load_ann_shallow_regressor_params,
+                "run_pipeline": run_ann_shallow_regressor_pipeline,
+                "predict_model": predict_ann_shallow_regressor_model,
+                "iteration_key": "max_iter",
+            },
+            {
+                "name": "ann_medium_regressor",
+                "load_params": load_ann_medium_regressor_params,
+                "run_pipeline": run_ann_medium_regressor_pipeline,
+                "predict_model": predict_ann_medium_regressor_model,
+                "iteration_key": "max_iter",
+            },
+            {
+                "name": "ann_deep_regressor",
+                "load_params": load_ann_deep_regressor_params,
+                "run_pipeline": run_ann_deep_regressor_pipeline,
+                "predict_model": predict_ann_deep_regressor_model,
+                "iteration_key": "max_iter",
+            },
             {
                 "name": "xgboost_regressor",
                 "load_params": load_xgboost_regressor_params,

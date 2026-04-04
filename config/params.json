@@ -929,7 +929,7 @@
       "cobre_response_surface": {
         "grid_points_per_axis": 100,
         "contour_levels": 20,
-        "operational_extension_fraction": 1.5,
+        "operational_extension_fraction": 3,
         "fixed_influent_profile": "midpoint"
       }
     }
@@ -1336,6 +1336,294 @@
         "low": 2,
         "high": 4,
         "log": false
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "knn_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": true,
+      "scale_targets": true
+    },
+    "training_defaults": {
+      "n_neighbors": 5,
+      "weights": "distance",
+      "algorithm": "auto",
+      "leaf_size": 30,
+      "p": 2,
+      "metric": "minkowski",
+      "n_jobs": -1
+    },
+    "search_space": {
+      "n_neighbors": {
+        "type": "int",
+        "low": 1,
+        "high": 15,
+        "log": false
+      },
+      "weights": {
+        "type": "categorical",
+        "choices": [
+          "uniform",
+          "distance"
+        ]
+      },
+      "algorithm": {
+        "type": "categorical",
+        "choices": [
+          "auto",
+          "ball_tree",
+          "brute"
+        ]
+      },
+      "leaf_size": {
+        "type": "int",
+        "low": 15,
+        "high": 60,
+        "log": false
+      },
+      "p": {
+        "type": "categorical",
+        "choices": [
+          1,
+          2
+        ]
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "pls_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": true,
+      "scale_targets": true
+    },
+    "training_defaults": {
+      "n_components": 4,
+      "scale": false,
+      "max_iter": 500,
+      "tol": 1e-06,
+      "copy": true
+    },
+    "search_space": {
+      "n_components": {
+        "type": "int",
+        "low": 1,
+        "high": 6,
+        "log": false
+      },
+      "max_iter": {
+        "type": "int",
+        "low": 200,
+        "high": 1000,
+        "log": false
+      },
+      "tol": {
+        "type": "float",
+        "low": 1e-08,
+        "high": 0.0001,
+        "log": true
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "ann_shallow_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": true,
+      "scale_targets": true
+    },
+    "training_defaults": {
+      "hidden_layer_sizes": [
+        64
+      ],
+      "activation": "relu",
+      "solver": "adam",
+      "alpha": 0.0001,
+      "batch_size": 64,
+      "learning_rate_init": 0.001,
+      "max_iter": 500,
+      "tol": 0.0001,
+      "shuffle": true,
+      "early_stopping": false,
+      "random_state": 42,
+      "verbose": false
+    },
+    "search_space": {
+      "alpha": {
+        "type": "float",
+        "low": 1e-06,
+        "high": 0.01,
+        "log": true
+      },
+      "batch_size": {
+        "type": "categorical",
+        "choices": [
+          32,
+          64,
+          128,
+          256
+        ]
+      },
+      "learning_rate_init": {
+        "type": "float",
+        "low": 0.0001,
+        "high": 0.01,
+        "log": true
+      },
+      "max_iter": {
+        "type": "int",
+        "low": 200,
+        "high": 1000,
+        "log": false
+      },
+      "tol": {
+        "type": "float",
+        "low": 1e-05,
+        "high": 0.001,
+        "log": true
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "ann_medium_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": true,
+      "scale_targets": true
+    },
+    "training_defaults": {
+      "hidden_layer_sizes": [
+        96,
+        48
+      ],
+      "activation": "relu",
+      "solver": "adam",
+      "alpha": 0.0001,
+      "batch_size": 64,
+      "learning_rate_init": 0.001,
+      "max_iter": 500,
+      "tol": 0.0001,
+      "shuffle": true,
+      "early_stopping": false,
+      "random_state": 42,
+      "verbose": false
+    },
+    "search_space": {
+      "alpha": {
+        "type": "float",
+        "low": 1e-06,
+        "high": 0.01,
+        "log": true
+      },
+      "batch_size": {
+        "type": "categorical",
+        "choices": [
+          32,
+          64,
+          128,
+          256
+        ]
+      },
+      "learning_rate_init": {
+        "type": "float",
+        "low": 0.0001,
+        "high": 0.01,
+        "log": true
+      },
+      "max_iter": {
+        "type": "int",
+        "low": 200,
+        "high": 1000,
+        "log": false
+      },
+      "tol": {
+        "type": "float",
+        "low": 1e-05,
+        "high": 0.001,
+        "log": true
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "ann_deep_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": true,
+      "scale_targets": true
+    },
+    "training_defaults": {
+      "hidden_layer_sizes": [
+        128,
+        64,
+        32
+      ],
+      "activation": "relu",
+      "solver": "adam",
+      "alpha": 0.0001,
+      "batch_size": 64,
+      "learning_rate_init": 0.001,
+      "max_iter": 500,
+      "tol": 0.0001,
+      "shuffle": true,
+      "early_stopping": false,
+      "random_state": 42,
+      "verbose": false
+    },
+    "search_space": {
+      "alpha": {
+        "type": "float",
+        "low": 1e-06,
+        "high": 0.01,
+        "log": true
+      },
+      "batch_size": {
+        "type": "categorical",
+        "choices": [
+          32,
+          64,
+          128,
+          256
+        ]
+      },
+      "learning_rate_init": {
+        "type": "float",
+        "low": 0.0001,
+        "high": 0.01,
+        "log": true
+      },
+      "max_iter": {
+        "type": "int",
+        "low": 200,
+        "high": 1000,
+        "log": false
+      },
+      "tol": {
+        "type": "float",
+        "low": 1e-05,
+        "high": 0.001,
+        "log": true
       }
     },
     "artifact_options": {
