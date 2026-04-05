@@ -271,6 +271,30 @@ _DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS = {
 	"fixed_influent_profile": "midpoint",
 }
 
+COMPARISON_METRIC_DIRECTIONS: dict[str, str] = {
+	"R2": "higher",
+	"MSE": "lower",
+	"RMSE": "lower",
+	"MAE": "lower",
+	"MAPE": "lower",
+}
+
+COMPARISON_METRIC_BASENAMES: tuple[str, ...] = tuple(COMPARISON_METRIC_DIRECTIONS)
+
+_PREDICTION_DIAGNOSTIC_METADATA_COLUMNS: tuple[str, ...] = (
+	"model_name",
+	"model_key",
+	"model_label",
+	"model_family",
+	"model_order",
+	"dataset_size_total",
+	"repeat_index",
+	"train_size",
+	"test_size",
+	"run_seed",
+	"split_name",
+)
+
 
 def load_analysis_defaults(repo_root: str | Path | None = None) -> dict[str, int | float]:
 	"""Load configurable sweep defaults for notebook analysis runs."""
@@ -919,12 +943,705 @@ def run_model_dataset_size_analysis(
 	}
 
 
+def _resolve_metric_basename(metric_name: str) -> str:
+	resolved_metric_name = str(metric_name)
+	if resolved_metric_name in COMPARISON_METRIC_DIRECTIONS:
+		return resolved_metric_name
+
+	metric_basename = resolved_metric_name.rsplit("_", 1)[-1]
+	if metric_basename not in COMPARISON_METRIC_DIRECTIONS:
+		raise ValueError(
+			f"Unsupported metric '{resolved_metric_name}'. Expected one of: "
+			f"{', '.join(COMPARISON_METRIC_BASENAMES)}."
+		)
+
+	return metric_basename
+
+
+def get_metric_direction(metric_name: str) -> str:
+	"""Return whether a comparison metric should be maximized or minimized."""
+
+	return COMPARISON_METRIC_DIRECTIONS[_resolve_metric_basename(metric_name)]
+
+
+def is_higher_better_metric(metric_name: str) -> bool:
+	"""Return True when a higher value indicates better model performance."""
+
+	return get_metric_direction(metric_name) == "higher"
+
+
+def add_effective_metric_columns(
+	metric_frame: pd.DataFrame,
+	*,
+	metric_basenames: Sequence[str] | None = None,
+	prefix_preference: Sequence[str] = ("projected", "raw"),
+) -> pd.DataFrame:
+	"""Add row-wise effective metrics that prefer projected values and fall back to raw values."""
+
+	if not isinstance(metric_frame, pd.DataFrame):
+		raise ValueError("metric_frame must be a pandas DataFrame.")
+
+	resolved_metric_basenames = [
+		_resolve_metric_basename(metric_basename)
+		for metric_basename in (metric_basenames or COMPARISON_METRIC_BASENAMES)
+	]
+	result = metric_frame.copy()
+
+	for metric_basename in resolved_metric_basenames:
+		effective_metric_name = f"effective_{metric_basename}"
+		source_metric_name = f"{effective_metric_name}_source"
+		result[effective_metric_name] = np.nan
+		result[source_metric_name] = pd.Series(pd.NA, index=result.index, dtype="object")
+
+		for prefix in prefix_preference:
+			candidate_metric_name = f"{str(prefix)}_{metric_basename}"
+			if candidate_metric_name not in result.columns:
+				continue
+
+			candidate_values = pd.to_numeric(result[candidate_metric_name], errors="coerce")
+			missing_mask = result[effective_metric_name].isna() & candidate_values.notna()
+			if not bool(missing_mask.any()):
+				continue
+
+			result.loc[missing_mask, effective_metric_name] = candidate_values.loc[missing_mask]
+			result.loc[missing_mask, source_metric_name] = str(prefix)
+
+	return result
+
+
+def build_effective_aggregate_metrics(
+	aggregate_metric_frame: pd.DataFrame,
+) -> pd.DataFrame:
+	"""Select the deployed aggregate metric row for each run and split.
+
+	Aggregate metric frames store one row per prediction type. This helper keeps the projected
+	row when it exists and otherwise falls back to the raw row, while exposing the selected
+	metrics under effective_* column names.
+	"""
+
+	if not isinstance(aggregate_metric_frame, pd.DataFrame):
+		raise ValueError("aggregate_metric_frame must be a pandas DataFrame.")
+
+	required_columns = {"prediction_type", *COMPARISON_METRIC_BASENAMES}
+	missing_columns = sorted(required_columns.difference(aggregate_metric_frame.columns))
+	if missing_columns:
+		missing_display = ", ".join(missing_columns)
+		raise KeyError(f"aggregate_metric_frame is missing required columns: {missing_display}")
+
+	group_columns = [
+		str(column_name)
+		for column_name in aggregate_metric_frame.columns
+		if column_name not in {"prediction_type", *COMPARISON_METRIC_BASENAMES}
+	]
+	if not group_columns:
+		raise ValueError("aggregate_metric_frame must include metadata columns that identify each run.")
+
+	effective_rows: list[pd.Series] = []
+	for _, group_frame in aggregate_metric_frame.groupby(group_columns, dropna=False, sort=False):
+		resolved_prediction_types = group_frame["prediction_type"].astype(str).tolist()
+		effective_prediction_type = "projected" if "projected" in resolved_prediction_types else "raw"
+		selected_row = group_frame.loc[
+			group_frame["prediction_type"].astype(str) == effective_prediction_type
+		].iloc[0].copy()
+		selected_row["effective_prediction_type"] = effective_prediction_type
+		for metric_basename in COMPARISON_METRIC_BASENAMES:
+			selected_row[f"effective_{metric_basename}"] = float(selected_row[metric_basename])
+		effective_rows.append(selected_row)
+
+	return pd.DataFrame(effective_rows).reset_index(drop=True)
+
+
+def summarize_metric_distribution(
+	metric_frame: pd.DataFrame,
+	*,
+	metric_name: str,
+	group_columns: Sequence[str],
+) -> pd.DataFrame:
+	"""Summarize one metric distribution across arbitrary grouping columns."""
+
+	if not isinstance(metric_frame, pd.DataFrame):
+		raise ValueError("metric_frame must be a pandas DataFrame.")
+
+	resolved_group_columns = [str(column_name) for column_name in group_columns]
+	if not resolved_group_columns:
+		raise ValueError("group_columns must include at least one column name.")
+
+	resolved_metric_name = str(metric_name)
+	required_columns = set(resolved_group_columns)
+	required_columns.add(resolved_metric_name)
+	missing_columns = sorted(required_columns.difference(metric_frame.columns))
+	if missing_columns:
+		missing_display = ", ".join(missing_columns)
+		raise KeyError(f"metric_frame is missing required columns: {missing_display}")
+
+	filtered_frame = metric_frame.loc[
+		metric_frame[resolved_metric_name].notna(),
+		[*resolved_group_columns, resolved_metric_name],
+	].copy()
+	if filtered_frame.empty:
+		raise ValueError(f"metric_frame does not contain any non-null values for '{resolved_metric_name}'.")
+
+	grouped_metric = filtered_frame.groupby(resolved_group_columns, dropna=False)[resolved_metric_name]
+	summary = grouped_metric.agg(
+		observation_count="count",
+		metric_mean="mean",
+		metric_std="std",
+		metric_median="median",
+		metric_min="min",
+		metric_max="max",
+	).reset_index()
+	metric_q25 = grouped_metric.quantile(0.25).reset_index(name="metric_q25")
+	metric_q75 = grouped_metric.quantile(0.75).reset_index(name="metric_q75")
+	summary = summary.merge(metric_q25, on=resolved_group_columns, how="left").merge(
+		metric_q75,
+		on=resolved_group_columns,
+		how="left",
+	)
+	summary["metric_std"] = summary["metric_std"].fillna(0.0)
+	summary.insert(len(resolved_group_columns), "metric_name", resolved_metric_name)
+
+	return summary.sort_values(resolved_group_columns).reset_index(drop=True)
+
+
+def rank_metric_summary(
+	summary_frame: pd.DataFrame,
+	*,
+	group_columns: Sequence[str],
+	ranking_column: str = "metric_mean",
+	higher_is_better: bool | None = None,
+	metric_name: str | None = None,
+	rank_column_name: str = "metric_rank",
+) -> pd.DataFrame:
+	"""Rank grouped metric summaries within each comparison slice."""
+
+	if not isinstance(summary_frame, pd.DataFrame):
+		raise ValueError("summary_frame must be a pandas DataFrame.")
+
+	resolved_group_columns = [str(column_name) for column_name in group_columns]
+	required_columns = set(resolved_group_columns)
+	required_columns.add(str(ranking_column))
+	missing_columns = sorted(required_columns.difference(summary_frame.columns))
+	if missing_columns:
+		missing_display = ", ".join(missing_columns)
+		raise KeyError(f"summary_frame is missing required columns: {missing_display}")
+
+	resolved_metric_name = str(metric_name) if metric_name is not None else None
+	if resolved_metric_name is None and "metric_name" in summary_frame.columns:
+		non_null_metric_names = summary_frame["metric_name"].dropna().astype(str).unique().tolist()
+		if len(non_null_metric_names) == 1:
+			resolved_metric_name = non_null_metric_names[0]
+
+	resolved_higher_is_better = (
+		bool(higher_is_better)
+		if higher_is_better is not None
+		else is_higher_better_metric(resolved_metric_name or str(ranking_column))
+	)
+	result = summary_frame.copy()
+	result[rank_column_name] = result.groupby(resolved_group_columns, dropna=False)[str(ranking_column)].rank(
+		method="dense",
+		ascending=not resolved_higher_is_better,
+	)
+	result[rank_column_name] = result[rank_column_name].astype(int)
+
+	return result.sort_values(
+		[*resolved_group_columns, rank_column_name, str(ranking_column)],
+		ascending=[*[True for _ in resolved_group_columns], True, not resolved_higher_is_better],
+	).reset_index(drop=True)
+
+
+def build_train_test_gap_summary(
+	summary_frame: pd.DataFrame,
+	*,
+	group_columns: Sequence[str],
+	split_column: str = "split_name",
+	higher_is_better: bool | None = None,
+	metric_name: str | None = None,
+) -> pd.DataFrame:
+	"""Compute train-test gaps from grouped metric summaries.
+
+	Positive generalization_gap values always indicate that the train split outperforms the
+	test split, regardless of whether the metric is maximized or minimized.
+	"""
+
+	if not isinstance(summary_frame, pd.DataFrame):
+		raise ValueError("summary_frame must be a pandas DataFrame.")
+
+	resolved_group_columns = [str(column_name) for column_name in group_columns]
+	resolved_split_column = str(split_column)
+	required_columns = set(resolved_group_columns)
+	required_columns.add(resolved_split_column)
+	required_columns.add("metric_mean")
+	missing_columns = sorted(required_columns.difference(summary_frame.columns))
+	if missing_columns:
+		missing_display = ", ".join(missing_columns)
+		raise KeyError(f"summary_frame is missing required columns: {missing_display}")
+
+	available_splits = set(summary_frame[resolved_split_column].astype(str).unique())
+	if not {"train", "test"}.issubset(available_splits):
+		raise ValueError("summary_frame must contain both 'train' and 'test' rows.")
+
+	resolved_metric_name = str(metric_name) if metric_name is not None else None
+	if resolved_metric_name is None and "metric_name" in summary_frame.columns:
+		non_null_metric_names = summary_frame["metric_name"].dropna().astype(str).unique().tolist()
+		if len(non_null_metric_names) == 1:
+			resolved_metric_name = non_null_metric_names[0]
+
+	resolved_higher_is_better = (
+		bool(higher_is_better)
+		if higher_is_better is not None
+		else is_higher_better_metric(resolved_metric_name or "metric_mean")
+	)
+
+	value_columns = [
+		column_name
+		for column_name in [
+			"observation_count",
+			"metric_mean",
+			"metric_std",
+			"metric_median",
+			"metric_q25",
+			"metric_q75",
+			"metric_min",
+			"metric_max",
+		]
+		if column_name in summary_frame.columns
+	]
+	result: pd.DataFrame | None = None
+
+	for value_column in value_columns:
+		pivot = summary_frame.pivot_table(
+			index=resolved_group_columns,
+			columns=resolved_split_column,
+			values=value_column,
+			aggfunc="first",
+			dropna=False,
+		)
+		if not {"train", "test"}.issubset(set(pivot.columns.astype(str))):
+			raise ValueError(
+				f"summary_frame does not include both train and test values for '{value_column}'."
+			)
+		pivot = pivot.rename(
+			columns={
+				"train": f"train_{value_column}",
+				"test": f"test_{value_column}",
+			}
+		).reset_index()
+		result = pivot if result is None else result.merge(pivot, on=resolved_group_columns, how="inner")
+
+	if result is None:
+		raise ValueError("No summary value columns were available to compute train-test gaps.")
+
+	result["generalization_gap"] = (
+		result["train_metric_mean"] - result["test_metric_mean"]
+		if resolved_higher_is_better
+		else result["test_metric_mean"] - result["train_metric_mean"]
+	)
+	result["generalization_gap_pct"] = np.where(
+		np.abs(result["train_metric_mean"]) > 1e-12,
+		100.0 * result["generalization_gap"] / np.abs(result["train_metric_mean"]),
+		np.nan,
+	)
+	if resolved_metric_name is not None:
+		result.insert(len(resolved_group_columns), "metric_name", resolved_metric_name)
+
+	return result.sort_values(resolved_group_columns).reset_index(drop=True)
+
+
+def _extract_prediction_diagnostic_metadata(
+	prediction_table: pd.DataFrame,
+	*,
+	model_labels: Mapping[str, str] | None,
+	model_families: Mapping[str, str] | None,
+	model_order: Mapping[str, int] | None,
+) -> dict[str, Any]:
+	metadata = {
+		column_name: prediction_table[column_name].iloc[0]
+		for column_name in _PREDICTION_DIAGNOSTIC_METADATA_COLUMNS
+		if column_name in prediction_table.columns
+	}
+	resolved_model_name = str(metadata.get("model_name", ""))
+	if resolved_model_name and "model_label" not in metadata:
+		metadata["model_label"] = (
+			str(model_labels[resolved_model_name])
+			if model_labels is not None and resolved_model_name in model_labels
+			else resolved_model_name
+		)
+	if resolved_model_name and "model_family" not in metadata:
+		metadata["model_family"] = (
+			str(model_families[resolved_model_name])
+			if model_families is not None and resolved_model_name in model_families
+			else "unspecified"
+		)
+	if resolved_model_name and "model_order" not in metadata:
+		metadata["model_order"] = (
+			int(model_order[resolved_model_name])
+			if model_order is not None and resolved_model_name in model_order
+			else np.nan
+		)
+
+	return metadata
+
+
+def _resolve_prediction_column_sets(
+	prediction_table: pd.DataFrame,
+) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+	actual_columns = [
+		str(column_name)
+		for column_name in prediction_table.columns
+		if str(column_name).startswith("Actual_")
+	]
+	if not actual_columns:
+		raise KeyError("Prediction tables must include at least one 'Actual_' target column.")
+
+	target_names = [column_name.removeprefix("Actual_") for column_name in actual_columns]
+	raw_columns = [f"Raw_{target_name}" for target_name in target_names]
+	missing_raw_columns = [column_name for column_name in raw_columns if column_name not in prediction_table.columns]
+	if missing_raw_columns:
+		missing_display = ", ".join(missing_raw_columns)
+		raise KeyError(f"Prediction tables are missing required raw prediction columns: {missing_display}")
+
+	affine_columns = [
+		f"Affine_{target_name}"
+		for target_name in target_names
+		if f"Affine_{target_name}" in prediction_table.columns
+	]
+	projected_columns = [
+		f"Projected_{target_name}"
+		for target_name in target_names
+		if f"Projected_{target_name}" in prediction_table.columns
+	]
+
+	return target_names, actual_columns, raw_columns, affine_columns, projected_columns
+
+
+def summarize_prediction_diagnostics(
+	prediction_tables: Sequence[pd.DataFrame],
+	*,
+	model_labels: Mapping[str, str] | None = None,
+	model_families: Mapping[str, str] | None = None,
+	model_order: Mapping[str, int] | None = None,
+) -> pd.DataFrame:
+	"""Summarize negative predictions and constraint diagnostics for each run-level prediction table."""
+
+	if not prediction_tables:
+		raise ValueError("prediction_tables must include at least one prediction table.")
+
+	diagnostic_rows: list[dict[str, Any]] = []
+	for prediction_table in prediction_tables:
+		if not isinstance(prediction_table, pd.DataFrame):
+			raise ValueError("prediction_tables must contain only pandas DataFrames.")
+
+		metadata = _extract_prediction_diagnostic_metadata(
+			prediction_table,
+			model_labels=model_labels,
+			model_families=model_families,
+			model_order=model_order,
+		)
+		target_names, _, raw_columns, _, projected_columns = _resolve_prediction_column_sets(prediction_table)
+		effective_prediction_type = "projected" if len(projected_columns) == len(target_names) else "raw"
+		effective_columns = projected_columns if effective_prediction_type == "projected" else raw_columns
+		effective_values = prediction_table.loc[:, effective_columns].to_numpy(dtype=float)
+		raw_values = prediction_table.loc[:, raw_columns].to_numpy(dtype=float)
+		negative_mask = effective_values < 0.0
+		negative_values = effective_values[negative_mask]
+
+		diagnostic_row: dict[str, Any] = {
+			**metadata,
+			"target_count": len(target_names),
+			"sample_count": int(len(prediction_table)),
+			"total_predictions": int(effective_values.size),
+			"effective_prediction_type": effective_prediction_type,
+			"negative_predictions": int(negative_mask.sum()),
+			"negative_prediction_rate_pct": (
+				100.0 * float(negative_mask.mean()) if effective_values.size > 0 else 0.0
+			),
+			"samples_with_any_negative": int(negative_mask.any(axis=1).sum()),
+			"sample_incidence_rate_pct": (
+				100.0 * float(negative_mask.any(axis=1).mean()) if len(prediction_table) > 0 else 0.0
+			),
+			"minimum_effective_prediction": float(np.min(effective_values)),
+			"mean_negative_effective_prediction": (
+				float(np.mean(negative_values)) if negative_values.size > 0 else np.nan
+			),
+			"median_negative_effective_prediction": (
+				float(np.median(negative_values)) if negative_values.size > 0 else np.nan
+			),
+		}
+
+		if effective_prediction_type == "projected":
+			raw_to_effective_adjustment = effective_values - raw_values
+			adjustment_l2 = np.linalg.norm(raw_to_effective_adjustment, axis=1)
+			diagnostic_row.update(
+				{
+					"raw_to_effective_adjustment_mean_l2": float(np.mean(adjustment_l2)),
+					"raw_to_effective_adjustment_max_l2": float(np.max(adjustment_l2)),
+					"raw_to_effective_adjustment_mean_abs": float(np.mean(np.abs(raw_to_effective_adjustment))),
+					"raw_to_effective_adjustment_max_abs": float(np.max(np.abs(raw_to_effective_adjustment))),
+				}
+			)
+		else:
+			diagnostic_row.update(
+				{
+					"raw_to_effective_adjustment_mean_l2": 0.0,
+					"raw_to_effective_adjustment_max_l2": 0.0,
+					"raw_to_effective_adjustment_mean_abs": 0.0,
+					"raw_to_effective_adjustment_max_abs": 0.0,
+				}
+			)
+
+		for prediction_type in ["raw", "affine", "projected"]:
+			constraint_column = f"{prediction_type}_constraint_l2"
+			if constraint_column in prediction_table.columns:
+				constraint_values = prediction_table[constraint_column].to_numpy(dtype=float)
+				diagnostic_row[f"{constraint_column}_mean"] = float(np.mean(constraint_values))
+				diagnostic_row[f"{constraint_column}_max"] = float(np.max(constraint_values))
+
+		effective_constraint_column = (
+			"projected_constraint_l2"
+			if effective_prediction_type == "projected" and "projected_constraint_l2" in prediction_table.columns
+			else "raw_constraint_l2"
+			if "raw_constraint_l2" in prediction_table.columns
+			else None
+		)
+		if effective_constraint_column is not None:
+			effective_constraint_values = prediction_table[effective_constraint_column].to_numpy(dtype=float)
+			diagnostic_row["effective_constraint_l2_mean"] = float(np.mean(effective_constraint_values))
+			diagnostic_row["effective_constraint_l2_max"] = float(np.max(effective_constraint_values))
+
+			if (
+				effective_constraint_column != "raw_constraint_l2"
+				and "raw_constraint_l2" in prediction_table.columns
+			):
+				raw_constraint_values = prediction_table["raw_constraint_l2"].to_numpy(dtype=float)
+				constraint_improvement = raw_constraint_values - effective_constraint_values
+				diagnostic_row["constraint_l2_improvement_mean"] = float(np.mean(constraint_improvement))
+				diagnostic_row["constraint_l2_improvement_max"] = float(np.max(constraint_improvement))
+
+		diagnostic_rows.append(diagnostic_row)
+
+	return pd.DataFrame(diagnostic_rows)
+
+
+def summarize_prediction_diagnostics_by_target(
+	prediction_tables: Sequence[pd.DataFrame],
+	*,
+	model_labels: Mapping[str, str] | None = None,
+	model_families: Mapping[str, str] | None = None,
+	model_order: Mapping[str, int] | None = None,
+) -> pd.DataFrame:
+	"""Summarize effective negative-prediction behavior for each target in each run."""
+
+	if not prediction_tables:
+		raise ValueError("prediction_tables must include at least one prediction table.")
+
+	diagnostic_rows: list[dict[str, Any]] = []
+	for prediction_table in prediction_tables:
+		if not isinstance(prediction_table, pd.DataFrame):
+			raise ValueError("prediction_tables must contain only pandas DataFrames.")
+
+		metadata = _extract_prediction_diagnostic_metadata(
+			prediction_table,
+			model_labels=model_labels,
+			model_families=model_families,
+			model_order=model_order,
+		)
+		target_names, _, raw_columns, _, projected_columns = _resolve_prediction_column_sets(prediction_table)
+		effective_prediction_type = "projected" if len(projected_columns) == len(target_names) else "raw"
+
+		for target_index, target_name in enumerate(target_names):
+			raw_column = raw_columns[target_index]
+			effective_column = (
+				projected_columns[target_index]
+				if effective_prediction_type == "projected"
+				else raw_column
+			)
+			effective_values = prediction_table[effective_column].to_numpy(dtype=float)
+			negative_mask = effective_values < 0.0
+			negative_values = effective_values[negative_mask]
+			diagnostic_row: dict[str, Any] = {
+				**metadata,
+				"target": target_name,
+				"effective_prediction_type": effective_prediction_type,
+				"sample_count": int(len(prediction_table)),
+				"negative_predictions": int(negative_mask.sum()),
+				"negative_prediction_rate_pct": (
+					100.0 * float(np.mean(negative_mask)) if len(prediction_table) > 0 else 0.0
+				),
+				"minimum_effective_prediction": float(np.min(effective_values)),
+				"mean_negative_effective_prediction": (
+					float(np.mean(negative_values)) if negative_values.size > 0 else np.nan
+				),
+				"median_negative_effective_prediction": (
+					float(np.median(negative_values)) if negative_values.size > 0 else np.nan
+				),
+			}
+
+			if effective_prediction_type == "projected":
+				raw_values = prediction_table[raw_column].to_numpy(dtype=float)
+				adjustment_values = effective_values - raw_values
+				diagnostic_row["raw_to_effective_adjustment_mean_abs"] = float(np.mean(np.abs(adjustment_values)))
+				diagnostic_row["raw_to_effective_adjustment_max_abs"] = float(np.max(np.abs(adjustment_values)))
+			else:
+				diagnostic_row["raw_to_effective_adjustment_mean_abs"] = 0.0
+				diagnostic_row["raw_to_effective_adjustment_max_abs"] = 0.0
+
+			diagnostic_rows.append(diagnostic_row)
+
+	return pd.DataFrame(diagnostic_rows)
+
+
+def collate_model_analysis_results(
+	analysis_results_by_model: Mapping[str, Mapping[str, Any]],
+	*,
+	model_labels: Mapping[str, str] | None = None,
+	model_families: Mapping[str, str] | None = None,
+) -> dict[str, pd.DataFrame]:
+	"""Collate model analysis sweeps into shared comparison-ready summary frames."""
+
+	if not analysis_results_by_model:
+		raise ValueError("analysis_results_by_model must include at least one model result.")
+
+	resolved_model_labels = {
+		str(model_name): (
+			str(model_labels[model_name]) if model_labels is not None and model_name in model_labels else str(model_name)
+		)
+		for model_name in analysis_results_by_model
+	}
+	resolved_model_families = {
+		str(model_name): (
+			str(model_families[model_name]) if model_families is not None and model_name in model_families else "unspecified"
+		)
+		for model_name in analysis_results_by_model
+	}
+	resolved_model_order = {
+		str(model_name): model_index
+		for model_index, model_name in enumerate(analysis_results_by_model)
+	}
+
+	analysis_config_rows: list[dict[str, Any]] = []
+	coverage_rows: list[dict[str, Any]] = []
+	run_metadata_frames: list[pd.DataFrame] = []
+	aggregate_metric_frames: list[pd.DataFrame] = []
+	effective_aggregate_metric_frames: list[pd.DataFrame] = []
+	per_target_metric_frames: list[pd.DataFrame] = []
+	all_prediction_tables: list[pd.DataFrame] = []
+
+	for model_name, analysis_result in analysis_results_by_model.items():
+		resolved_model_name = str(model_name)
+		model_label = resolved_model_labels[resolved_model_name]
+		model_family = resolved_model_families[resolved_model_name]
+		model_index = resolved_model_order[resolved_model_name]
+
+		run_metadata = analysis_result["run_metadata"].copy()
+		aggregate_metrics = add_effective_metric_columns(analysis_result["aggregate_metrics"])
+		per_target_metrics = add_effective_metric_columns(analysis_result["per_target_metrics"])
+		prediction_tables = list(analysis_result.get("prediction_tables", []))
+		for frame in [run_metadata, aggregate_metrics, per_target_metrics]:
+			frame["model_name"] = resolved_model_name
+			frame["model_label"] = model_label
+			frame["model_family"] = model_family
+			frame["model_order"] = model_index
+
+		run_metadata_frames.append(run_metadata)
+		aggregate_metric_frames.append(aggregate_metrics)
+		effective_aggregate_metric_frames.append(build_effective_aggregate_metrics(aggregate_metrics))
+		per_target_metric_frames.append(per_target_metrics)
+		all_prediction_tables.extend(prediction_tables)
+		analysis_config_rows.append(
+			{
+				"model_name": resolved_model_name,
+				"model_label": model_label,
+				"model_family": model_family,
+				"model_order": model_index,
+				**dict(analysis_result["analysis_config"]),
+			}
+		)
+
+		projected_metric_available = any(
+			f"projected_{metric_basename}" in per_target_metrics.columns
+			and per_target_metrics[f"projected_{metric_basename}"].notna().any()
+			for metric_basename in COMPARISON_METRIC_BASENAMES
+		)
+		affine_metric_available = any(
+			f"affine_{metric_basename}" in per_target_metrics.columns
+			and per_target_metrics[f"affine_{metric_basename}"].notna().any()
+			for metric_basename in COMPARISON_METRIC_BASENAMES
+		)
+		raw_metric_available = any(
+			f"raw_{metric_basename}" in per_target_metrics.columns
+			and per_target_metrics[f"raw_{metric_basename}"].notna().any()
+			for metric_basename in COMPARISON_METRIC_BASENAMES
+		)
+		coverage_rows.append(
+			{
+				"model_name": resolved_model_name,
+				"model_label": model_label,
+				"model_family": model_family,
+				"model_order": model_index,
+				"n_analysis_runs": int(len(run_metadata)),
+				"n_prediction_tables": int(len(prediction_tables)),
+				"n_dataset_sizes": int(run_metadata["dataset_size_total"].nunique()),
+				"min_dataset_size_total": int(run_metadata["dataset_size_total"].min()),
+				"max_dataset_size_total": int(run_metadata["dataset_size_total"].max()),
+				"min_train_size": int(run_metadata["train_size"].min()),
+				"max_train_size": int(run_metadata["train_size"].max()),
+				"min_test_size": int(run_metadata["test_size"].min()),
+				"max_test_size": int(run_metadata["test_size"].max()),
+				"n_targets": int(per_target_metrics["target"].nunique()),
+				"raw_metric_available": raw_metric_available,
+				"projected_metric_available": projected_metric_available,
+				"affine_metric_available": affine_metric_available,
+				"effective_metric_source": "projected" if projected_metric_available else "raw",
+			}
+		)
+
+	prediction_diagnostics = summarize_prediction_diagnostics(
+		all_prediction_tables,
+		model_labels=resolved_model_labels,
+		model_families=resolved_model_families,
+		model_order=resolved_model_order,
+	)
+	prediction_target_diagnostics = summarize_prediction_diagnostics_by_target(
+		all_prediction_tables,
+		model_labels=resolved_model_labels,
+		model_families=resolved_model_families,
+		model_order=resolved_model_order,
+	)
+
+	return {
+		"analysis_configs": pd.DataFrame(analysis_config_rows).sort_values("model_order").reset_index(drop=True),
+		"coverage": pd.DataFrame(coverage_rows).sort_values("model_order").reset_index(drop=True),
+		"run_metadata": pd.concat(run_metadata_frames, ignore_index=True),
+		"aggregate_metrics": pd.concat(aggregate_metric_frames, ignore_index=True),
+		"effective_aggregate_metrics": pd.concat(effective_aggregate_metric_frames, ignore_index=True),
+		"per_target_metrics": pd.concat(per_target_metric_frames, ignore_index=True),
+		"prediction_diagnostics": prediction_diagnostics.sort_values(
+			["model_order", "dataset_size_total", "repeat_index", "split_name"]
+		).reset_index(drop=True),
+		"prediction_target_diagnostics": prediction_target_diagnostics.sort_values(
+			["model_order", "dataset_size_total", "repeat_index", "split_name", "target"]
+		).reset_index(drop=True),
+	}
+
+
 __all__ = [
+	"COMPARISON_METRIC_BASENAMES",
+	"COMPARISON_METRIC_DIRECTIONS",
+	"add_effective_metric_columns",
+	"build_effective_aggregate_metrics",
+	"build_train_test_gap_summary",
 	"ModelRunner",
 	"build_cobre_response_surface_prediction_data",
 	"build_dataset_size_schedule",
+	"collate_model_analysis_results",
 	"describe_and_display_table",
+	"get_metric_direction",
+	"is_higher_better_metric",
 	"load_cobre_response_surface_defaults",
 	"load_analysis_defaults",
+	"rank_metric_summary",
 	"run_model_dataset_size_analysis",
+	"summarize_metric_distribution",
+	"summarize_prediction_diagnostics",
+	"summarize_prediction_diagnostics_by_target",
 ]

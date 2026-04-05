@@ -17,6 +17,8 @@ from src.utils.plot import (
 	plot_coefficient_bar_chart,
 	plot_coefficient_heatmap,
 	plot_coefficient_tensor_heatmaps,
+	plot_metric_heatmap,
+	plot_metric_summary_lines,
 	plot_response_surface_contours,
 	plot_train_test_parity_panels,
 	plot_train_test_metric_boxplots,
@@ -109,6 +111,19 @@ def _build_parity_frames() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd
 	return train_actual, train_predicted, test_actual, test_predicted
 
 
+def _build_metric_summary_frame() -> pd.DataFrame:
+	return pd.DataFrame(
+		[
+			{"model_label": "Model A", "train_size": 80, "metric_mean": 0.24, "metric_q25": 0.22, "metric_q75": 0.26},
+			{"model_label": "Model A", "train_size": 160, "metric_mean": 0.18, "metric_q25": 0.17, "metric_q75": 0.20},
+			{"model_label": "Model A", "train_size": 240, "metric_mean": 0.15, "metric_q25": 0.14, "metric_q75": 0.17},
+			{"model_label": "Model B", "train_size": 80, "metric_mean": 0.31, "metric_q25": 0.29, "metric_q75": 0.33},
+			{"model_label": "Model B", "train_size": 160, "metric_mean": 0.25, "metric_q25": 0.24, "metric_q75": 0.27},
+			{"model_label": "Model B", "train_size": 240, "metric_mean": 0.22, "metric_q25": 0.21, "metric_q75": 0.24},
+		]
+	)
+
+
 class PlotHelperTests(unittest.TestCase):
 	def tearDown(self) -> None:
 		plt.close("all")
@@ -151,6 +166,56 @@ class PlotHelperTests(unittest.TestCase):
 		artist_bundle = getattr(axis, "_pibre_metric_boxplot")
 		self.assertIs(figure, axis.figure)
 		self.assertEqual(artist_bundle["train_mean_line"].get_label(), "Train mean")
+
+	def test_plot_metric_summary_lines_returns_one_line_per_model(self) -> None:
+		summary_frame = _build_metric_summary_frame()
+
+		figure, axis = plot_metric_summary_lines(
+			summary_frame,
+			x_column="train_size",
+			y_column="metric_mean",
+			group_column="model_label",
+			lower_column="metric_q25",
+			upper_column="metric_q75",
+			title="Effective RMSE learning curves",
+			x_label="Training samples",
+			y_label="Effective RMSE",
+		)
+
+		artist_bundle = getattr(axis, "_pibre_metric_summary_lines")
+		legend_text = [text.get_text() for text in axis.get_legend().texts]
+		self.assertIs(figure, axis.figure)
+		self.assertEqual(len(artist_bundle["lines"]), 2)
+		self.assertEqual(len(artist_bundle["bands"]), 2)
+		self.assertEqual(legend_text, ["Model A", "Model B"])
+		self.assertEqual(axis.get_xlabel(), "Training samples")
+		self.assertEqual(axis.get_ylabel(), "Effective RMSE")
+
+	def test_plot_metric_heatmap_returns_annotations_and_colorbar(self) -> None:
+		heatmap_frame = pd.DataFrame(
+			[[1.0, 2.0, 3.0], [4.0, np.nan, 6.0]],
+			index=["Model A", "Model B"],
+			columns=["RMSE", "MAE", "R2"],
+		)
+
+		figure, axis = plot_metric_heatmap(
+			heatmap_frame,
+			title="Average metric rank by model",
+			x_label="Metric",
+			y_label="Model",
+			colorbar_label="Average rank",
+			center_value=3.0,
+		)
+
+		artist_bundle = getattr(axis, "_pibre_metric_heatmap")
+		annotation_text = [text.get_text() for text in artist_bundle["annotations"]]
+		self.assertIs(figure, axis.figure)
+		self.assertEqual(artist_bundle["values"].shape, (2, 3))
+		self.assertEqual(len(artist_bundle["annotations"]), 6)
+		self.assertIn("NA", annotation_text)
+		self.assertEqual(axis.get_xlabel(), "Metric")
+		self.assertEqual(axis.get_ylabel(), "Model")
+		self.assertEqual(len(figure.axes), 2)
 
 	def test_plot_train_test_parity_panels_returns_one_panel_per_column(self) -> None:
 		train_actual, train_predicted, test_actual, test_predicted = _build_parity_frames()

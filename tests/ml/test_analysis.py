@@ -14,11 +14,16 @@ from scipy.linalg import null_space
 from src.models.ml.cobre import run_cobre_pipeline
 from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
 from src.utils.analysis import (
+	add_effective_metric_columns,
 	build_negative_prediction_tables,
+	build_train_test_gap_summary,
 	build_separated_negative_prediction_tables,
 	build_cobre_response_surface_prediction_data,
 	build_dataset_size_schedule,
+	collate_model_analysis_results,
+	rank_metric_summary,
 	run_model_dataset_size_analysis,
+	summarize_metric_distribution,
 )
 from src.utils.io import save_pickle_file
 from src.utils.process import DatasetSplit, SupervisedDatasetFrames, build_cobre_supervised_dataset, make_train_test_split
@@ -215,6 +220,132 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertIn("ConstraintReference_Out_A", first_prediction_table.columns)
 		self.assertNotIn("Projected_Out_A", first_prediction_table.columns)
 		self.assertNotIn("measured_adjustment_l2", first_prediction_table.columns)
+
+	def test_add_effective_metric_columns_prefers_projected_and_falls_back_to_raw(self) -> None:
+		metric_frame = pd.DataFrame(
+			[
+				{
+					"model_name": "projected_model",
+					"projected_RMSE": 0.2,
+					"raw_RMSE": 0.35,
+				},
+				{
+					"model_name": "raw_model",
+					"projected_RMSE": np.nan,
+					"raw_RMSE": 0.45,
+				},
+			]
+		)
+
+		result = add_effective_metric_columns(metric_frame)
+
+		self.assertEqual(list(result["effective_RMSE_source"]), ["projected", "raw"])
+		self.assertAlmostEqual(float(result.loc[0, "effective_RMSE"]), 0.2)
+		self.assertAlmostEqual(float(result.loc[1, "effective_RMSE"]), 0.45)
+
+	def test_summarize_metric_distribution_rank_and_gap_helpers_align_for_lower_is_better_metric(self) -> None:
+		metric_frame = pd.DataFrame(
+			[
+				{"model_label": "Model A", "split_name": "train", "train_size": 80, "effective_RMSE": 0.10},
+				{"model_label": "Model A", "split_name": "train", "train_size": 80, "effective_RMSE": 0.11},
+				{"model_label": "Model A", "split_name": "test", "train_size": 80, "effective_RMSE": 0.20},
+				{"model_label": "Model A", "split_name": "test", "train_size": 80, "effective_RMSE": 0.22},
+				{"model_label": "Model B", "split_name": "train", "train_size": 80, "effective_RMSE": 0.12},
+				{"model_label": "Model B", "split_name": "train", "train_size": 80, "effective_RMSE": 0.13},
+				{"model_label": "Model B", "split_name": "test", "train_size": 80, "effective_RMSE": 0.30},
+				{"model_label": "Model B", "split_name": "test", "train_size": 80, "effective_RMSE": 0.35},
+			]
+		)
+
+		summary = summarize_metric_distribution(
+			metric_frame,
+			metric_name="effective_RMSE",
+			group_columns=["model_label", "split_name", "train_size"],
+		)
+		test_summary = summary.loc[summary["split_name"] == "test"].reset_index(drop=True)
+		ranked = rank_metric_summary(
+			test_summary,
+			group_columns=["train_size"],
+			metric_name="effective_RMSE",
+		)
+		gap_summary = build_train_test_gap_summary(
+			summary,
+			group_columns=["model_label", "train_size"],
+			metric_name="effective_RMSE",
+		)
+
+		self.assertEqual(
+			list(ranked.sort_values("metric_rank")["model_label"]),
+			["Model A", "Model B"],
+		)
+		model_a_gap = gap_summary.loc[gap_summary["model_label"] == "Model A"].iloc[0]
+		model_b_gap = gap_summary.loc[gap_summary["model_label"] == "Model B"].iloc[0]
+		self.assertGreater(float(model_a_gap["generalization_gap"]), 0.0)
+		self.assertGreater(float(model_b_gap["generalization_gap"]), float(model_a_gap["generalization_gap"]))
+
+	def test_collate_model_analysis_results_builds_prediction_diagnostics_and_effective_metrics(self) -> None:
+		dataset = _build_synthetic_dataset()
+		active_a_matrix = np.array([[1.0, -1.0]], dtype=float)
+		inactive_a_matrix = np.zeros((0, 2), dtype=float)
+
+		projected_result = run_model_dataset_size_analysis(
+			"projected_model",
+			dataset,
+			active_a_matrix,
+			_fake_runner,
+			min_total_samples=6,
+			max_total_samples=6,
+			total_sample_step=5,
+			n_repeats=1,
+			test_fraction=0.25,
+			random_seed=13,
+			show_progress=False,
+			show_runner_progress=False,
+		)
+		raw_result = run_model_dataset_size_analysis(
+			"raw_model",
+			dataset,
+			inactive_a_matrix,
+			_fake_runner,
+			min_total_samples=6,
+			max_total_samples=6,
+			total_sample_step=5,
+			n_repeats=1,
+			test_fraction=0.25,
+			random_seed=17,
+			show_progress=False,
+			show_runner_progress=False,
+		)
+
+		collated = collate_model_analysis_results(
+			{
+				"projected_model": projected_result,
+				"raw_model": raw_result,
+			},
+			model_labels={
+				"projected_model": "Projected Model",
+				"raw_model": "Raw Model",
+			},
+			model_families={
+				"projected_model": "Constrained",
+				"raw_model": "Baseline",
+			},
+		)
+
+		coverage = collated["coverage"]
+		self.assertEqual(set(coverage["effective_metric_source"]), {"projected", "raw"})
+		self.assertIn("effective_RMSE", collated["effective_aggregate_metrics"].columns)
+		self.assertEqual(set(collated["effective_aggregate_metrics"]["effective_prediction_type"]), {"projected", "raw"})
+		self.assertIn("effective_RMSE", collated["per_target_metrics"].columns)
+		self.assertIn("effective_RMSE_source", collated["per_target_metrics"].columns)
+		self.assertEqual(set(collated["prediction_diagnostics"]["effective_prediction_type"]), {"projected", "raw"})
+		self.assertEqual(set(collated["prediction_target_diagnostics"]["target"]), {"Out_A", "Out_B"})
+
+		projected_diagnostics = collated["prediction_diagnostics"].loc[
+			collated["prediction_diagnostics"]["model_name"] == "projected_model"
+		].iloc[0]
+		self.assertGreater(float(projected_diagnostics["raw_to_effective_adjustment_mean_l2"]), 0.0)
+		self.assertEqual(projected_diagnostics["model_label"], "Projected Model")
 
 	def test_build_negative_prediction_tables_handles_active_and_inactive_reports(self) -> None:
 		target_columns = ["Out_A", "Out_B"]

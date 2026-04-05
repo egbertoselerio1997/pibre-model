@@ -186,6 +186,33 @@ def _coerce_numeric_dataframe(
 	return resolved_frame
 
 
+def _coerce_numeric_dataframe_allow_missing(
+	frame: Any,
+	*,
+	frame_name: str,
+) -> pd.DataFrame:
+	if not isinstance(frame, pd.DataFrame):
+		raise ValueError(f"{frame_name} must be a pandas DataFrame.")
+	if frame.empty:
+		raise ValueError(f"{frame_name} must contain at least one row.")
+
+	try:
+		resolved_frame = frame.astype(float).copy()
+	except ValueError as exc:
+		raise ValueError(f"{frame_name} must contain only numeric values.") from exc
+
+	if np.isinf(resolved_frame.to_numpy(dtype=float)).any():
+		raise ValueError(f"{frame_name} must not contain positive or negative infinity.")
+
+	return resolved_frame
+
+
+def _copy_colormap_with_missing_color(colormap: Any, *, missing_color: str) -> Any:
+	resolved_colormap = colormap.copy() if hasattr(colormap, "copy") else colormap
+	resolved_colormap.set_bad(missing_color)
+	return resolved_colormap
+
+
 def _validate_parity_frames(
 	train_actual: Any,
 	train_predicted: Any,
@@ -721,6 +748,199 @@ def plot_train_test_metric_boxplots(
 	return figure, ax
 
 
+def plot_metric_summary_lines(
+	summary_frame: pd.DataFrame,
+	*,
+	x_column: str,
+	y_column: str,
+	group_column: str,
+	title: str,
+	x_label: str,
+	y_label: str,
+	lower_column: str | None = None,
+	upper_column: str | None = None,
+	legend_title: str = "Model",
+	ax: Any | None = None,
+	figure_size: tuple[float, float] = (12.0, 6.5),
+	marker: str = "o",
+) -> tuple[Any, Any]:
+	"""Plot one comparison line per group with optional uncertainty bands."""
+
+	required_columns = {str(x_column), str(y_column), str(group_column)}
+	if (lower_column is None) ^ (upper_column is None):
+		raise ValueError("lower_column and upper_column must be provided together.")
+	if lower_column is not None and upper_column is not None:
+		required_columns.add(str(lower_column))
+		required_columns.add(str(upper_column))
+	missing_columns = sorted(required_columns.difference(summary_frame.columns))
+	if missing_columns:
+		missing_display = ", ".join(missing_columns)
+		raise KeyError(f"summary_frame is missing required columns: {missing_display}")
+
+	tokens = apply_pibre_plot_theme()
+	if ax is None:
+		figure, ax = plt.subplots(figsize=figure_size, dpi=140, constrained_layout=True)
+	else:
+		figure = ax.figure
+
+	resolved_group_order = list(dict.fromkeys(summary_frame[str(group_column)].astype(str).tolist()))
+	line_artists: list[Any] = []
+	band_artists: list[Any] = []
+
+	for group_index, group_name in enumerate(resolved_group_order):
+		group_frame = summary_frame.loc[summary_frame[str(group_column)].astype(str) == group_name].copy()
+		group_frame[str(x_column)] = pd.to_numeric(group_frame[str(x_column)], errors="coerce")
+		group_frame[str(y_column)] = pd.to_numeric(group_frame[str(y_column)], errors="coerce")
+		group_frame = group_frame.dropna(subset=[str(x_column), str(y_column)]).sort_values(str(x_column))
+		if group_frame.empty:
+			continue
+
+		color = tokens["qualitative_cycle"][group_index % len(tokens["qualitative_cycle"])]
+		x_values = group_frame[str(x_column)].to_numpy(dtype=float)
+		y_values = group_frame[str(y_column)].to_numpy(dtype=float)
+		line_artist = ax.plot(
+			x_values,
+			y_values,
+			color=color,
+			marker=marker,
+			markersize=5.5,
+			label=group_name,
+		)[0]
+		line_artists.append(line_artist)
+
+		if lower_column is not None and upper_column is not None:
+			lower_values = pd.to_numeric(group_frame[str(lower_column)], errors="coerce").to_numpy(dtype=float)
+			upper_values = pd.to_numeric(group_frame[str(upper_column)], errors="coerce").to_numpy(dtype=float)
+			band_artist = ax.fill_between(
+				x_values,
+				lower_values,
+				upper_values,
+				color=color,
+				alpha=0.14,
+				linewidth=0.0,
+			)
+			band_artists.append(band_artist)
+
+	ax.set_xlabel(x_label)
+	ax.set_ylabel(y_label)
+	ax.set_title(title)
+	ax.set_facecolor(tokens["axes_background"])
+	ax.grid(which="major", color=tokens["major_grid"], alpha=0.45)
+	ax.grid(which="minor", color=tokens["minor_grid"], alpha=0.3)
+	ax.minorticks_on()
+	ax.legend(title=legend_title, loc="best", ncol=2)
+	setattr(
+		ax,
+		"_pibre_metric_summary_lines",
+		{
+			"lines": line_artists,
+			"bands": band_artists,
+			"group_order": resolved_group_order,
+		},
+	)
+
+	return figure, ax
+
+
+def plot_metric_heatmap(
+	heatmap_frame: pd.DataFrame,
+	*,
+	title: str,
+	x_label: str,
+	y_label: str,
+	colorbar_label: str,
+	annotate: bool = True,
+	value_format: str = ".3f",
+	center_value: float | None = None,
+	ax: Any | None = None,
+	figure_size: tuple[float, float] = (10.0, 6.5),
+	x_tick_rotation: float = 45.0,
+) -> tuple[Any, Any]:
+	"""Plot an annotated numeric heatmap with repository-standard styling."""
+
+	resolved_frame = _coerce_numeric_dataframe_allow_missing(heatmap_frame, frame_name="heatmap_frame")
+	tokens = apply_pibre_plot_theme()
+	if ax is None:
+		figure, ax = plt.subplots(figsize=figure_size, dpi=140, constrained_layout=True)
+	else:
+		figure = ax.figure
+
+	heatmap_values = resolved_frame.to_numpy(dtype=float)
+	masked_values = np.ma.masked_invalid(heatmap_values)
+	if center_value is None:
+		colormap = _copy_colormap_with_missing_color(
+			tokens["sequential_colormap"],
+			missing_color=tokens["missing_color"],
+		)
+		image = ax.imshow(masked_values, aspect="auto", cmap=colormap, origin="upper")
+	else:
+		max_magnitude = float(np.nanmax(np.abs(heatmap_values - float(center_value))))
+		if not np.isfinite(max_magnitude) or max_magnitude <= 0.0:
+			max_magnitude = 1.0
+		colormap = _copy_colormap_with_missing_color(
+			tokens["diverging_colormap"],
+			missing_color=tokens["missing_color"],
+		)
+		image = ax.imshow(
+			masked_values,
+			aspect="auto",
+			cmap=colormap,
+			norm=TwoSlopeNorm(
+				vmin=float(center_value) - max_magnitude,
+				vcenter=float(center_value),
+				vmax=float(center_value) + max_magnitude,
+			),
+			origin="upper",
+		)
+
+	colorbar = figure.colorbar(image, ax=ax)
+	colorbar.set_label(colorbar_label)
+	colorbar.ax.tick_params(colors=tokens["primary_text"])
+	ax.set_xticks(np.arange(resolved_frame.shape[1], dtype=float))
+	ax.set_xticklabels([str(column_name) for column_name in resolved_frame.columns], rotation=x_tick_rotation, ha="right")
+	ax.set_yticks(np.arange(resolved_frame.shape[0], dtype=float))
+	ax.set_yticklabels([str(index_name) for index_name in resolved_frame.index])
+	ax.set_xlabel(x_label)
+	ax.set_ylabel(y_label)
+	ax.set_title(title)
+	ax.set_facecolor(tokens["axes_background"])
+	ax.grid(False)
+
+	annotation_artists: list[Any] = []
+	if annotate:
+		for row_index in range(resolved_frame.shape[0]):
+			for column_index in range(resolved_frame.shape[1]):
+				cell_value = heatmap_values[row_index, column_index]
+				if np.isnan(cell_value):
+					annotation_text = "NA"
+				else:
+					annotation_text = format(float(cell_value), value_format)
+				annotation_artists.append(
+					ax.text(
+						column_index,
+						row_index,
+						annotation_text,
+						ha="center",
+						va="center",
+						color=tokens["primary_text"],
+						fontsize=9.0,
+					)
+				)
+
+	setattr(
+		ax,
+		"_pibre_metric_heatmap",
+		{
+			"image": image,
+			"colorbar": colorbar,
+			"annotations": annotation_artists,
+			"values": heatmap_values,
+		},
+	)
+
+	return figure, ax
+
+
 def plot_train_test_parity_panels(
 	train_actual: Any,
 	train_predicted: Any,
@@ -863,6 +1083,8 @@ __all__ = [
 	"plot_coefficient_bar_chart",
 	"plot_coefficient_heatmap",
 	"plot_coefficient_tensor_heatmaps",
+	"plot_metric_heatmap",
+	"plot_metric_summary_lines",
 	"plot_response_surface_contours",
 	"plot_train_test_parity_panels",
 	"plot_train_test_metric_boxplots",
