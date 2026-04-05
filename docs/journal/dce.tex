@@ -1,0 +1,160 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{multirow}
+
+\begin{document}
+
+\title{An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}
+
+\section{Introduction}
+
+Water pollution presents a critical environmental and public health challenge worldwide, with particularly severe repercussions in developing nations (Lin et al., 2022; Madhav et al., 2020). Biological wastewater treatment systems, particularly those based on the activated sludge process, are the dominant approach applied to combat this issue (Duan et al., 2022). However, their modeling and analysis present formidable engineering and computational challenges (Xiao et al., 2025). The underlying biophysical mechanisms are governed by the Activated Sludge Models (ASM) (Henze et al., 2006), which rely on coupled, multiplicative non-linear kinetic expressions to describe microbial growth and substrate consumption. This inherent non-linearity limits the practical application of transparent analytical methods for process design, frequently forcing engineers to rely on iterative trial-and-error approaches or computationally expensive heuristic algorithms (Aboagye et al., 2021; Padron-Paez et al., 2020).
+
+In response to the computational and mathematical complexity inherent in non-linear Activated Sludge Models, research has increasingly focused on developing surrogate models to approximate the behavior of biological wastewater treatment systems (Bhosekar \& Ierapetritou, 2018; Durkin et al., 2024; Tsochatzidi et al., 2025). Traditional approaches have explored linearization techniques (Li et al., 2020; Yang et al., 2014) and multivariable polynomial fitting (Ahn et al., 2014; Kim et al., 2009; Lim et al., 2011). While linear methods like Partial Least Squares (PLS) offer interpretable mappings, they inherently struggle to capture the severe non-linearities of microbial kinetics without extensive feature engineering. To overcome these limitations, the machine learning (ML) paradigm has emerged as a powerful route for approximating highly non-linear wastewater-treatment behavior (Croll et al., 2023; Nazlabadi et al., 2021). A wide array of data-driven algorithms—ranging from distance-based methods like k-Nearest Neighbors (k-NN) and PLS (Khatri et al., 2020; Wold et al., 2001), to kernel methods like Support Vector Regression (SVR) (Fang et al., 2011), tree-based ensembles such as Random Forest (RF), AdaBoost, XGBoost, LightGBM, and CatBoost (Sadri Moghaddam \& Mesghali, 2023; Wang et al., 2025; Yang et al., 2025), and Artificial Neural Networks (ANN) (Asadi et al., 2017; Bagherzadeh et al., 2021; Mao et al., 2024)—have demonstrated strong predictive capabilities for effluent quality. 
+
+Despite their predictive accuracy, these standard ML algorithms suffer from a fundamental structural blindness: they map operational inputs $u \in \mathbb{R}^{M_{op}}$ and influent conditions $c_{in}$ directly to measured outputs, minimizing empirical risk strictly in the observation space. In activated sludge systems, however, the true physical state is defined by a latent ASM component vector $c \in \mathbb{R}^F$, where $F$ is the number of mechanistic components (e.g., soluble substrate, autotrophic biomass, ammonium). The stoichiometric matrix $\nu \in \mathbb{R}^{R \times F}$ dictates how these components interact across $R$ reactions. This implies strict conservation laws of the form $Ac = Ac_{in}$, where $A \in \mathbb{R}^{q \times F}$ is a full-row-rank matrix whose transposed rows form a basis for $\operatorname{null}(\nu)$, such that $A\nu^T = 0$. Plant operators and simulators rarely observe $c$ directly; instead, they observe a measured composite vector $y \in \mathbb{R}^K$, defined by a linear composition map $y = I_{comp}c$, where $I_{comp} \in \mathbb{R}^{K \times F}$. 
+
+By bypassing the latent component space $\mathbb{R}^F$, black-box regressors (such as PLS, k-NN, SVR, RF, AdaBoost, XGBoost, LightGBM, CatBoost, and ANN) can accurately fit observed effluent aggregates while implying a physically impossible redistribution of the underlying ASM components. To make this concrete, consider an ASM-flavored miniature system with three components: soluble substrate ($S_S$), particulate substrate ($X_S$), and ammonium ($S_{NH}$). Let a simplified reaction convert $S_S$ to $X_S$ without altering ammonium ($\nu = [-1, 1, 0]$). An admissible invariant basis preserving total COD equivalents and ammonium is $A = \left[\begin{smallmatrix} 1 & 1 & 0 \\ 0 & 0 & 1 \end{smallmatrix}\right]$. If the measured outputs are total COD and ammonium ($I_{comp} = A$), and the influent is $c_{in} = [10, 10, 5]^T$, a raw surrogate might predict an unphysical effluent state $c_{raw} = [-1, 21, 5]^T$. The measured output is $y_{raw} = I_{comp}c_{raw} = [20, 5]^T$. Crucially, the physically feasible state $c = [0, 20, 5]^T$ produces the exact same measured output $y = [20, 5]^T$. A measured-space-only correction cannot distinguish between these two states, allowing physically absurd internal states to masquerade as accurate predictions.
+
+This study addresses this epistemological and physical mismatch through the development of Invariant-Constrained Second-Order Regression (ICSOR), a physics-informed surrogate framework for steady-state activated sludge systems. ICSOR is designed to answer a precise question: given a steady-state influent state and operating condition, what measured effluent state should be predicted if the underlying ASM component state must satisfy the stoichiometric invariants of the reaction network and remain componentwise non-negative? 
+
+To achieve this, ICSOR employs a partitioned second-order feature map $\phi(u, c_{in})$ that explicitly separates operational variables (which alter the process environment) from influent concentrations (which dictate the material inventory). By retaining full vectorized quadratic blocks via the Kronecker product (e.g., $u \otimes u$, $c_{in} \otimes c_{in}$, and $u \otimes c_{in}$), the model transparently captures all pairwise non-linear operation-loading interactions. Specifically, these bilinear terms naturally approximate the multiplicative interactions inherent in the biological processes, such as the biomass-substrate coupling characteristic of Monod-type kinetics. Crucially, the raw surrogate prediction is corrected in the latent component space before being collapsed to measured outputs. This correction is executed in two stages: first, an orthogonal affine projection maps the raw prediction onto the invariant-consistent set ($Ac = Ac_{in}$); second, if this affine projection yields negative component concentrations, a strictly convex quadratic program (QP) finds the closest Euclidean point on the intersection of the invariant affine set and the non-negative orthant ($c \ge 0$). Because this projection relies on a Euclidean metric, it is inherently sensitive to component scaling, treating the unweighted concentration coordinates as the definitive geometric space. 
+
+By enforcing the correction in a latent space, ICSOR formally delineates what can be learned from data versus what must be assumed. Measured composite data uniquely identify an affine core in measured space, but they do not uniquely identify the latent component-space coefficients. Therefore, the final inequality-constrained deployed predictor is fully specified only after a latent component-space representative has been fixed. Only after this physical discipline is enforced is the corrected state mapped to the measured composite variables via $I_{comp}$. Consequently, component non-negativity guarantees composite non-negativity, provided the relevant rows of $I_{comp}$ are entrywise non-negative.
+
+The objective of this article is to formulate the ICSOR framework as an analytically structured surrogate and to evaluate its efficacy on a standalone Continuous Stirred Tank Reactor (CSTR). By comparing ICSOR against the aforementioned unconstrained measured-space baselines, this study assesses whether the proposed model can achieve competitive predictive accuracy while explicitly guaranteeing the parsimony, interpretability, and rigorous physical consistency required for reliable process analysis. The framework presented herein is strictly bounded to steady-state predictions; while it guarantees stoichiometric invariance and non-negativity, it does not claim to enforce full kinetic or thermodynamic feasibility, nor does it replace dynamic trajectory simulators. Instead, it occupies a necessary middle ground: a surrogate simple enough to have its affine core estimated from data by least squares, yet mathematically constrained to respect the fundamental mass balances of wastewater engineering.
+
+\section{Theory and Calculation}
+
+The mathematical framework of Invariant-Constrained Second-Order Regression (ICSOR) is developed to reconcile the predictive flexibility of data-driven surrogates with the strict conservation laws of mechanistic modeling. The framework operates across two linked spaces: the latent ASM component space, where stoichiometry and non-negativity are physically defined, and the measured composite space, where prediction targets are observed and evaluated.
+
+\subsection{Physical Scope, State Spaces, and Notation}
+
+We consider a fixed reactor block or process unit represented by quasi-steady samples. The system boundary is identical to the boundary used to define the influent and effluent state vectors. Any external source or sink crossing that boundary must be explicitly represented in the adopted stoichiometric model; otherwise, it is excluded from the claim of invariant preservation. 
+
+Let $M_{op}$ be the number of operational variables, $F$ the number of ASM components, $K$ the number of measured composite variables, and $R$ the number of reactions. Single-sample vectors are written as column vectors. We define the following state spaces and operators:
+\begin{itemize}
+    \item $u \in \mathbb{R}^{M_{op}}$: Operational input vector (e.g., hydraulic retention time, aeration intensity).
+    \item $c_{in} \in \mathbb{R}^{F}$: Influent ASM component concentration vector.
+    \item $c_{out} \in \mathbb{R}^{F}$: True steady-state effluent ASM component concentration vector.
+    \item $c_{raw} \in \mathbb{R}^{F}$: Unconstrained surrogate prediction of the effluent ASM component state.
+    \item $c^* \in \mathbb{R}^{F}$: Final non-negative, invariant-projected ASM component prediction.
+    \item $y \in \mathbb{R}^{K}$: Measured effluent composite vector.
+    \item $I_{comp} \in \mathbb{R}^{K \times F}$: Composition matrix mapping ASM component concentrations to measured composite variables, such that $y = I_{comp}c_{out}$.
+    \item $\nu \in \mathbb{R}^{R \times F}$: Stoichiometric matrix.
+\end{itemize}
+
+The linear composition map $I_{comp}$ is standard in wastewater modeling. In the common case where composites (e.g., total COD, total nitrogen, TSS) are formed by summing relevant component concentrations with non-negative conversion factors, the rows of $I_{comp}$ are entrywise non-negative. This sign structure is critical: non-negative component predictions ($c^* \ge 0$) mathematically imply non-negative measured composites ($y^* \ge 0$) only under this specific condition.
+
+\subsection{Stoichiometric Structure and Conserved Quantities}
+
+Let $\nu \in \mathbb{R}^{R \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. For a steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{R}$, scaled into concentration-equivalent units, such that the net change across the control volume is:
+\begin{equation}
+c_{out} - c_{in} = \nu^T \xi
+\end{equation}
+The vector $\xi$ is rarely observed. To eliminate it and isolate the conserved quantities, we introduce a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ whose transposed rows form a basis of $\operatorname{null}(\nu)$. Equivalently, $A \nu^T = 0$. Multiplying the stoichiometric change relation by $A$ yields:
+\begin{equation}
+A(c_{out} - c_{in}) = A \nu^T \xi = 0 \quad \implies \quad A c_{out} = A c_{in}
+\end{equation}
+Each row of $A$ represents one independent conserved combination of ASM components (e.g., COD equivalents or nitrogen balances) implied by the reaction network. The invariant relation $A c_{out} = A c_{in}$ forms the affine physical constraint that any credible surrogate must satisfy.
+
+To make this concrete, consider a miniature 2-component system where soluble substrate ($c_1$) is converted to particulate substrate ($c_2$) without net loss: $\nu = [-1, 1]$. The null space is spanned by $A = [1, 1]$. The invariant relation becomes $c_{out,1} + c_{out,2} = c_{in,1} + c_{in,2}$. The reaction may redistribute material, but it cannot alter the conserved total.
+
+\subsection{Unconstrained Surrogate in ASM Component Space}
+
+In activated sludge systems, operational variables ($u$) alter the process environment, while influent concentrations ($c_{in}$) dictate the material inventory. Treating them as interchangeable inputs obscures their physical roles. ICSOR partitions these inputs using an engineered second-order feature map:
+\begin{equation}
+\phi(u, c_{in}) = \begin{bmatrix}
+1 \\
+u \\
+c_{in} \\
+u \otimes u \\
+c_{in} \otimes c_{in} \\
+u \otimes c_{in}
+\end{bmatrix} \in \mathbb{R}^{D}
+\end{equation}
+where $\otimes$ denotes the Kronecker product under column-wise vectorization, yielding a feature dimension $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$. 
+
+The unconstrained raw surrogate is defined in the latent component space as $c_{raw} = B \phi(u, c_{in})$, where $B \in \mathbb{R}^{F \times D}$. To ground this mathematically and physically, $B$ is partitioned conformably with the feature map:
+\begin{equation}
+c_{raw} = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in})
+\end{equation}
+with parameter blocks defined as $W_u \in \mathbb{R}^{F \times M_{op}}$, $W_{in} \in \mathbb{R}^{F \times F}$, $b \in \mathbb{R}^{F}$, $\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$, $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$, and $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$. 
+
+Each block has a distinct engineering interpretation in the latent space: $W_u u$ captures first-order operating effects; $W_{in} c_{in}$ captures direct carry-through of influent composition; $\Theta_{uu}$ and $\Theta_{cc}$ capture self-quadratic non-linearities; and crucially, $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interactions that drive biological kinetics. However, because $c_{raw}$ is purely data-driven, it is not guaranteed to satisfy the invariant relation $A c_{raw} = A c_{in}$, nor is it guaranteed to be non-negative.
+
+\subsection{Projection onto the Invariant-Consistent Non-Negative Set}
+
+To enforce physical discipline, the raw prediction must be corrected. We define the invariant-consistent non-negative feasible set for a given influent state as:
+\begin{equation}
+\mathcal{S}_+(c_{in}) = \{ c \in \mathbb{R}^{F} : A c = A c_{in}, \; c \ge 0 \}
+\end{equation}
+ICSOR corrects the raw surrogate by finding the closest Euclidean point in this feasible set. This is formulated as a strictly convex quadratic program (QP):
+\begin{equation}
+c^* = \arg\min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{raw} \rVert_2^2 \quad \text{subject to} \quad A c = A c_{in}, \quad c \ge 0
+\end{equation}
+Because the objective is strictly convex and the feasible set is closed and non-empty (assuming $c_{in} \ge 0$), the minimizer $c^*$ exists and is unique. Because this metric is Euclidean in raw concentration coordinates, component scaling directly influences the magnitude and direction of the correction.
+
+This formulation contains the orthogonal affine projection as a reference solution. If we drop the non-negativity constraint, the closed-form affine projection is:
+\begin{equation}
+c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}
+\end{equation}
+where $P_{inv} = A^T(A A^T)^{-1} A$ is the orthogonal projector onto the row space of $A$, and $P_{adm} = I_F - P_{inv}$ is the projector onto the admissible change space. 
+
+In computational deployment, solving the full $F$-dimensional QP is unnecessary. Let $N_A \in \mathbb{R}^{F \times (F-q)}$ be a matrix whose orthonormal columns span $\operatorname{null}(A)$. Every point in the affine set can be parameterized as $c = c_{aff} + N_A z$ for some reduced coordinate vector $z \in \mathbb{R}^{F-q}$. Because $N_A$ has orthonormal columns, the Euclidean metric is preserved ($z^T N_A^T N_A z = z^T z$), and the correction reduces to:
+\begin{equation}
+\min_{z \in \mathbb{R}^{F-q}} \; \frac{1}{2} z^T z \quad \text{subject to} \quad N_A z \ge -c_{aff}
+\end{equation}
+The correction is evaluated hierarchically: if $c_{raw}$ is feasible, it is retained; if only invariants are violated, $c_{aff}$ is used; the reduced QP is solved only when $c_{aff}$ contains negative components.
+
+\subsection{Collapse to Measured Output Space and Blockwise Interpretability}
+
+Practical prediction targets are measured composites, not latent components. The final deployed prediction is obtained by collapsing the corrected component state:
+\begin{equation}
+y^* = I_{comp} c^*
+\end{equation}
+Crucially, the correction must occur \textit{before} the collapse. A measured-space-only correction cannot distinguish between physically distinct component states that happen to yield the same composite aggregates.
+
+Before positivity constraints activate, the measured prediction induced by the affine projector is $y_{aff} = I_{comp} c_{aff}$. Substituting the definition of $c_{aff}$ yields the affine measured-space core:
+\begin{equation}
+y_{aff} = G B \phi(u, c_{in}) + H c_{in}
+\end{equation}
+where $G = I_{comp} P_{adm}$ and $H = I_{comp} P_{inv}$. Defining the effective identifiable affine matrix as $M = G B \in \mathbb{R}^{K \times D}$, the model becomes:
+\begin{equation}
+y_{aff} = M \phi(u, c_{in}) + H c_{in}
+\end{equation}
+
+While the latent component-space matrix $B$ is not uniquely identifiable from measured data, the effective affine core $M$ is. To provide direct engineering interpretability, $M$ can be partitioned conformably with the feature map into effective measured-space blocks:
+\begin{equation}
+M = \begin{bmatrix}
+b_y & W_{u,y} & W_{in,y} & \Theta_{uu,y} & \Theta_{cc,y} & \Theta_{uc,y}
+\end{bmatrix}
+\end{equation}
+where $b_y = G b$, $W_{u,y} = G W_u$, $W_{in,y} = G W_{in}$, $\Theta_{uu,y} = G \Theta_{uu}$, $\Theta_{cc,y} = G \Theta_{cc}$, and $\Theta_{uc,y} = G \Theta_{uc}$. Substituting these blocks into the affine-core model and collecting the first-order influent terms yields:
+\begin{equation}
+y_{aff} = b_y + W_{u,y} u + (W_{in,y} + H)c_{in} + \Theta_{uu,y}(u \otimes u) + \Theta_{cc,y}(c_{in} \otimes c_{in}) + \Theta_{uc,y}(u \otimes c_{in})
+\end{equation}
+This blockwise expression is the cornerstone of the model's interpretability. A process engineer can directly inspect $W_{u,y}$ to understand the effective linear sensitivity of measured composites (e.g., effluent total nitrogen) to operational changes (e.g., aeration intensity). Similarly, $\Theta_{uc,y}$ explicitly quantifies how shifts in influent loading modify those operational sensitivities in the measured space. 
+
+\subsection{Estimation and Epistemological Boundaries}
+
+This affine relation dictates the epistemology of the framework. For a dataset of $N$ steady-state samples, let $\Phi \in \mathbb{R}^{N \times D}$ be the feature matrix, $Y \in \mathbb{R}^{N \times K}$ the measured output matrix, and $C_{in} \in \mathbb{R}^{N \times F}$ the influent state matrix. Defining the transformed target $\widetilde{Y} = Y - C_{in} H^T$, the dataset-level estimation equation is:
+\begin{equation}
+\widetilde{Y} = \Phi M^T + E
+\end{equation}
+Measured composite data uniquely identify the affine core $M$ via the least-squares pseudoinverse estimator $\widehat{M}^T = \Phi^+ \widetilde{Y}$. However, they do \textit{not} uniquely identify the latent component-space matrix $B$. If $N_B \in \mathbb{R}^{F \times D}$ satisfies $G N_B = 0$, then $G(B + N_B) = M$. 
+
+Consequently, the final deployed predictor is decomposed as:
+\begin{equation}
+y^* = y_{aff} + \delta_+(u, c_{in})
+\end{equation}
+where $\delta_+(u, c_{in}) = I_{comp}(c^* - c_{aff})$ is the sample-specific positivity correction. The data identify the globally affine core $y_{aff}$ (and its interpretable blocks), while the non-linear correction $\delta_+$ relies on fixing a chosen latent representative for $B$. If the minimum-Frobenius-norm exact representative $\widehat{B}_{ls} = G^+ \widehat{M}$ is chosen, it induces a compatible affine core $\widehat{M}_G = G G^+ \widehat{M}$. This compatible core equals the unconstrained least-squares fit $\widehat{M}$ only when $\widehat{M}$ already lies perfectly in $\operatorname{range}(G)$. This delineates exactly what the surrogate learns from data versus what it enforces through physical geometry.
+
+\end{document}
