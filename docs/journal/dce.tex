@@ -157,4 +157,287 @@ y^* = y_{aff} + \delta_+(u, c_{in})
 \end{equation}
 where $\delta_+(u, c_{in}) = I_{comp}(c^* - c_{aff})$ is the sample-specific positivity correction. The data identify the globally affine core $y_{aff}$ (and its interpretable blocks), while the non-linear correction $\delta_+$ relies on fixing a chosen latent representative for $B$. If the minimum-Frobenius-norm exact representative $\widehat{B}_{ls} = G^+ \widehat{M}$ is chosen, it induces a compatible affine core $\widehat{M}_G = G G^+ \widehat{M}$. This compatible core equals the unconstrained least-squares fit $\widehat{M}$ only when $\widehat{M}$ already lies perfectly in $\operatorname{range}(G)$. This delineates exactly what the surrogate learns from data versus what it enforces through physical geometry.
 
+\section{Methodology}
+
+This section documents the computational protocol used to evaluate the proposed Invariant-Constrained Second-Order Regression (ICSOR) model against a suite of classical regressors. The comparison was designed to isolate the effect of model structure and physical constraint handling: every model was exposed to the same synthetic operating scenarios, the same measured effluent targets, and the same row-wise train-test partitions. Because the classical regressors predict directly in measured-output space and do not produce a latent component-space estimate $c_{raw}$, no post-hoc constraint projection was applied to their outputs. Thus, the cross-model comparison ranks all models on their deployed measured-output predictions, while the physical diagnostics available exclusively from ICSOR are reported separately.
+
+\subsection{Mechanistic Dataset and Simulation Domain}
+
+All benchmark data were generated from a standalone steady-state continuous stirred tank reactor (CSTR) simulator based on the Activated Sludge Model No.\ 2d with two-step nitrification (ASM2d-TSN). The mechanistic description contained $R = 28$ biological and chemical processes acting on $F = 21$ ASM state variables, and a linear composition map $I_{comp} \in \mathbb{R}^{K \times F}$ with $K = 6$ from the latent state space to six measured effluent composites: chemical oxygen demand (COD), total nitrogen (TN), total Kjeldahl nitrogen (TKN), total phosphorus (TP), total suspended solids (TSS), and volatile suspended solids (VSS).
+
+The simulation domain was sampled using Latin hypercube sampling (LHS) to ensure uniform coverage of the joint input space. A total of 10,000 valid steady-state samples were generated with random seed 42. Each sample was defined by $M_{op} = 2$ operating variables and $F = 21$ influent state variables. The operating variables were the hydraulic retention time and aeration level, sampled as $\mathrm{HRT} \in [6,36]$~h and $\mathrm{Aeration} \in [0.5,2.5]$. The influent-state sampling ranges are presented in Table~\ref{tab:influent_ranges}.
+
+\begin{table}[htbp]
+\centering
+\caption{Influent ASM2d-TSN state variable sampling ranges. All concentrations are expressed in the native ASM2d units: g~COD/m\textsuperscript{3} for organic and biomass fractions, g~N/m\textsuperscript{3} for nitrogen species, g~P/m\textsuperscript{3} for phosphorus species, mol/m\textsuperscript{3} for alkalinity, g~O\textsubscript{2}/m\textsuperscript{3} for dissolved oxygen, and g~TSS/m\textsuperscript{3} for solids fractions.}
+\label{tab:influent_ranges}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Category} & \textbf{State Variable} & \textbf{Lower Bound} & \textbf{Upper Bound} \\
+\midrule
+\multirow{10}{*}{Dissolved}
+ & $S_A$ (Soluble acetate) & 5 & 80 \\
+ & $S_F$ (Soluble fermentable substrate) & 20 & 180 \\
+ & $S_I$ (Soluble inert) & 10 & 90 \\
+ & $S_{N2}$ (Dissolved nitrogen gas) & 0 & 2 \\
+ & $S_{NH4}$ (Ammonium) & 12 & 55 \\
+ & $S_{NO2}$ (Nitrite) & 0 & 3 \\
+ & $S_{NO3}$ (Nitrate) & 0 & 8 \\
+ & $S_{PO4}$ (Phosphate) & 2 & 18 \\
+ & $S_{ALK}$ (Alkalinity) & 80 & 260 \\
+ & $S_{O2}$ (Dissolved oxygen) & 0 & 0.5 \\
+\midrule
+\multirow{11}{*}{Particulate}
+ & $X_I$ (Particulate inert) & 20 & 120 \\
+ & $X_S$ (Particulate substrate) & 60 & 280 \\
+ & $X_H$ (Heterotrophic biomass) & 15 & 100 \\
+ & $X_{PAO}$ (Phosphate-accumulating organisms) & 5 & 60 \\
+ & $X_{PP}$ (Polyphosphate) & 2 & 20 \\
+ & $X_{PHA}$ (Polyhydroxyalkanoates) & 1 & 30 \\
+ & $X_{AOB}$ (Ammonia-oxidizing bacteria) & 0.5 & 8 \\
+ & $X_{NOB}$ (Nitrite-oxidizing bacteria) & 0.5 & 8 \\
+ & $X_{TSS}$ (Total suspended solids) & 0 & 0 \\
+ & $X_{MeOH}$ (Metal hydroxide) & 0 & 12 \\
+ & $X_{MeP}$ (Metal phosphate) & 0 & 12 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For each sampled influent-operating point, the effluent steady state was obtained by solving the nonlinear ASM2d-TSN algebraic balance equations under bound constraints. The primary solve used bound-constrained nonlinear least squares with lower and upper state bounds of $10^{-8}$ and 1500, variable, residual, and gradient tolerances of $10^{-9}$, and a maximum of 1200 function evaluations. Two starting points were tested for each sample: an initial guess assembled from the current influent state and the previous accepted solution, and a multistart perturbation of that initial guess. If neither trial reduced the maximum absolute residual below the configured acceptance threshold of 5.0, a dynamic-relaxation step was performed by integrating the governing residual dynamics for 20 days with a Backward Differentiation Formula (BDF) solver before re-solving the steady-state problem. Only solutions that both converged and satisfied the acceptance threshold were retained. If a sampled influent-operating point failed, a new point was drawn; up to 25 additional attempts were allowed for each required sample.
+
+The accepted effluent ASM state $c_{out} \in \mathbb{R}^F$ was then collapsed through the composition matrix $I_{comp}$ to the six measured outputs $y = I_{comp} c_{out}$. The persisted dataset therefore contained operating variables $u$, influent component states $c_{in}$, influent measured composites $I_{comp} c_{in}$, effluent component states $c_{out}$, and effluent measured composites $y$. However, only the measured effluent composites were used as prediction targets in the cross-model benchmark.
+
+\subsection{Construction of the Benchmark Dataset and Constraint Operators}
+
+The stoichiometric matrix $\nu \in \mathbb{R}^{R \times F}$, corresponding to the Petersen matrix of the ASM2d-TSN reaction network, and the composition matrix $I_{comp} \in \mathbb{R}^{K \times F}$ were taken from the canonical ASM2d-TSN reference formulation used by the simulator. From the stoichiometric matrix, the component-space invariant matrix $A \in \mathbb{R}^{q \times F}$ was obtained as a basis of the left null space of $\nu$, consistent with the conservation law $A\nu^T = 0$ developed in Section~2. Concretely, the left null space of $\nu$ is equivalent to the right null space of $\nu^T$. This null space was computed using the \texttt{scipy.linalg.null\_space} function from SciPy (Virtanen et al., 2020), which internally performs a Singular Value Decomposition (SVD) and extracts the right singular vectors whose corresponding singular values fall below a numerically determined tolerance. The SVD-based approach was selected because it is numerically stable for rank-deficient matrices and yields an orthonormal basis, avoiding the ill-conditioning that can arise from direct factorization methods such as Gaussian elimination on the transpose. The resulting orthonormal column vectors were transposed to form the rows of $A$. To further stabilize the representation for downstream arithmetic, the entries of $A$ were rounded to five decimal places, entries with magnitude below $10^{-10}$ were set to zero, and each row was normalized by its first non-zero coefficient so that the leading non-trivial entry of every conserved-quantity row is unity.
+
+A single supervised-learning dataset was assembled for the entire benchmark. Its features consisted of 23 physical inputs for every sample: the two operating variables $u \in \mathbb{R}^{M_{op}}$ and the 21 influent ASM state variables $c_{in} \in \mathbb{R}^{F}$. Its targets were the six measured effluent composites $y \in \mathbb{R}^{K}$. For ICSOR, the 21-component influent state vector $c_{in}$ additionally served as the constraint reference, so that the invariant projection and non-negativity correction could be enforced in the latent component space before collapse to measured outputs via $I_{comp}$.
+
+Because the classical regressors predict directly in the measured-output space $\mathbb{R}^K$ and never construct a latent component prediction $c_{raw} \in \mathbb{R}^F$, no invariant or non-negativity projection was applied to their outputs. The raw measured-space prediction of each classical model constitutes its deployed prediction. By contrast, ICSOR's deployed prediction is the physically corrected output $y^* = I_{comp} c^*$ obtained after the invariant and non-negativity projection described in Section~2. All models shared exactly the same 23-feature input basis and the same six-target output basis, ensuring that any differences in predictive accuracy are attributable solely to model structure.
+
+\subsection{Preprocessing and Split Management}
+
+One common row-wise train-test split was created using a test fraction of 0.2 and random seed 42. On the 10,000-sample dataset, this yielded 8,000 training rows and 2,000 testing rows. All one-shot benchmark results reported in this study were produced from this common split so that differences in prediction accuracy could not be attributed to different train-test partitions.
+
+The classical regressors were standardized by z-score normalization fitted on the training split only, separately for the feature matrix and the six-target output matrix. The fitted transforms were then applied to both training and test data, and all predictions were inverse-transformed back to the original measured units before metric evaluation. ICSOR was not standardized: feature scaling and target scaling were both disabled so that the influent component states remained in physical coordinates and the composition map $I_{comp}$ remained consistent with the formulation in Section~2.
+
+\subsection{Hyperparameter Optimization}
+
+The hyperparameters of all classical benchmark regressors were selected via Bayesian optimization using the Optuna framework. For each classical model, 50\% of the authoritative training pool was sampled, yielding a 4,000-row tuning subset. That subset was partitioned again with a 20\% validation fraction, producing 3,200 tuning-train rows and 800 tuning-validation rows. Each Optuna study used 30 trials, no wall-clock timeout, random seed 42, and validation mean squared error (MSE) as the objective function. The optimized hyperparameters selected by this procedure are reported in Table~\ref{tab:optuna_hyperparameters}.
+
+\begin{table}[htbp]
+\centering
+\caption{Optuna-optimized hyperparameters for the classical benchmark regressors. ICSOR has no tunable hyperparameters beyond its analytical formulation.}
+\label{tab:optuna_hyperparameters}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Model} & \textbf{Parameter} & \textbf{Selected Value} \\
+\midrule
+\multirow{5}{*}{XGBoost}
+ & Number of trees & 250 \\
+ & Learning rate & 0.03 \\
+ & Maximum depth & 8 \\
+ & Subsample fraction & 0.85 \\
+ & Column subsample fraction & 0.80 \\
+\midrule
+\multirow{6}{*}{LightGBM}
+ & Number of trees & 300 \\
+ & Learning rate & 0.04 \\
+ & Number of leaves & 45 \\
+ & Minimum child samples & 8 \\
+ & Subsample fraction & 0.85 \\
+ & Column subsample fraction & 0.90 \\
+\midrule
+\multirow{5}{*}{CatBoost}
+ & Iterations & 300 \\
+ & Learning rate & 0.04 \\
+ & Depth & 7 \\
+ & Bagging temperature & 0.8 \\
+ & Random strength & 0.5 \\
+\midrule
+\multirow{3}{*}{AdaBoost}
+ & Number of estimators & 200 \\
+ & Learning rate & 0.03 \\
+ & Loss function & linear \\
+\midrule
+\multirow{2}{*}{Random Forest}
+ & Number of trees & 400 \\
+ & Bootstrap & true \\
+\midrule
+\multirow{3}{*}{SVR}
+ & Kernel & RBF \\
+ & Regularization $C$ & 15.0 \\
+ & Epsilon $\epsilon$ & 0.03 \\
+\midrule
+\multirow{2}{*}{$k$-NN}
+ & Number of neighbors $k$ & 7 \\
+ & Weighting & distance \\
+\midrule
+\multirow{1}{*}{PLS}
+ & Number of components & 6 \\
+\midrule
+\multirow{5}{*}{ANN (all depths)}
+ & Activation & ReLU \\
+ & Optimizer & Adam \\
+ & L2 regularization $\alpha$ & $10^{-4}$ \\
+ & Batch size & 64 \\
+ & Maximum iterations & 500 \\
+\midrule
+ANN Shallow & Hidden layers & $(64)$ \\
+ANN Medium & Hidden layers & $(96, 48)$ \\
+ANN Deep & Hidden layers & $(128, 64, 32)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Random seed 42 was used wherever the model family exposed stochastic initialization. ICSOR requires no hyperparameter tuning: its identifiable affine core $M$ is estimated in closed form by multivariate least squares, and the physical projection parameters are derived directly from the stoichiometric matrix $\nu$ and the composition matrix $I_{comp}$.
+
+\subsection{Benchmark Models}
+
+\subsubsection{ICSOR}
+
+The ICSOR model was constructed exactly as described in Section~2. The input was partitioned into the operational vector $u \in \mathbb{R}^{M_{op}}$ ($M_{op} = 2$) and the influent component vector $c_{in} \in \mathbb{R}^{F}$ ($F = 21$). These were mapped through the partitioned second-order feature map defined in Eq.~(3):
+\begin{equation*}
+\phi(u, c_{in}) = \begin{bmatrix} 1, & u^T, & c_{in}^T, & (u \otimes u)^T, & (c_{in} \otimes c_{in})^T, & (u \otimes c_{in})^T \end{bmatrix}^T \in \mathbb{R}^D
+\end{equation*}
+yielding a total feature dimension of $D = 1 + 2 + 21 + 4 + 441 + 42 = 511$, comprising 1 bias term, 2 linear operational terms, 21 linear influent terms, 4 operational self-product terms, 441 influent self-product terms, and 42 operation-influent interaction terms. The identifiable affine core $\widehat{M} \in \mathbb{R}^{K \times D}$ was estimated by the multivariate least-squares pseudoinverse $\widehat{M}^T = \Phi^+ \widetilde{Y}$ as described in Section~2.6. A minimum-Frobenius-norm representative $\widehat{B}_{ls} = G^+ \widehat{M}$ was then fixed to enable latent-component-space prediction.
+
+Raw component-space predictions $c_{raw} = \widehat{B}_{ls}\, \phi(u, c_{in})$ were corrected in two stages following the hierarchical procedure of Section~2.4: first, the orthogonal affine projection $c_{aff} = P_{adm}\, c_{raw} + P_{inv}\, c_{in}$ enforced the invariant relation $Ac = Ac_{in}$; second, when $c_{aff}$ contained negative components, the reduced-dimension quadratic program (Eq.~8) was solved using the Operator Splitting Quadratic Program (OSQP) solver with absolute and relative tolerances of $10^{-8}$, a maximum of 10,000 iterations, and enabled polishing and warm starts. The corrected component state $c^*$ was then collapsed to the measured output via $y^* = I_{comp}\, c^*$.
+
+\subsubsection{Classical Regressors}
+
+The classical benchmark contained eleven regressors, all trained on the same 23-input basis and all targeting the same six measured outputs: XGBoost, LightGBM, CatBoost, AdaBoost, Random Forest, Support Vector Regression (SVR), $k$-Nearest Neighbors ($k$-NN), Partial Least Squares (PLS), and three multilayer perceptrons (MLP) denoted shallow, medium, and deep. The Optuna-optimized hyperparameters for each model are listed in Table~\ref{tab:optuna_hyperparameters}.
+
+The three MLP architectures are illustrated in Fig.~\ref{fig:mlp_architectures}. All three used the Rectified Linear Unit (ReLU) activation function, the Adam optimizer, L2 regularization coefficient $\alpha = 10^{-4}$, batch size 64, and a maximum of 500 training iterations with convergence tolerance $10^{-4}$.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+\begin{tikzpicture}[
+    node distance=1.2cm,
+    every node/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.7cm, align=center, font=\footnotesize},
+    arrow/.style={->, thick}
+]
+\node (input) {Input\\23};
+\node (h1) [below of=input] {Dense + ReLU\\64};
+\node (output) [below of=h1] {Output\\6};
+\draw[arrow] (input) -- (h1);
+\draw[arrow] (h1) -- (output);
+\end{tikzpicture}
+\caption{Shallow $(64)$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+\begin{tikzpicture}[
+    node distance=1.2cm,
+    every node/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.7cm, align=center, font=\footnotesize},
+    arrow/.style={->, thick}
+]
+\node (input) {Input\\23};
+\node (h1) [below of=input] {Dense + ReLU\\96};
+\node (h2) [below of=h1] {Dense + ReLU\\48};
+\node (output) [below of=h2] {Output\\6};
+\draw[arrow] (input) -- (h1);
+\draw[arrow] (h1) -- (h2);
+\draw[arrow] (h2) -- (output);
+\end{tikzpicture}
+\caption{Medium $(96, 48)$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+\begin{tikzpicture}[
+    node distance=1.2cm,
+    every node/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.7cm, align=center, font=\footnotesize},
+    arrow/.style={->, thick}
+]
+\node (input) {Input\\23};
+\node (h1) [below of=input] {Dense + ReLU\\128};
+\node (h2) [below of=h1] {Dense + ReLU\\64};
+\node (h3) [below of=h2] {Dense + ReLU\\32};
+\node (output) [below of=h3] {Output\\6};
+\draw[arrow] (input) -- (h1);
+\draw[arrow] (h1) -- (h2);
+\draw[arrow] (h2) -- (h3);
+\draw[arrow] (h3) -- (output);
+\end{tikzpicture}
+\caption{Deep $(128, 64, 32)$}
+\end{subfigure}
+\caption{Multilayer perceptron architectures used in the classical benchmark. Each box denotes a fully connected layer followed by the specified activation function. The numbers indicate the layer width (number of neurons). All three architectures map 23 inputs to 6 measured outputs.}
+\label{fig:mlp_architectures}
+\end{figure}
+
+The classical regressors produced predictions directly in the measured-output space $\mathbb{R}^K$. Because these models never construct a latent component-space prediction $c_{raw} \in \mathbb{R}^F$, there is no physically meaningful basis on which to apply the invariant or non-negativity projection developed in Section~2. Consequently, the raw measured-space output of each classical model constitutes its final deployed prediction and is used directly for metric evaluation.
+
+\subsection{Prediction Taxonomy and Metric Definitions}
+
+Before presenting the evaluation protocol, it is necessary to define precisely how the different types of predictions and their associated metrics are distinguished throughout this study.
+
+\subsubsection{Raw and Projected Predictions}
+
+For ICSOR, the term \textit{raw prediction} denotes the measured-space output obtained by collapsing the unconstrained component-space estimate without any physical correction, i.e., $y_{raw} = I_{comp}\, c_{raw}$. This prediction does not satisfy the stoichiometric invariants $Ac = Ac_{in}$ and may imply negative component concentrations. The term \textit{projected prediction} denotes the physically corrected measured-space output $y^* = I_{comp}\, c^*$, obtained after the invariant affine projection and, when necessary, the non-negativity quadratic program have been applied to $c_{raw}$ in the latent component space. The projected prediction is the deployed output of the ICSOR framework.
+
+For the classical regressors, only raw predictions exist. Because these models map inputs directly to measured composites without ever constructing a latent component-space estimate, neither invariant projection nor non-negativity correction can be applied. The raw measured-space output is therefore also the deployed output.
+
+\subsubsection{Effective Metrics}
+
+To enable a fair cross-model comparison, the term \textit{effective prediction} is defined as the deployed output of each model: the projected prediction $y^*$ for ICSOR and the raw measured-space prediction $\hat{y}$ for each classical regressor. All cross-model rankings in this study are based exclusively on effective predictions. Correspondingly, the \textit{effective test metric} for a given performance measure (e.g., effective test RMSE) denotes that measure evaluated on the test set using each model's effective prediction, and the \textit{effective training metric} denotes the same measure evaluated on the training set.
+
+\subsubsection{Regression Metrics}
+
+Five standard regression metrics were employed throughout the evaluation, each computed as an aggregate over all $K = 6$ measured output targets. Let $y_i \in \mathbb{R}^K$ and $\hat{y}_i \in \mathbb{R}^K$ denote the observed and predicted measured vectors for sample $i$, respectively, over $N$ evaluation samples with $N_t = N \times K$ total scalar predictions. The metrics are:
+
+\begin{enumerate}
+\item \textbf{Coefficient of determination} ($R^2$): Defined as $R^2 = 1 - \sum_{j=1}^{K} \sum_{i=1}^{N} (y_{ij} - \hat{y}_{ij})^2 \Big/ \sum_{j=1}^{K} \sum_{i=1}^{N} (y_{ij} - \bar{y}_j)^2$, where $\bar{y}_j$ is the mean of target $j$ over the evaluation set. Individual per-target $R^2$ scores are averaged uniformly across the $K$ targets.
+
+\item \textbf{Mean squared error} (MSE): $\mathrm{MSE} = \frac{1}{N_t} \sum_{j=1}^{K} \sum_{i=1}^{N} (y_{ij} - \hat{y}_{ij})^2$.
+
+\item \textbf{Root mean squared error} (RMSE): $\mathrm{RMSE} = \sqrt{\mathrm{MSE}}$.
+
+\item \textbf{Mean absolute error} (MAE): $\mathrm{MAE} = \frac{1}{N_t} \sum_{j=1}^{K} \sum_{i=1}^{N} |y_{ij} - \hat{y}_{ij}|$.
+
+\item \textbf{Mean absolute percentage error} (MAPE): $\mathrm{MAPE} = \frac{1}{N_t} \sum_{j=1}^{K} \sum_{i=1}^{N} \frac{|y_{ij} - \hat{y}_{ij}|}{\max(|y_{ij}|,\, \epsilon)}$, with $\epsilon = 10^{-8}$ to guard against division by zero.
+\end{enumerate}
+
+These metrics were computed both at the aggregate level (averaging across all targets) and independently for each of the six output targets (COD, TN, TKN, TP, TSS, VSS).
+
+\subsection{Evaluation Protocol}
+
+Each model was trained once on the authoritative 8,000-row training set and evaluated on both the training and test sets. For ICSOR, both raw and projected metrics were recorded so that the impact of the physical correction could be quantified; however, only the projected (effective) metrics were used for cross-model ranking. For the classical regressors, only raw (effective) metrics were available. Aggregate and per-target regression metrics were computed for all six measured outputs using the five metrics defined above.
+
+Negative-prediction analyses quantified the number and proportion of predicted values below zero, the proportion of samples containing at least one negative prediction, and the minimum negative excursion. ICSOR additionally reported fractional-space constraint residuals $\|Ac^* - Ac_{in}\|$, parity plots in both measured and component spaces, and blockwise coefficient visualizations of the identifiable affine core $M$.
+
+\subsection{Repeated Dataset-Size Analysis}
+
+To assess sample-efficiency and generalization behavior, each model underwent a repeated dataset-size analysis. The full benchmark dataset was subsampled without replacement at total sizes of 500, 1450, 2400, 3350, 4300, 5250, 6200, 7150, 8100, 9050, and 10,000 rows. Each size was repeated 100 times with distinct but reproducible seeds derived from the base seed 42, and each repeated sample was re-split using the same 20\% test fraction. The resulting analysis therefore comprised 1,100 re-estimated train-test experiments per model. The hyperparameters selected in the main benchmark stage (Table~\ref{tab:optuna_hyperparameters} for classical models; the fixed analytical formulation for ICSOR) were reused throughout this sweep so that the resampling analysis isolated sample-size sensitivity and split variability rather than retuning noise. Performance at each dataset size was summarized by the effective MSE, i.e., the MSE computed from each model's deployed (effective) prediction.
+
+\subsection{Comparative Analysis}
+
+The final cross-model comparison pooled all per-model sweeps into one common evidence bundle. The primary ranking metric was the effective test RMSE, chosen because it remains in the physical measured-output units and penalizes large errors. Supporting summaries included effective test MAE, $R^2$, MAPE, and MSE.
+
+\subsubsection{Normalized Area Under the Learning Curve (NAULC)}
+
+For each model and each metric, the learning curve was constructed by plotting the median effective test metric against training-set size across the 100 repetitions. The area under this curve was computed by trapezoidal integration over the training-size axis. To enable cross-metric comparison, this area was then normalized by dividing by the total span of the training-size axis (i.e., the difference between the maximum and minimum training sizes), yielding the Normalized Area Under the Learning Curve (NAULC). A lower NAULC indicates better sample-averaged performance for error metrics (MSE, RMSE, MAE, MAPE), while a higher NAULC indicates better performance for $R^2$. The NAULC thus provides a single scalar summary of each model's performance integrated across the entire range of available training data, rather than at a single operating point.
+
+\subsubsection{Average Rank}
+
+For each combination of measured output target, performance metric, and training-set size, all models were ranked from best to worst using dense ranking (ties share the same rank). The average rank of a model was then computed as the arithmetic mean of its rank values across all such combinations. This aggregation summarizes how consistently a model performs across heterogeneous evaluation conditions: a low average rank indicates that a model is reliably among the top performers regardless of the specific target, metric, or sample size considered.
+
+\subsubsection{Generalization Gap}
+
+The effective RMSE train-test gap was computed at the largest training size (8,000 training rows) as:
+\begin{equation*}
+\Delta_{\mathrm{RMSE}} = \overline{\mathrm{RMSE}}_{\mathrm{test}} - \overline{\mathrm{RMSE}}_{\mathrm{train}}
+\end{equation*}
+where $\overline{\mathrm{RMSE}}_{\mathrm{test}}$ and $\overline{\mathrm{RMSE}}_{\mathrm{train}}$ denote the mean effective RMSE on the test and training sets, respectively, averaged across the 100 resampling repetitions at that size. A positive gap indicates that the model performs worse on unseen data than on training data, with larger gaps suggesting greater overfitting. When expressed as a percentage, the gap is normalized by $\overline{\mathrm{RMSE}}_{\mathrm{train}}$.
+
+\subsubsection{Per-Target Leaderboards}
+
+Per-target effective RMSE leaderboards rank all models independently for each of the six measured outputs (COD, TN, TKN, TP, TSS, VSS). For each target, models are sorted in ascending order of their effective test RMSE at the largest training size, providing a fine-grained view of which model families excel for specific effluent quality indicators.
+
+Physical behavior was assessed in parallel through effective negative-prediction rates and, for ICSOR, the magnitude of raw-to-projected corrections $\|c^* - c_{raw}\|$ and component-space constraint residuals $\|Ac^* - Ac_{in}\|$. These diagnostic quantities were interpreted as complementary descriptors of model behavior rather than as substitute ranking criteria.
+
 \end{document}
