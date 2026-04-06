@@ -539,7 +539,7 @@ Table~\ref{tab:leaderboard} ranks models only at the largest training size. To a
 
 The average rank analysis confirms the MLP tier's dominance but reveals an important change in the ordering within that tier relative to the point estimate of Table~\ref{tab:leaderboard}. MLP Medium retains the top position (overall rank 1.99), but MLP Shallow now outranks MLP Deep (2.60 vs.\ 3.02), reversing their RMSE ordering at 8{,}000 samples. This reversal indicates that MLP Shallow is more competitive at smaller training sizes, while MLP Deep requires more data before its additional capacity yields a net benefit. This is consistent with the classical bias-variance tradeoff: the deeper $(128, 64, 32)$ architecture has higher capacity but also higher variance under limited data.
 
-The most notable finding in Table~\ref{tab:avg_rank} concerns ICSOR. While ICSOR ranks 6th at the largest training size (Table~\ref{tab:leaderboard}), it rises to 4th in the overall average rank, surpassing SVR and CatBoost by a wide margin and overtaking XGBoost entirely. The ICSOR average rank (4.11) is nearly identical to LightGBM (4.26), and its per-metric stability is remarkable: the spread between its best metric rank (MAE: 3.97) and worst (MSE: 4.20) is only 0.23. This consistency reflects the inductive bias provided by the stoichiometric constraint projection $c^* \in \mathcal{S}_+(c_{in})$, which restricts the effective hypothesis space and performs implicit regularization. Table~\ref{tab:icsor_density} makes that restriction concrete: under a block-adaptive 1\% retention threshold applied within each identifiable coefficient block, only 303 of 3{,}066 affine-core coefficients are retained, and the high-dimensional $\Theta_{cc,y}$ block keeps just 109 of its 2{,}646 admissible entries. At small training sizes where unconstrained regressors suffer from high variance, ICSOR's physics-informed structure compensates for the limited data, yielding lower effective errors than most classical alternatives.
+The most notable finding in Table~\ref{tab:avg_rank} concerns ICSOR. While ICSOR ranks 6th at the largest training size (Table~\ref{tab:leaderboard}), it rises to 4th in the overall average rank, surpassing SVR and CatBoost by a wide margin and overtaking XGBoost entirely. The ICSOR average rank (4.11) is nearly identical to LightGBM (4.26), and its per-metric stability is remarkable: the spread between its best metric rank (MAE: 3.97) and worst (MSE: 4.20) is only 0.23. This consistency reflects the inductive bias provided by the stoichiometric constraint projection $c^* \in \mathcal{S}_+(c_{in})$, which restricts the effective hypothesis space and performs implicit regularization. Table~\ref{tab:icsor_density} makes that restriction concrete even under a more permissive equation-adaptive retention rule: when a coefficient is retained whenever $|\beta| \ge 0.001 \max |\beta|$ within its own target equation, only 603 of 3{,}066 affine-core coefficients remain, and the high-dimensional $\Theta_{cc,y}$ block keeps just 334 of its 2{,}646 admissible entries. At small training sizes where unconstrained regressors suffer from high variance, ICSOR's physics-informed structure compensates for the limited data, yielding lower effective errors than most classical alternatives.
 
 \subsection{Sample Efficiency: Learning Curve and NAULC Analysis}
 
@@ -779,25 +779,25 @@ introduced in Section~2.5. Because $M$ is identified directly from measured data
 
 The saved artifact paths retain the repository-internal identifier `cobre`, but the figures shown here correspond to ICSOR in the terminology of this manuscript.
 
-Table~\ref{tab:icsor_density} turns the qualitative sparsity visible in the coefficient plots into a quantitative regularization diagnostic. A coefficient is counted as retained when its absolute value exceeds 1\% of the maximum absolute coefficient in its own identifiable block. This block-adaptive rule is preferable to a single global cutoff because the bias, first-order, and second-order blocks live on materially different numerical scales. Even with that blockwise normalization, only 303 of the 3{,}066 coefficients in the identifiable affine core are retained, confirming that ICSOR does not distribute weight uniformly across the full quadratic basis. The strongest compression occurs in $\Theta_{cc,y}$, where only 109 of 2{,}646 influent-influent interaction coefficients remain above threshold. This is the pattern expected from an implicitly regularized model: the second-order feature map is available in full, but the fitted surrogate concentrates mass in a small subset of physically relevant directions.
+Table~\ref{tab:icsor_density} turns the qualitative sparsity visible in the coefficient plots into a quantitative regularization diagnostic. For each output equation $y$, a coefficient is counted as retained when its absolute value satisfies $|\beta| \ge 0.001 \max_{\beta' \in \mathcal{E}_y} |\beta'|$, where $\mathcal{E}_y$ denotes the full identifiable coefficient set for that target equation. This equation-adaptive rule is preferable to a single global cutoff because the six output equations live on materially different numerical scales; in the present fit it induces absolute thresholds ranging from $5.1 \times 10^{-4}$ to $5.4 \times 10^{-2}$. Under this criterion, 603 of the 3{,}066 coefficients in the identifiable affine core are retained. The first-order terms are therefore largely preserved, but the highest-dimensional interaction block remains sparse: $\Theta_{cc,y}$ retains only 334 of 2{,}646 influent-influent interaction coefficients (12.6\%). This still indicates meaningful implicit regularization, although the compression is less severe than under the earlier blockwise threshold because the fitted surrogate continues to avoid a dense use of the quadratic basis.
 
 \begin{table}[htbp]
 \centering
-\caption{ICSOR coefficient density analysis for the identifiable affine core $M$. A coefficient is counted as retained when $|\beta| \ge 0.01 \max |\beta|$ within its own block, so the threshold adapts to the native scale of each coefficient family.}
+\caption{ICSOR coefficient density analysis for the identifiable affine core $M$. A coefficient in target equation $y$ is counted as retained when $|\beta| \ge 0.001 \max_{\beta' \in \mathcal{E}_y} |\beta'|$, so the threshold adapts to the native scale of each target equation.}
 \label{tab:icsor_density}
 \small
-\begin{tabular}{@{}lrrrr@{}}
+\begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{Block} & \textbf{Candidates} & \textbf{Retained} & \textbf{Retention (\%)} & \textbf{Threshold} \\
+\textbf{Block} & \textbf{Candidates} & \textbf{Retained} & \textbf{Retention (\%)} \\
 \midrule
-$b_y$ & 6 & 5 & 83.3 & 0.5358 \\
-$W_{u,y}$ & 12 & 5 & 41.7 & 0.4812 \\
-$W_{in,y}$ & 126 & 64 & 50.8 & 0.1124 \\
-$\Theta_{uu,y}$ & 24 & 9 & 37.5 & 0.1562 \\
-$\Theta_{uc,y}$ & 252 & 111 & 44.0 & 0.0074 \\
-$\Theta_{cc,y}$ & 2646 & 109 & 4.1 & 0.0327 \\
+$b_y$ & 6 & 6 & 100.0 \\
+$W_{u,y}$ & 12 & 12 & 100.0 \\
+$W_{in,y}$ & 126 & 119 & 94.4 \\
+$\Theta_{uu,y}$ & 24 & 18 & 75.0 \\
+$\Theta_{uc,y}$ & 252 & 114 & 45.2 \\
+$\Theta_{cc,y}$ & 2646 & 334 & 12.6 \\
 \midrule
-Total & 3066 & 303 & 9.9 & --- \\
+Total & 3066 & 603 & 19.7 \\
 \bottomrule
 \end{tabular}
 \end{table}
