@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import json
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -16,11 +18,18 @@ from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_datase
 from src.utils.analysis import (
 	add_effective_metric_columns,
 	build_negative_prediction_tables,
+	build_notebook_table_recorder,
 	build_train_test_gap_summary,
 	build_separated_negative_prediction_tables,
 	build_cobre_response_surface_prediction_data,
 	build_dataset_size_schedule,
 	collate_model_analysis_results,
+	load_latest_analysis_result,
+	load_latest_classical_training_context,
+	load_latest_cobre_training_context,
+	persist_analysis_result_artifacts,
+	persist_classical_training_context,
+	persist_cobre_training_context,
 	rank_metric_summary,
 	run_model_dataset_size_analysis,
 	summarize_metric_distribution,
@@ -132,6 +141,20 @@ def _tiny_cobre_params() -> dict[str, Any]:
 			},
 		}
 	)
+
+
+def _write_temp_paths_config(repo_root: Path) -> None:
+	(repo_root / "config").mkdir(parents=True, exist_ok=True)
+	(repo_root / "results").mkdir(parents=True, exist_ok=True)
+	paths_config = {
+		"notebook_tabular_results_dir": "results/tabular_results",
+		"notebook_plot_results_dir": "results/plot_results",
+		"notebook_tabular_artifact_pattern": "results/tabular_results/{artifact_group}/{artifact_name}_{date_time}.csv",
+		"notebook_plot_artifact_pattern": "results/plot_results/{artifact_group}/{artifact_name}_{date_time}.{extension}",
+	}
+	with (repo_root / "config" / "paths.json").open("w", encoding="utf-8") as handle:
+		json.dump(paths_config, handle)
+		handle.write("\n")
 
 
 class AnalysisHelperTests(unittest.TestCase):
@@ -418,6 +441,168 @@ class AnalysisHelperTests(unittest.TestCase):
 		)
 		self.assertIn("Out_A", set(per_target["target"]))
 		self.assertIn("Out_B", set(per_target["target"]))
+
+	def test_persist_and_load_latest_analysis_result_roundtrip(self) -> None:
+		dataset = _build_synthetic_dataset()
+		a_matrix = np.array([[1.0, -1.0]], dtype=float)
+		analysis_result = run_model_dataset_size_analysis(
+			"synthetic_model",
+			dataset,
+			a_matrix,
+			_fake_runner,
+			min_total_samples=6,
+			max_total_samples=6,
+			total_sample_step=5,
+			n_repeats=1,
+			test_fraction=0.25,
+			random_seed=13,
+			show_progress=False,
+			show_runner_progress=False,
+		)
+
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_root = Path(temp_dir)
+			_write_temp_paths_config(temp_root)
+			persist_analysis_result_artifacts(
+				"synthetic_model",
+				analysis_result,
+				repo_root=temp_root,
+				timestamp="20260406_010101",
+			)
+			updated_analysis_result = dict(analysis_result)
+			updated_analysis_result["analysis_config"] = {
+				**dict(analysis_result["analysis_config"]),
+				"n_repeats": 7,
+			}
+			persist_analysis_result_artifacts(
+				"synthetic_model",
+				updated_analysis_result,
+				repo_root=temp_root,
+				timestamp="20260406_020202",
+			)
+
+			loaded_analysis_result = load_latest_analysis_result(
+				"synthetic_model",
+				repo_root=temp_root,
+			)
+
+			self.assertEqual(loaded_analysis_result["artifact_timestamp"], "20260406_020202")
+			self.assertEqual(int(loaded_analysis_result["analysis_config"]["n_repeats"]), 7)
+			self.assertEqual(len(loaded_analysis_result["prediction_tables"]), len(analysis_result["prediction_tables"]))
+			self.assertEqual(
+				list(loaded_analysis_result["aggregate_metrics"]["prediction_type"].unique()),
+				["raw", "projected"],
+			)
+
+	def test_persist_and_load_latest_classical_training_context_roundtrip(self) -> None:
+		dataset = _build_synthetic_dataset()
+		dataset_splits = make_train_test_split(dataset, test_fraction=0.25, random_seed=5)
+		classical_result = _fake_runner(
+			dataset_splits.train,
+			dataset_splits.test,
+			np.array([[1.0, -1.0]], dtype=float),
+		)
+		classical_result["best_hyperparameters"] = {"depth": 3, "learning_rate": 0.1}
+		classical_result["artifact_paths"] = {
+			"model_bundle": Path("results/old_model.pkl"),
+			"metrics": Path("results/old_metrics.json"),
+			"optuna": None,
+		}
+
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_root = Path(temp_dir)
+			_write_temp_paths_config(temp_root)
+			persist_classical_training_context(
+				"synthetic_regressor",
+				classical_result,
+				repo_root=temp_root,
+				timestamp="20260406_010101",
+			)
+			updated_result = dict(classical_result)
+			updated_result["best_hyperparameters"] = {"depth": 5, "learning_rate": 0.05}
+			updated_result["artifact_paths"] = {
+				"model_bundle": Path("results/new_model.pkl"),
+				"metrics": Path("results/new_metrics.json"),
+				"optuna": None,
+			}
+			persist_classical_training_context(
+				"synthetic_regressor",
+				updated_result,
+				repo_root=temp_root,
+				timestamp="20260406_020202",
+			)
+
+			loaded_context = load_latest_classical_training_context(
+				"synthetic_regressor",
+				repo_root=temp_root,
+			)
+
+			self.assertEqual(loaded_context["artifact_timestamp"], "20260406_020202")
+			self.assertEqual(int(loaded_context["best_hyperparameters"]["depth"]), 5)
+			self.assertEqual(
+				loaded_context["training_artifact_paths"]["model_bundle"],
+				Path("results/new_model.pkl"),
+			)
+
+	def test_persist_and_load_latest_cobre_training_context_roundtrip(self) -> None:
+		dataset = _build_synthetic_dataset()
+		dataset_splits = make_train_test_split(dataset, test_fraction=0.25, random_seed=7)
+		prefixed = lambda frame, prefix: frame.rename(columns=lambda column_name: f"{prefix}{column_name}")
+		cobre_result = {
+			"best_hyperparameters": {"objective": "projected_ols"},
+			"artifact_paths": {
+				"model_bundle": Path("results/cobre/model.pkl"),
+				"metrics": Path("results/cobre/metrics.json"),
+				"optuna": None,
+			},
+			"train_report": {
+				"raw_predictions": prefixed(dataset_splits.train.targets, "Raw_"),
+				"affine_predictions": prefixed(dataset_splits.train.targets, "Affine_"),
+				"projected_predictions": prefixed(dataset_splits.train.targets, "Projected_"),
+				"raw_fractional_predictions": prefixed(dataset_splits.train.constraint_reference, "RawFractional_"),
+				"affine_fractional_predictions": prefixed(dataset_splits.train.constraint_reference, "AffineFractional_"),
+				"projected_fractional_predictions": prefixed(dataset_splits.train.constraint_reference, "ProjectedFractional_"),
+			},
+			"test_report": {
+				"raw_predictions": prefixed(dataset_splits.test.targets, "Raw_"),
+				"affine_predictions": prefixed(dataset_splits.test.targets, "Affine_"),
+				"projected_predictions": prefixed(dataset_splits.test.targets, "Projected_"),
+				"raw_fractional_predictions": prefixed(dataset_splits.test.constraint_reference, "RawFractional_"),
+				"affine_fractional_predictions": prefixed(dataset_splits.test.constraint_reference, "AffineFractional_"),
+				"projected_fractional_predictions": prefixed(dataset_splits.test.constraint_reference, "ProjectedFractional_"),
+			},
+			"model_bundle": {
+				"effective_coefficients": {
+					"W_u": np.arange(4, dtype=float).reshape(2, 2),
+					"W_in": np.arange(4, 8, dtype=float).reshape(2, 2),
+					"b": np.array([1.0, 2.0], dtype=float),
+					"Theta_uu": np.arange(8, dtype=float).reshape(2, 2, 2),
+					"Theta_cc": np.arange(8, 16, dtype=float).reshape(2, 2, 2),
+					"Theta_uc": np.arange(16, 24, dtype=float).reshape(2, 2, 2),
+				}
+			},
+		}
+
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_root = Path(temp_dir)
+			_write_temp_paths_config(temp_root)
+			persist_cobre_training_context(
+				cobre_result,
+				{"train": dataset_splits.train, "test": dataset_splits.test},
+				repo_root=temp_root,
+				timestamp="20260406_030303",
+			)
+
+			loaded_context = load_latest_cobre_training_context(repo_root=temp_root)
+
+			self.assertEqual(loaded_context["artifact_timestamp"], "20260406_030303")
+			self.assertEqual(list(loaded_context["train_targets"].columns), ["Out_A", "Out_B"])
+			self.assertIn("projected_predictions", loaded_context["train_report"])
+			self.assertEqual(loaded_context["effective_coefficients"]["Theta_uu"].shape, (2, 2, 2))
+			self.assertEqual(
+				loaded_context["training_artifact_paths"]["model_bundle"],
+				Path("results/cobre/model.pkl"),
+			)
 
 	def test_build_separated_negative_prediction_tables_splits_composite_and_fractional_families(self) -> None:
 		index = pd.Index([0, 1], name="sample_id")

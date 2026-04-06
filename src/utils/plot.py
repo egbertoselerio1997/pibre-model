@@ -15,6 +15,9 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.patches import Rectangle
 
+from .io import save_matplotlib_figure
+from .simulation import make_simulation_timestamp, render_notebook_plot_artifact_path
+
 
 PIBRE_THEME_TOKENS: dict[str, Any] = {
 	"figure_background": "#F7F4EA",
@@ -1159,12 +1162,45 @@ def plot_train_test_parity_panels(
 	return figure, axes
 
 
+def persist_figure_artifacts(
+	figure: Any,
+	artifact_group: str,
+	artifact_name: str,
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+	extensions: Sequence[str] = ("png", "svg"),
+	dpi: int = 140,
+) -> dict[str, Path]:
+	"""Persist one figure in multiple configured formats under a shared timestamp."""
+
+	resolved_timestamp = make_simulation_timestamp(timestamp)
+	resolved_extensions = [str(extension).lstrip(".").lower() for extension in extensions]
+	if not resolved_extensions:
+		raise ValueError("extensions must include at least one output format.")
+
+	persisted_paths: dict[str, Path] = {}
+	for extension in resolved_extensions:
+		artifact_path = render_notebook_plot_artifact_path(
+			artifact_group,
+			artifact_name,
+			extension=extension,
+			repo_root=repo_root,
+			timestamp=resolved_timestamp,
+		)
+		save_matplotlib_figure(artifact_path, figure, dpi=dpi)
+		persisted_paths[extension] = artifact_path
+
+	return persisted_paths
+
+
 __all__ = [
 	"PIBRE_THEME_TOKENS",
 	"PROJECTED_METRIC_COLUMNS",
 	"RAW_METRIC_COLUMNS",
 	"SUPPORTED_METRIC_COLUMNS",
 	"apply_pibre_plot_theme",
+	"persist_figure_artifacts",
 	"plot_coefficient_bar_chart",
 	"plot_coefficient_heatmap",
 	"plot_coefficient_tensor_heatmaps",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -10,8 +11,15 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
+from .io import load_dataframe_csv, save_dataframe_csv, select_latest_timestamped_file_bundle
 from .process import DatasetSplit, SupervisedDatasetFrames, make_train_test_split
-from .simulation import load_ml_orchestration_params, load_params_config
+from .simulation import (
+	load_ml_orchestration_params,
+	load_params_config,
+	make_simulation_timestamp,
+	render_notebook_tabular_artifact_path,
+	resolve_notebook_tabular_group_dir,
+)
 
 
 ModelRunner = Callable[..., dict[str, Any]]
@@ -32,6 +40,73 @@ COBRE_NEGATIVE_PREDICTION_FAMILY_SPECS: dict[str, tuple[PredictionFrameSpec, ...
 	),
 }
 
+_NOTEBOOK_ARTIFACT_SLUG_PATTERN = re.compile(r"[^0-9A-Za-z]+")
+_ANALYSIS_RESULT_REQUIRED_ARTIFACTS: tuple[str, ...] = (
+	"analysis_config",
+	"dataset_sizes",
+	"run_metadata",
+	"aggregate_metrics",
+	"per_target_metrics",
+)
+
+
+def _slugify_notebook_artifact_name(value: str) -> str:
+	resolved_value = _NOTEBOOK_ARTIFACT_SLUG_PATTERN.sub("_", str(value).strip().lower()).strip("_")
+	return resolved_value or "artifact"
+
+
+def _coerce_tabular_frame(table: Any) -> pd.DataFrame:
+	if isinstance(table, pd.DataFrame):
+		return table.copy()
+	if isinstance(table, pd.Series):
+		return table.to_frame()
+	if isinstance(table, Mapping):
+		return pd.DataFrame([dict(table)])
+	return pd.DataFrame(table)
+
+
+def _artifact_paths_to_frame(artifact_paths: Mapping[str, Any]) -> pd.DataFrame:
+	return pd.DataFrame(
+		[
+			{
+				"artifact_key": str(artifact_key),
+				"artifact_path": None if artifact_path is None else str(artifact_path),
+			}
+			for artifact_key, artifact_path in artifact_paths.items()
+		]
+	)
+
+
+def _artifact_paths_from_frame(frame: pd.DataFrame) -> dict[str, Path | None]:
+	if frame.empty:
+		return {}
+
+	resolved_paths: dict[str, Path | None] = {}
+	for _, row in frame.iterrows():
+		artifact_key = str(row["artifact_key"])
+		artifact_value = row["artifact_path"]
+		resolved_paths[artifact_key] = None if pd.isna(artifact_value) else Path(str(artifact_value))
+	return resolved_paths
+
+
+def _load_tensor_slices_from_tables(
+	tables: Mapping[str, pd.DataFrame],
+	*,
+	prefix: str,
+) -> np.ndarray | None:
+	matching_keys = sorted(
+		artifact_key
+		for artifact_key in tables
+		if artifact_key.startswith(f"{prefix}/")
+	)
+	if not matching_keys:
+		return None
+
+	return np.stack(
+		[tables[artifact_key].to_numpy(dtype=float) for artifact_key in matching_keys],
+		axis=0,
+	)
+
 
 def describe_and_display_table(
 	title: str,
@@ -46,6 +121,345 @@ def describe_and_display_table(
 
 	ipython_display(table)
 	return table
+
+
+def build_notebook_table_recorder(
+	artifact_group: str,
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+	index: bool = True,
+) -> Callable[[str, str, Any], Any]:
+	"""Build a describe-and-display wrapper that also persists timestamped CSV tables."""
+
+	resolved_timestamp = make_simulation_timestamp(timestamp)
+
+	def _record_table(title: str, description: str, table: Any) -> Any:
+		artifact_path = render_notebook_tabular_artifact_path(
+			artifact_group,
+			_slugify_notebook_artifact_name(title),
+			repo_root=repo_root,
+			timestamp=resolved_timestamp,
+		)
+		save_dataframe_csv(artifact_path, _coerce_tabular_frame(table), index=index)
+		return describe_and_display_table(title, description, table)
+
+	return _record_table
+
+
+def persist_named_table_artifacts(
+	artifact_group: str,
+	named_tables: Mapping[str, Any],
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+	default_index: bool = True,
+	index_by_artifact: Mapping[str, bool] | None = None,
+) -> dict[str, Path]:
+	"""Persist one named set of tabular notebook artifacts under a shared timestamp."""
+
+	resolved_timestamp = make_simulation_timestamp(timestamp)
+	persisted_paths: dict[str, Path] = {}
+	resolved_index_by_artifact = dict(index_by_artifact or {})
+
+	for artifact_name, artifact_table in named_tables.items():
+		artifact_path = render_notebook_tabular_artifact_path(
+			artifact_group,
+			str(artifact_name),
+			repo_root=repo_root,
+			timestamp=resolved_timestamp,
+		)
+		save_dataframe_csv(
+			artifact_path,
+			_coerce_tabular_frame(artifact_table),
+			index=bool(resolved_index_by_artifact.get(str(artifact_name), default_index)),
+		)
+		persisted_paths[str(artifact_name)] = artifact_path
+
+	return persisted_paths
+
+
+def load_latest_named_table_artifacts(
+	artifact_group: str,
+	*,
+	repo_root: str | Path | None = None,
+	required_artifact_names: Sequence[str] | None = None,
+	index_col_by_artifact: Mapping[str, int | str | None] | None = None,
+) -> dict[str, Any]:
+	"""Load the newest timestamp-compatible set of named CSV artifacts for one group."""
+
+	artifact_directory = resolve_notebook_tabular_group_dir(
+		artifact_group,
+		repo_root=repo_root,
+	)
+	timestamp, artifact_paths = select_latest_timestamped_file_bundle(
+		artifact_directory,
+		required_artifact_keys=[str(artifact_name) for artifact_name in (required_artifact_names or [])],
+		suffixes=(".csv",),
+		recursive=True,
+	)
+	resolved_index_cols = dict(index_col_by_artifact or {})
+	loaded_tables = {
+		artifact_name: load_dataframe_csv(
+			artifact_path,
+			index_col=resolved_index_cols.get(artifact_name),
+		)
+		for artifact_name, artifact_path in artifact_paths.items()
+	}
+	return {
+		"artifact_timestamp": timestamp,
+		"artifact_paths": artifact_paths,
+		"tables": loaded_tables,
+	}
+
+
+def persist_analysis_result_artifacts(
+	model_name: str,
+	analysis_result: Mapping[str, Any],
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+) -> dict[str, Any]:
+	"""Persist one model's dataset-size sweep outputs as timestamped CSV artifacts."""
+
+	artifact_group = f"analysis/{str(model_name)}"
+	resolved_timestamp = make_simulation_timestamp(timestamp)
+	named_tables: dict[str, Any] = {
+		"analysis_config": pd.DataFrame([dict(analysis_result["analysis_config"])]),
+		"dataset_sizes": pd.DataFrame({"dataset_size_total": list(analysis_result["dataset_sizes"])}),
+		"run_metadata": analysis_result["run_metadata"],
+		"aggregate_metrics": analysis_result["aggregate_metrics"],
+		"per_target_metrics": analysis_result["per_target_metrics"],
+	}
+	for prediction_index, prediction_table in enumerate(analysis_result.get("prediction_tables", [])):
+		named_tables[f"prediction_tables/prediction_table_{prediction_index:04d}"] = prediction_table
+
+	persisted_paths = persist_named_table_artifacts(
+		artifact_group,
+		named_tables,
+		repo_root=repo_root,
+		timestamp=resolved_timestamp,
+		default_index=False,
+	)
+	return {
+		"artifact_group": artifact_group,
+		"artifact_timestamp": resolved_timestamp,
+		"artifact_paths": persisted_paths,
+	}
+
+
+def load_latest_analysis_result(
+	model_name: str,
+	*,
+	repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+	"""Load the newest persisted dataset-size sweep outputs for one model."""
+
+	artifact_group = f"analysis/{str(model_name)}"
+	loaded_bundle = load_latest_named_table_artifacts(
+		artifact_group,
+		repo_root=repo_root,
+		required_artifact_names=_ANALYSIS_RESULT_REQUIRED_ARTIFACTS,
+	)
+	loaded_tables = dict(loaded_bundle["tables"])
+	prediction_table_keys = sorted(
+		artifact_name
+		for artifact_name in loaded_tables
+		if artifact_name.startswith("prediction_tables/")
+	)
+
+	return {
+		"artifact_group": artifact_group,
+		"artifact_timestamp": loaded_bundle["artifact_timestamp"],
+		"artifact_paths": loaded_bundle["artifact_paths"],
+		"analysis_config": loaded_tables["analysis_config"].iloc[0].to_dict(),
+		"dataset_sizes": loaded_tables["dataset_sizes"]["dataset_size_total"].astype(int).tolist(),
+		"run_metadata": loaded_tables["run_metadata"],
+		"aggregate_metrics": loaded_tables["aggregate_metrics"],
+		"per_target_metrics": loaded_tables["per_target_metrics"],
+		"prediction_tables": [loaded_tables[artifact_name] for artifact_name in prediction_table_keys],
+	}
+
+
+def persist_classical_training_context(
+	model_name: str,
+	result: Mapping[str, Any],
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+) -> dict[str, Any]:
+	"""Persist the latest classical training context needed by downstream notebook cells."""
+
+	artifact_group = f"training/{str(model_name)}/context"
+	resolved_timestamp = make_simulation_timestamp(timestamp)
+	named_tables: dict[str, Any] = {
+		"best_hyperparameters": pd.DataFrame([dict(result["best_hyperparameters"])]),
+		"artifact_paths": _artifact_paths_to_frame(dict(result.get("artifact_paths", {}))),
+	}
+	if "test_report" in result and "report_metadata" in result["test_report"]:
+		named_tables["report_metadata"] = result["test_report"]["report_metadata"]
+
+	persisted_paths = persist_named_table_artifacts(
+		artifact_group,
+		named_tables,
+		repo_root=repo_root,
+		timestamp=resolved_timestamp,
+		default_index=False,
+	)
+	return {
+		"artifact_group": artifact_group,
+		"artifact_timestamp": resolved_timestamp,
+		"artifact_paths": persisted_paths,
+	}
+
+
+def load_latest_classical_training_context(
+	model_name: str,
+	*,
+	repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+	"""Load the newest persisted classical training context for one model."""
+
+	artifact_group = f"training/{str(model_name)}/context"
+	loaded_bundle = load_latest_named_table_artifacts(
+		artifact_group,
+		repo_root=repo_root,
+		required_artifact_names=("best_hyperparameters", "artifact_paths"),
+	)
+	loaded_tables = dict(loaded_bundle["tables"])
+	return {
+		"artifact_group": artifact_group,
+		"artifact_timestamp": loaded_bundle["artifact_timestamp"],
+		"artifact_paths": loaded_bundle["artifact_paths"],
+		"best_hyperparameters": loaded_tables["best_hyperparameters"].iloc[0].dropna().to_dict(),
+		"training_artifact_paths": _artifact_paths_from_frame(loaded_tables["artifact_paths"]),
+		"report_metadata": loaded_tables.get("report_metadata"),
+	}
+
+
+def persist_cobre_training_context(
+	result: Mapping[str, Any],
+	dataset_splits: Mapping[str, DatasetSplit] | Any,
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+) -> dict[str, Any]:
+	"""Persist the latest COBRE training context needed by downstream notebook cells."""
+
+	artifact_group = "training/cobre/context"
+	resolved_timestamp = make_simulation_timestamp(timestamp)
+	train_split = dataset_splits["train"] if isinstance(dataset_splits, Mapping) else dataset_splits.train
+	test_split = dataset_splits["test"] if isinstance(dataset_splits, Mapping) else dataset_splits.test
+	named_tables: dict[str, Any] = {
+		"best_hyperparameters": pd.DataFrame([dict(result["best_hyperparameters"])]),
+		"artifact_paths": _artifact_paths_to_frame(dict(result.get("artifact_paths", {}))),
+		"train_split/targets": train_split.targets,
+		"test_split/targets": test_split.targets,
+		"train_split/constraint_reference": train_split.constraint_reference,
+		"test_split/constraint_reference": test_split.constraint_reference,
+	}
+	for split_name, report in (("train_report", result["train_report"]), ("test_report", result["test_report"])):
+		for report_key in [
+			"raw_predictions",
+			"affine_predictions",
+			"projected_predictions",
+			"raw_fractional_predictions",
+			"affine_fractional_predictions",
+			"projected_fractional_predictions",
+		]:
+			if report_key in report:
+				named_tables[f"{split_name}/{report_key}"] = report[report_key]
+
+	effective_coefficients = dict(result.get("model_bundle", {}).get("effective_coefficients", {}))
+	if "W_u" in effective_coefficients:
+		named_tables["effective_coefficients/w_u"] = pd.DataFrame(effective_coefficients["W_u"])
+	if "W_in" in effective_coefficients:
+		named_tables["effective_coefficients/w_in"] = pd.DataFrame(effective_coefficients["W_in"])
+	if "b" in effective_coefficients:
+		named_tables["effective_coefficients/b"] = pd.DataFrame({"value": np.asarray(effective_coefficients["b"], dtype=float)})
+	for tensor_name in ["Theta_uu", "Theta_cc", "Theta_uc"]:
+		if tensor_name not in effective_coefficients:
+			continue
+		for target_index, tensor_slice in enumerate(np.asarray(effective_coefficients[tensor_name], dtype=float)):
+			named_tables[f"effective_coefficients/{tensor_name.lower()}/target_{target_index:03d}"] = pd.DataFrame(tensor_slice)
+
+	persisted_paths = persist_named_table_artifacts(
+		artifact_group,
+		named_tables,
+		repo_root=repo_root,
+		timestamp=resolved_timestamp,
+		default_index=False,
+	)
+	return {
+		"artifact_group": artifact_group,
+		"artifact_timestamp": resolved_timestamp,
+		"artifact_paths": persisted_paths,
+	}
+
+
+def load_latest_cobre_training_context(
+	*,
+	repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+	"""Load the newest persisted COBRE training context for downstream notebook cells."""
+
+	artifact_group = "training/cobre/context"
+	loaded_bundle = load_latest_named_table_artifacts(
+		artifact_group,
+		repo_root=repo_root,
+		required_artifact_names=(
+			"best_hyperparameters",
+			"artifact_paths",
+			"train_split/targets",
+			"test_split/targets",
+			"train_split/constraint_reference",
+			"test_split/constraint_reference",
+			"train_report/projected_predictions",
+			"test_report/projected_predictions",
+		),
+	)
+	loaded_tables = dict(loaded_bundle["tables"])
+	train_report = {
+		artifact_name.removeprefix("train_report/"): table
+		for artifact_name, table in loaded_tables.items()
+		if artifact_name.startswith("train_report/")
+	}
+	test_report = {
+		artifact_name.removeprefix("test_report/"): table
+		for artifact_name, table in loaded_tables.items()
+		if artifact_name.startswith("test_report/")
+	}
+	effective_coefficients: dict[str, Any] = {}
+	if "effective_coefficients/w_u" in loaded_tables:
+		effective_coefficients["W_u"] = loaded_tables["effective_coefficients/w_u"].to_numpy(dtype=float)
+	if "effective_coefficients/w_in" in loaded_tables:
+		effective_coefficients["W_in"] = loaded_tables["effective_coefficients/w_in"].to_numpy(dtype=float)
+	if "effective_coefficients/b" in loaded_tables:
+		effective_coefficients["b"] = loaded_tables["effective_coefficients/b"]["value"].to_numpy(dtype=float)
+	loaded_theta_uu = _load_tensor_slices_from_tables(loaded_tables, prefix="effective_coefficients/theta_uu")
+	if loaded_theta_uu is not None:
+		effective_coefficients["Theta_uu"] = loaded_theta_uu
+	loaded_theta_cc = _load_tensor_slices_from_tables(loaded_tables, prefix="effective_coefficients/theta_cc")
+	if loaded_theta_cc is not None:
+		effective_coefficients["Theta_cc"] = loaded_theta_cc
+	loaded_theta_uc = _load_tensor_slices_from_tables(loaded_tables, prefix="effective_coefficients/theta_uc")
+	if loaded_theta_uc is not None:
+		effective_coefficients["Theta_uc"] = loaded_theta_uc
+
+	return {
+		"artifact_group": artifact_group,
+		"artifact_timestamp": loaded_bundle["artifact_timestamp"],
+		"artifact_paths": loaded_bundle["artifact_paths"],
+		"best_hyperparameters": loaded_tables["best_hyperparameters"].iloc[0].dropna().to_dict(),
+		"training_artifact_paths": _artifact_paths_from_frame(loaded_tables["artifact_paths"]),
+		"train_targets": loaded_tables["train_split/targets"],
+		"test_targets": loaded_tables["test_split/targets"],
+		"train_constraint_reference": loaded_tables["train_split/constraint_reference"],
+		"test_constraint_reference": loaded_tables["test_split/constraint_reference"],
+		"train_report": train_report,
+		"test_report": test_report,
+		"effective_coefficients": effective_coefficients,
+	}
 
 
 def _iter_prediction_frames(
@@ -1628,6 +2042,7 @@ __all__ = [
 	"COMPARISON_METRIC_BASENAMES",
 	"COMPARISON_METRIC_DIRECTIONS",
 	"add_effective_metric_columns",
+	"build_notebook_table_recorder",
 	"build_effective_aggregate_metrics",
 	"build_train_test_gap_summary",
 	"ModelRunner",
@@ -1637,8 +2052,16 @@ __all__ = [
 	"describe_and_display_table",
 	"get_metric_direction",
 	"is_higher_better_metric",
+	"load_latest_analysis_result",
+	"load_latest_classical_training_context",
+	"load_latest_cobre_training_context",
+	"load_latest_named_table_artifacts",
 	"load_cobre_response_surface_defaults",
 	"load_analysis_defaults",
+	"persist_analysis_result_artifacts",
+	"persist_classical_training_context",
+	"persist_cobre_training_context",
+	"persist_named_table_artifacts",
 	"rank_metric_summary",
 	"run_model_dataset_size_analysis",
 	"summarize_metric_distribution",

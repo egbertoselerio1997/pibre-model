@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import matplotlib
 
@@ -14,6 +17,7 @@ import pandas as pd
 
 from src.utils.plot import (
 	apply_pibre_plot_theme,
+	persist_figure_artifacts,
 	plot_coefficient_bar_chart,
 	plot_coefficient_heatmap,
 	plot_coefficient_tensor_heatmaps,
@@ -23,6 +27,20 @@ from src.utils.plot import (
 	plot_train_test_parity_panels,
 	plot_train_test_metric_boxplots,
 )
+
+
+def _write_temp_paths_config(repo_root: Path) -> None:
+	(repo_root / "config").mkdir(parents=True, exist_ok=True)
+	(repo_root / "results").mkdir(parents=True, exist_ok=True)
+	paths_config = {
+		"notebook_tabular_results_dir": "results/tabular_results",
+		"notebook_plot_results_dir": "results/plot_results",
+		"notebook_tabular_artifact_pattern": "results/tabular_results/{artifact_group}/{artifact_name}_{date_time}.csv",
+		"notebook_plot_artifact_pattern": "results/plot_results/{artifact_group}/{artifact_name}_{date_time}.{extension}",
+	}
+	with (repo_root / "config" / "paths.json").open("w", encoding="utf-8") as handle:
+		json.dump(paths_config, handle)
+		handle.write("\n")
 
 
 def _build_metric_frame() -> pd.DataFrame:
@@ -222,6 +240,24 @@ class PlotHelperTests(unittest.TestCase):
 		self.assertEqual(artist_bundle["lines"][1].get_marker(), "s")
 		self.assertEqual(artist_bundle["lines"][0].get_linestyle(), "-")
 		self.assertEqual(artist_bundle["lines"][1].get_linestyle(), "--")
+
+	def test_persist_figure_artifacts_writes_png_and_svg(self) -> None:
+		figure, axis = plt.subplots(figsize=(4.0, 3.0))
+		axis.plot([0.0, 1.0], [1.0, 0.0])
+
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_root = Path(temp_dir)
+			_write_temp_paths_config(temp_root)
+			persisted_paths = persist_figure_artifacts(
+				figure,
+				"comparison/test_plots",
+				"synthetic_plot",
+				repo_root=temp_root,
+				timestamp="20260406_111111",
+			)
+
+			self.assertTrue(persisted_paths["png"].is_file())
+			self.assertTrue(persisted_paths["svg"].is_file())
 
 	def test_plot_metric_heatmap_returns_annotations_and_colorbar(self) -> None:
 		heatmap_frame = pd.DataFrame(

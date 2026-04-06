@@ -66,6 +66,80 @@ def make_simulation_timestamp(timestamp: str | None = None) -> str:
 	return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def _normalize_artifact_component(value: str) -> str:
+	return Path(str(value).strip().replace("\\", "/")).as_posix().strip("/")
+
+
+def resolve_notebook_tabular_group_dir(
+	artifact_group: str,
+	*,
+	repo_root: str | Path | None = None,
+	paths_config: Mapping[str, Any] | None = None,
+) -> Path:
+	"""Resolve the configured directory for one notebook tabular artifact group."""
+
+	root = get_repo_root(repo_root)
+	config = dict(paths_config) if paths_config is not None else load_paths_config(root)
+	return root / Path(config["notebook_tabular_results_dir"]) / Path(_normalize_artifact_component(artifact_group))
+
+
+def resolve_notebook_plot_group_dir(
+	artifact_group: str,
+	*,
+	repo_root: str | Path | None = None,
+	paths_config: Mapping[str, Any] | None = None,
+) -> Path:
+	"""Resolve the configured directory for one notebook plot artifact group."""
+
+	root = get_repo_root(repo_root)
+	config = dict(paths_config) if paths_config is not None else load_paths_config(root)
+	return root / Path(config["notebook_plot_results_dir"]) / Path(_normalize_artifact_component(artifact_group))
+
+
+def render_notebook_tabular_artifact_path(
+	artifact_group: str,
+	artifact_name: str,
+	*,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+	paths_config: Mapping[str, Any] | None = None,
+) -> Path:
+	"""Resolve one configured notebook tabular artifact path."""
+
+	root = get_repo_root(repo_root)
+	config = dict(paths_config) if paths_config is not None else load_paths_config(root)
+	date_time = make_simulation_timestamp(timestamp)
+	resolved_pattern = config["notebook_tabular_artifact_pattern"].format(
+		artifact_group=_normalize_artifact_component(artifact_group),
+		artifact_name=_normalize_artifact_component(artifact_name),
+		date_time=date_time,
+	)
+	return root / Path(resolved_pattern)
+
+
+def render_notebook_plot_artifact_path(
+	artifact_group: str,
+	artifact_name: str,
+	*,
+	extension: str,
+	repo_root: str | Path | None = None,
+	timestamp: str | None = None,
+	paths_config: Mapping[str, Any] | None = None,
+) -> Path:
+	"""Resolve one configured notebook plot artifact path."""
+
+	root = get_repo_root(repo_root)
+	config = dict(paths_config) if paths_config is not None else load_paths_config(root)
+	date_time = make_simulation_timestamp(timestamp)
+	resolved_pattern = config["notebook_plot_artifact_pattern"].format(
+		artifact_group=_normalize_artifact_component(artifact_group),
+		artifact_name=_normalize_artifact_component(artifact_name),
+		date_time=date_time,
+		extension=str(extension).lstrip("."),
+	)
+	return root / Path(resolved_pattern)
+
+
 def render_simulation_artifact_paths(
 	simulation_name: str,
 	*,
@@ -136,6 +210,10 @@ __all__ = [
 	"load_params_config",
 	"load_paths_config",
 	"make_simulation_timestamp",
+	"render_notebook_plot_artifact_path",
+	"render_notebook_tabular_artifact_path",
 	"render_simulation_artifact_paths",
+	"resolve_notebook_plot_group_dir",
+	"resolve_notebook_tabular_group_dir",
 	"save_simulation_artifacts",
 ]
