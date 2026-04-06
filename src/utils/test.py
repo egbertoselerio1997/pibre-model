@@ -120,12 +120,12 @@ def _build_constraint_diagnostic_summary_for_prediction_types(
     )
 
 
-def build_cobre_projection_stage_frame(
+def build_icsor_projection_stage_frame(
     projection_details: Mapping[str, Any],
     *,
     index: pd.Index | None = None,
 ) -> pd.DataFrame:
-    """Convert staged COBRE projection details into a row-aligned dataframe."""
+    """Convert staged icsor projection details into a row-aligned dataframe."""
 
     return pd.DataFrame(
         {
@@ -149,12 +149,12 @@ def build_cobre_projection_stage_frame(
     )
 
 
-def build_cobre_projection_stage_summary(
+def build_icsor_projection_stage_summary(
     projection_details: Mapping[str, Any],
 ) -> pd.DataFrame:
-    """Summarize how often each staged COBRE correction path is used."""
+    """Summarize how often each staged icsor correction path is used."""
 
-    stage_frame = build_cobre_projection_stage_frame(projection_details)
+    stage_frame = build_icsor_projection_stage_frame(projection_details)
     total_samples = int(len(stage_frame))
     summary = (
         stage_frame.groupby("projection_stage", dropna=False)
@@ -289,7 +289,7 @@ def evaluate_prediction_bundle(
     return report
 
 
-def evaluate_cobre_prediction_bundle(
+def evaluate_icsor_prediction_bundle(
     y_true_measured: np.ndarray,
     raw_fractional_predictions: np.ndarray,
     affine_fractional_predictions: np.ndarray,
@@ -304,7 +304,7 @@ def evaluate_cobre_prediction_bundle(
     prediction_uncertainty: dict[str, Any] | None = None,
     projection_details: Mapping[str, Any] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Assemble COBRE reports with measured-space metrics and fractional-space constraints."""
+    """Assemble icsor reports with measured-space metrics and fractional-space constraints."""
 
     target_column_list = list(target_columns)
     state_column_list = list(state_columns)
@@ -415,9 +415,9 @@ def evaluate_cobre_prediction_bundle(
     )
     projection_stage_summary = None
     if projection_details is not None:
-        projection_stage_frame = build_cobre_projection_stage_frame(projection_details, index=index)
+        projection_stage_frame = build_icsor_projection_stage_frame(projection_details, index=index)
         projection_adjustments = pd.concat([projection_adjustments, projection_stage_frame], axis=1)
-        projection_stage_summary = build_cobre_projection_stage_summary(projection_details)
+        projection_stage_summary = build_icsor_projection_stage_summary(projection_details)
 
     diagnostic_summary = pd.concat(
         [
@@ -564,9 +564,10 @@ def evaluate_cobre_prediction_bundle(
 
 
 __all__ = [
-    "build_cobre_projection_stage_frame",
-    "build_cobre_projection_stage_summary",
+    "build_icsor_projection_stage_frame",
+    "build_icsor_projection_stage_summary",
     "build_prediction_frame",
-    "evaluate_cobre_prediction_bundle",
+    "evaluate_icsor_prediction_bundle",
     "evaluate_prediction_bundle",
 ]
+

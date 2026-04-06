@@ -1,16 +1,16 @@
-# ASM2d-TCN Simulation
+# ASM2D-TSN Simulation
 
 ## 1. Title and simulation summary
 
-The current ASM2d-TCN implementation in this repository provides a mechanistic steady-state simulation workflow plus the canonical workbook contract for a two-step nitrification ASM2d formulation. The simulation module exposes the same high-level bundle shape used by the simulation portion of `main.ipynb`: dataset, metadata, Petersen matrix, composition matrix, matrix bundle, and artifact paths.
+The current ASM2D-TSN implementation in this repository provides a mechanistic steady-state simulation workflow plus the canonical workbook contract for a two-step nitrification ASM2d formulation. The simulation module exposes the same high-level bundle shape used by the simulation portion of `main.ipynb`: dataset, metadata, Petersen matrix, composition matrix, matrix bundle, and artifact paths.
 
 The notebook-facing dataset now persists both ASM component fractions and composite variables for both influent and effluent sides. The training and testing contract remains metadata-driven: only operational variables plus influent component fractions are independent variables, and only measured effluent composites are dependent variables.
 
 ## 2. Background and system or process context
 
-ASM2d extends the activated-sludge model family to include biological phosphorus removal together with nitrogen and carbon conversions. The present repository variant is being prepared as an ASM2d-TCN formulation with explicit two-step nitrification, meaning nitrite and nitrate are represented separately instead of being collapsed into a single oxidized-nitrogen state.
+ASM2d extends the activated-sludge model family to include biological phosphorus removal together with nitrogen and carbon conversions. The present repository variant is being prepared as an ASM2D-TSN formulation with explicit two-step nitrification, meaning nitrite and nitrate are represented separately instead of being collapsed into a single oxidized-nitrogen state.
 
-For this repository, the workbook still fixes the process ordering, state ordering, composite-output ordering, and parameter naming. On top of that contract, the repository now implements a mechanistic steady-state simulation routine that uses the configured ASM2d-TCN process rates and matrices to generate reproducible composite-output datasets for notebook use.
+For this repository, the workbook still fixes the process ordering, state ordering, composite-output ordering, and parameter naming. On top of that contract, the repository now implements a mechanistic steady-state simulation routine that uses the configured ASM2D-TSN process rates and matrices to generate reproducible composite-output datasets for notebook use.
 
 ## 3. Mathematical definition and governing relations
 
@@ -52,7 +52,7 @@ $$
 r(x) = D(x_{in} - x) + \nu^T \rho(x, u) + a(x, u)
 $$
 
-where $\nu$ is the Petersen matrix, $\rho(x, u)$ is the ASM2d-TCN process-rate vector, and $a(x, u)$ is the external oxygen-transfer contribution driven by the configured aeration setting.
+where $\nu$ is the Petersen matrix, $\rho(x, u)$ is the ASM2D-TSN process-rate vector, and $a(x, u)$ is the external oxygen-transfer contribution driven by the configured aeration setting.
 
 For each sampled operating point, the repository solves $r(x) = 0$ with a bounded nonlinear least-squares solve. The runtime uses an ASM1-style protocol:
 
@@ -78,7 +78,7 @@ Outputs of the simulation workflow are:
 - a dataset containing operational variables, influent component fractions, influent composites, effluent component fractions, and effluent measured composites
 - metadata describing the simulation schema and matrix shapes
 - the numeric Petersen and composition matrices used by the notebook
-- optional persisted CSV and JSON artifacts under `data/asm2d-tcn/simulation`
+- optional persisted CSV and JSON artifacts under `data/asm2d-tsn/simulation`
 
 Current assumptions:
 
@@ -89,11 +89,11 @@ Current assumptions:
 
 ## 5. Implementation used in this repository
 
-The implementation is in [src/models/simulation/asm2d_tcn_simulation.py](src/models/simulation/asm2d_tcn_simulation.py).
+The implementation is in [src/models/simulation/asm2d_tsn_simulation.py](src/models/simulation/asm2d_tsn_simulation.py).
 
 The repository currently implements:
 
-1. loading the ASM2d-TCN workbook definition from `config/params.json`
+1. loading the ASM2D-TSN workbook definition from `config/params.json`
 2. resolving the canonical workbook path from `config/paths.json`
 3. generating the parameter table sheet
 4. generating the stoichiometric matrix sheet with direct and continuity-derived formulas
@@ -101,8 +101,8 @@ The repository currently implements:
 6. building numeric Petersen and composition matrices from the configured workbook contract
 7. sampling operational conditions and influent states
 8. solving mechanistic steady-state effluent states and persisting both component-fraction and composite views
-9. writing the canonical `.xlsx` file under `data/asm2d-tcn`
-10. persisting simulation artifacts under `data/asm2d-tcn/simulation`
+9. writing the canonical `.xlsx` file under `data/asm2d-tsn`
+10. persisting simulation artifacts under `data/asm2d-tsn/simulation`
 
 ## 6. Architecture, orchestration, or adopted approach details and standard name, when relevant
 
@@ -124,13 +124,13 @@ This design ensures that when a parameter value changes in configuration, both t
 
 The present workflow is:
 
-1. call `run_asm2d_tcn_simulation`
+1. call `run_asm2d_tsn_simulation`
 2. generate a dataset with both fraction and composite columns for influent and effluent states
-3. optionally persist the dataset and metadata under `data/asm2d-tcn/simulation`
+3. optionally persist the dataset and metadata under `data/asm2d-tsn/simulation`
 4. inspect the returned Petersen and composition matrices in the notebook
 5. use the same matrices for null-space and constraint analysis
 
-The companion helper `create_asm2d_tcn_workbook` continues to generate the canonical workbook under `data/asm2d-tcn`.
+The companion helper `create_asm2d_tsn_workbook` continues to generate the canonical workbook under `data/asm2d-tsn`.
 
 ## 8. Limitations and expected failure modes
 
@@ -143,11 +143,11 @@ Expected failure modes:
 
 - formula breakage if parameter names or row ordering are changed without regenerating the workbook
 - contract drift if the workbook is edited manually while `config/params.json` is not updated to match
-- downstream inconsistency if future ASM2d-TCN code hardcodes state or process order instead of loading configuration
+- downstream inconsistency if future ASM2D-TSN code hardcodes state or process order instead of loading configuration
 - solver convergence failure if sampled influent states or operating conditions are incompatible with a physically acceptable steady state under the configured kinetics
 
 ## 9. References
 
 Henze, M., Gujer, W., Mino, T., and van Loosdrecht, M. Activated Sludge Models ASM1, ASM2, ASM2d and ASM3. IWA Scientific and Technical Report No. 9, 2000.
 
-The ASM2d-TCN stoichiometric structure, composition mapping, continuity equations, and parameter values in this repository follow the user-provided reference article captured during implementation planning.
+The ASM2D-TSN stoichiometric structure, composition mapping, continuity equations, and parameter values in this repository follow the user-provided reference article captured during implementation planning.

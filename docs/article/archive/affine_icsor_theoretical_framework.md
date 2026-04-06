@@ -1,10 +1,10 @@
-# Constrained Orthogonal Bilinear Regression (COBRE) for Activated Sludge Surrogate Modeling
+# Constrained Orthogonal Bilinear Regression (ICSOR) for Activated Sludge Surrogate Modeling
 
 ## Abstract
 
-This article presents a revised theoretical framework for Constrained Orthogonal Bilinear Regression (COBRE), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of COBRE is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network. The key difficulty is that the conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. COBRE resolves that mismatch in two stages. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, an orthogonal projection maps that raw prediction onto the affine set of states that satisfy the invariant relations induced by the stoichiometric matrix. The projected component state is then collapsed into measured output space through a linear composition map.
+This article presents a revised theoretical framework for Constrained Orthogonal Bilinear Regression (ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network. The key difficulty is that the conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. ICSOR resolves that mismatch in two stages. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, an orthogonal projection maps that raw prediction onto the affine set of states that satisfy the invariant relations induced by the stoichiometric matrix. The projected component state is then collapsed into measured output space through a linear composition map.
 
-The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The physical assumptions are stated explicitly. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The projection is derived step by step. The distinction between identifiable measured-space coefficients and non-identifiable latent component-space coefficients is made explicit. The article also formulates an end-to-end constrained variant designed to preserve non-negativity of intermediate ASM component predictions on the fitted support without resorting to post-hoc clipping. The result is a precise and reproducible formulation that clarifies both what COBRE guarantees and what it does not guarantee.
+The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The physical assumptions are stated explicitly. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The projection is derived step by step. The distinction between identifiable measured-space coefficients and non-identifiable latent component-space coefficients is made explicit. The result is a precise and reproducible formulation that clarifies both what ICSOR guarantees and what it does not guarantee.
 
 ## 1. Introduction and Modeling Objective
 
@@ -17,11 +17,11 @@ The source of the problem is a mismatch between two spaces.
 
 These two spaces are related, but they are not the same. Conservation laws are naturally expressed in the ASM component basis because the stoichiometric matrix acts on individual components. Observations, however, are usually available only after those components have been aggregated into measurable composites. A surrogate that learns only in measured-output space may reproduce the observed aggregates while obscuring physically impossible changes in the underlying component inventory.
 
-COBRE is designed to address exactly that mismatch. Given operating conditions and an influent ASM component state, it predicts the steady-state effluent in a way that is flexible enough to capture nonlinear operating-loading interactions and structured enough to preserve the stoichiometric invariants implied by the chosen reaction network. The model is constructed to answer one precise question:
+ICSOR is designed to address exactly that mismatch. Given operating conditions and an influent ASM component state, it predicts the steady-state effluent in a way that is flexible enough to capture nonlinear operating-loading interactions and structured enough to preserve the stoichiometric invariants implied by the chosen reaction network. The model is constructed to answer one precise question:
 
 > Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state must remain consistent with the conserved quantities implied by the adopted stoichiometric model?
 
-The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically constrained surrogate that preserves the most important stoichiometric structure while remaining simple enough to estimate directly from data. The discussion proceeds from physical scope and notation, to derivation of the invariant constraint, to projection, to collapse into measured space, and finally to estimation, uncertainty, and an end-to-end non-negativity-constrained extension.
+The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically constrained surrogate that preserves the most important stoichiometric structure while remaining simple enough to estimate directly from data. The discussion proceeds from physical scope and notation, to derivation of the invariant constraint, to projection, to collapse into measured space, and finally to estimation and uncertainty.
 
 ## 2. Physical Scope, State Spaces, and Notation
 
@@ -45,9 +45,9 @@ The surrogate must therefore operate across two linked spaces:
 1. ASM component space, where stoichiometry and conserved quantities are defined.
 2. Measured composite space, where prediction targets are observed and evaluated.
 
-COBRE learns and constrains the prediction in component space and only then maps the result to measured space. That order is essential. The conservation structure originates in the component basis, not in the aggregated measurement basis.
+ICSOR learns and constrains the prediction in component space and only then maps the result to measured space. That order is essential. The conservation structure originates in the component basis, not in the aggregated measurement basis.
 
-Before introducing symbols, it is useful to separate three distinct objects that will appear repeatedly. The first is the component state, which is the detailed ASM description used by the stoichiometric model. The second is the measured state, which is the aggregate laboratory or simulator output actually reported to the engineer. The third is the admissible change space, which contains only those component-state changes that can be generated by the adopted stoichiometric matrix. COBRE first predicts in the component basis, then removes the part of that prediction that violates the admissible change structure, and only then converts the result into measured variables.
+Before introducing symbols, it is useful to separate three distinct objects that will appear repeatedly. The first is the component state, which is the detailed ASM description used by the stoichiometric model. The second is the measured state, which is the aggregate laboratory or simulator output actually reported to the engineer. The third is the admissible change space, which contains only those component-state changes that can be generated by the adopted stoichiometric matrix. ICSOR first predicts in the component basis, then removes the part of that prediction that violates the admissible change structure, and only then converts the result into measured variables.
 
 ### 2.3 Notation
 
@@ -195,7 +195,7 @@ In activated-sludge systems, operating conditions and influent component concent
 1. Operating variables such as hydraulic retention time, dissolved-oxygen setpoint, or recycle settings alter the process environment.
 2. Influent component concentrations describe the material inventory entering that environment.
 
-Treating those two groups as interchangeable predictors hides an important engineering distinction. COBRE therefore partitions the input into an operational block $u$ and an influent component block $c_{in}$.
+Treating those two groups as interchangeable predictors hides an important engineering distinction. ICSOR therefore partitions the input into an operational block $u$ and an influent component block $c_{in}$.
 
 ### 5.2 Feature map
 
@@ -256,9 +256,9 @@ Each block has a physical interpretation.
 2. $W_{in} c_{in}$ captures direct carry-through and first-order dependence on influent composition.
 3. $\Theta_{uu}(u \otimes u)$ captures nonlinear interactions among operating variables.
 4. $\Theta_{cc}(c_{in} \otimes c_{in})$ captures nonlinear dependence on influent composition.
-5. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that motivates the COBRE name.
+5. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that motivates the ICSOR name.
 
-The model is therefore not purely bilinear in the strict algebraic sense because it includes self-quadratic terms as well as cross terms. The name COBRE is retained because the operational-loading interaction remains the defining structural idea, but the mathematical class should be understood precisely as a partitioned second-order regression model with bilinear cross interactions.
+The model is therefore not purely bilinear in the strict algebraic sense because it includes self-quadratic terms as well as cross terms. The name ICSOR is retained because the operational-loading interaction remains the defining structural idea, but the mathematical class should be understood precisely as a partitioned second-order regression model with bilinear cross interactions.
 
 The raw surrogate is flexible enough to capture curvature and interaction, but it is data-driven and unconstrained. There is no reason for $c_{raw}$ to satisfy the invariant relation $A c_{raw} = A c_{in}$ without an additional correction step. The next section therefore introduces the constrained correction that separates learned variation from invariant carry-through.
 
@@ -276,7 +276,7 @@ This set contains exactly those effluent component states whose conserved combin
 
 ### 6.2 Projection problem
 
-COBRE corrects the raw surrogate by solving
+ICSOR corrects the raw surrogate by solving
 
 $$
 \min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{raw} \rVert_2^2
@@ -360,7 +360,7 @@ $$
 c^* = P_{adm} c_{raw} + P_{inv} c_{in}
 $$
 
-This formula is the core expression of COBRE.
+This formula is the core expression of ICSOR.
 
 1. $P_{adm} c_{raw}$ keeps the component of the raw prediction that lies in the admissible change directions.
 2. $P_{inv} c_{in}$ restores the conserved component that must match the influent state.
@@ -384,7 +384,7 @@ for every sample. It does not guarantee the following.
 3. It does not impose kinetic feasibility beyond the chosen invariant relations.
 4. It does not correct errors introduced by a misspecified stoichiometric basis or an incorrect system boundary.
 
-These are not derivation errors. They are the exact consequences of the constraint set being enforced. A rigorous remedy for non-negativity requires changing the estimator itself, not clipping the projected state after fitting.
+These are not derivation errors. They are the exact consequences of the constraint set being enforced.
 
 ## 7. Collapse from ASM Component Space to Measured Output Space
 
@@ -855,187 +855,26 @@ Enforcing the invariant relations before collapsing to measured space is a subst
 
 The effective coefficients $M$ are the correct objects for direct engineering interpretation because they act directly on observed outputs. The latent component-space coefficients $B$ are useful only when accompanied by a clear statement that they are generally not unique. Presenting one reconstructed $B$ without that warning would overstate what the data actually determine.
 
-## 11. End-to-End Non-Negativity-Constrained COBRE
+## 11. Limitations
 
-### 11.1 Why non-negativity must be handled during training
-
-The baseline COBRE construction in Sections 5 through 10 is exact with respect to the affine invariant relation
-
-$$
-A c^* = A c_{in}
-$$
-
-but it does not guarantee that the projected ASM component vector $c^*$ is elementwise nonnegative. That gap cannot be repaired cleanly by post-hoc clipping. If a clipped state $	ilde c$ is defined by replacing negative entries of $c^*$ with zero, then in general
-
-$$
-A \tilde c \neq A c_{in}
-$$
-
-so exact invariant preservation is lost for that sample. The resulting clipped model is therefore no longer the model defined in Sections 4 through 10. If non-negativity is scientifically required, it must be built into the estimation problem itself.
-
-This section formulates an end-to-end constrained COBRE variant whose coefficients are learned directly against the final projected measured outputs while simultaneously enforcing non-negativity of the intermediate projected ASM component predictions over the fitted support.
-
-### 11.2 When nonnegative ASM components imply nonnegative measured composites
-
-The final measured prediction is
-
-$$
-y^* = I_{comp} c^*
-$$
-
-so non-negativity of $c^*$ alone is not sufficient unless the relevant rows of the composition map are monotone in the component concentrations.
-
-Let $\mathcal{K}_+ \subseteq \{1, \dots, K\}$ denote the set of measured outputs whose composition rows are elementwise nonnegative:
-
-$$
-k \in \mathcal{K}_+ \quad \Longleftrightarrow \quad (I_{comp})_{k f} \ge 0 \text{ for all } f = 1, \dots, F
-$$
-
-Then the following implication is immediate.
-
-**Proposition 1 (Monotone-collapse sufficiency).** If $c^* \ge 0$ elementwise, then for every $k \in \mathcal{K}_+$,
-
-$$
-y_k^* = \sum_{f=1}^{F} (I_{comp})_{k f} c_f^* \ge 0
-$$
-
-because each summand is nonnegative. In particular, if all rows of $I_{comp}$ are elementwise nonnegative, then
-
-$$
-c^* \ge 0 \quad \Longrightarrow \quad y^* \ge 0
-$$
-
-elementwise.
-
-This proposition identifies the exact additional condition needed to transfer a component-space non-negativity guarantee into measured-output space. The guarantee is therefore output-specific whenever some rows of $I_{comp}$ contain negative coefficients.
-
-### 11.3 Admissible-state parameterization with exact invariants
-
-To preserve the affine invariant relation exactly while avoiding post-hoc repair, it is convenient to parameterize the predicted effluent state directly inside the admissible affine family. Introduce an unconstrained matrix $\widetilde B \in \mathbb{R}^{F \times D}$ and define the admissible coefficient matrix
-
-$$
-B_{adm} = P_{adm} \widetilde B
-$$
-
-Then define the constrained effluent-state predictor by
-
-$$
-c_{\theta}^*(u, c_{in}) = B_{adm} \phi(u, c_{in}) + P_{inv} c_{in}
-$$
-
-where $\theta$ denotes the free parameters inside $\widetilde B$. Since
-
-$$
-A P_{adm} = 0, \qquad A P_{inv} = A
-$$
-
-it follows immediately that
-
-$$
-A c_{\theta}^*(u, c_{in}) = A B_{adm} \phi(u, c_{in}) + A P_{inv} c_{in} = A c_{in}
-$$
-
-for every input pair $(u, c_{in})$. Thus the invariant relation is built into the parameterization itself rather than restored afterward.
-
-The same partitioned second-order structure is retained because $B_{adm}$ can be written blockwise as
-
-$$
-B_{adm} = \begin{bmatrix}
-b_{adm} & W_{u,adm} & W_{in,adm} & \Theta_{uu,adm} & \Theta_{cc,adm} & \Theta_{uc,adm}
-\end{bmatrix}
-$$
-
-so the engineering interpretation of operational, influent, quadratic, and interaction contributions is preserved.
-
-### 11.4 End-to-end constrained estimation against the final projected outputs
-
-For sample $i$, define
-
-$$
-c_{\theta,i}^* = P_{adm} \widetilde B \, \phi(u_i, c_{in,i}) + P_{inv} c_{in,i}
-$$
-
-and
-
-$$
-y_{\theta,i}^* = I_{comp} c_{\theta,i}^*
-$$
-
-The end-to-end constrained estimator is then defined by the optimization problem
-
-$$
-\widehat{\widetilde B}
-= \arg\min_{\widetilde B}
-\sum_{i=1}^{N} \left\| y_i - I_{comp}\left(P_{adm} \widetilde B \, \phi(u_i, c_{in,i}) + P_{inv} c_{in,i}\right) \right\|_2^2
-+ \lambda \| \widetilde B \|_F^2
-$$
-
-subject to the samplewise inequalities
-
-$$
-P_{adm} \widetilde B \, \phi(u_i, c_{in,i}) + P_{inv} c_{in,i} \ge \varepsilon \mathbf{1}_F,
-\qquad i = 1, \dots, N
-$$
-
-where $\lambda \ge 0$ is a regularization parameter and $\varepsilon \ge 0$ is an optional positivity margin. The case $\varepsilon = 0$ enforces non-negativity exactly, while $\varepsilon > 0$ imposes a strictly positive safety buffer on the fitted support.
-
-This is an end-to-end training objective in the precise sense relevant here: the loss is evaluated on the final projected measured outputs $y_{\theta,i}^*$, but the inequality constraints are enforced on the corresponding intermediate projected ASM component states $c_{\theta,i}^*$. The coefficients are therefore learned against the final nonnegative composite targets through the same optimization that imposes the component-space feasibility condition.
-
-The problem is a convex quadratic program. The objective is quadratic in the free coefficients of $\widetilde B$, and each componentwise inequality constraint is affine in those same coefficients because $\phi(u_i, c_{in,i})$, $P_{adm}$, and $P_{inv} c_{in,i}$ are fixed for sample $i$. Consequently, exact affine invariants and fitted-support non-negativity can be enforced simultaneously without introducing a post-hoc stage.
-
-### 11.5 Identifiability, interpretability, and certification under the constrained estimator
-
-The identifiability distinction from Section 8 remains essential. Measured composite data still identify the measured-space action of the constrained model more directly than they identify one unique component-space coefficient matrix. The regularization term $\lambda \| \widetilde B \|_F^2$ should therefore be interpreted as part of the model definition: it selects one admissible representative from a generally non-unique family while stabilizing estimation in high-dimensional second-order feature spaces.
-
-Measured-space interpretation is preserved. Define
-
-$$
-M_{adm} = I_{comp} B_{adm}
-$$
-
-Then the constrained measured-output model is
-
-$$
-y_{\theta}^* = M_{adm} \phi(u, c_{in}) + H c_{in}
-$$
-
-which has exactly the same additive block structure as Section 7.4. The baseline offset, first-order operating effects, first-order influent effects, invariant carry-through, and second-order interaction terms can therefore still be decomposed and interpreted sample by sample.
-
-What changes is the guarantee scope. If the fitted solution satisfies
-
-$$
-c_{\theta,i}^* \ge 0
-\qquad \text{for every fitted sample } i
-$$
-
-then the model is certified to be nonnegative on that fitted support. If, in addition, the relevant output rows of $I_{comp}$ belong to $\mathcal{K}_+$, then Proposition 1 certifies non-negativity of those final measured outputs on the same support. This is a rigorous data-domain guarantee, not a universal guarantee over all possible inputs. Extending the guarantee beyond the observed support would require an additional bounded-domain certification analysis that is outside the present article.
-
-The practical consequence is clear. If interpretability and exact invariant preservation are both to be retained, then the principled route is not to clip projected predictions after fitting. The principled route is to learn an admissible-state parameterization directly from the final measured targets under hard component-space non-negativity constraints.
-
-## 12. Limitations
-
-COBRE is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
+ICSOR is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
 
 1. It is steady-state and does not represent temporal dynamics or path dependence.
 2. It enforces only the invariant relations encoded by the chosen stoichiometric basis and system boundary.
-3. In the baseline projection-after-surrogate formulation, nonnegative ASM component concentrations are not guaranteed after projection. Section 11 gives an end-to-end constrained remedy on the fitted support, but that remedy changes the estimator and should not be conflated with post-hoc clipping.
-4. Even under the constrained estimator, non-negativity of final measured composites follows from component non-negativity only for outputs whose composition-map rows are elementwise nonnegative.
-5. The constrained estimator provides a fitted-support guarantee, not a global guarantee over all possible operating and influent conditions.
-6. It depends on the assumed linear composition map from ASM component space to measured-output space.
-7. It can be statistically fragile if the second-order feature basis is weakly excited or highly collinear.
-8. Classical coefficient and prediction intervals require identifiable coefficients and the usual multivariate linear-model assumptions. Under constrained estimation, bootstrap or other resampling-based uncertainty quantification may be more appropriate than closed-form least-squares formulas.
-9. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct projection onto the wrong physical constraint set.
-10. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the output-noise covariance formulas derived here.
+3. It does not guarantee nonnegative ASM component concentrations after projection. If a projected state is negative in one or more components, that indicates tension between the unconstrained surrogate, the measurement map, and the enforced invariant structure. Simple clipping restores nonnegativity only by sacrificing the exact invariant relation for that sample.
+4. It depends on the assumed linear composition map from ASM component space to measured-output space.
+5. It can be statistically fragile if the second-order feature basis is weakly excited or highly collinear.
+6. Classical coefficient and prediction intervals require identifiable coefficients and the usual multivariate linear-model assumptions.
+7. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct projection onto the wrong physical constraint set.
+8. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the output-noise covariance formulas derived here.
 
 These limitations should be stated explicitly in any application. Doing so does not weaken the model. It defines the scope of its claims correctly.
 
-## 13. Conclusion
+## 12. Conclusion
 
-COBRE combines a partitioned second-order surrogate with an orthogonal projection derived from stoichiometric invariants. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, and returns predictions in the measured variables used by plant operators and simulation studies.
+ICSOR combines a partitioned second-order surrogate with an orthogonal projection derived from stoichiometric invariants. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, and returns predictions in the measured variables used by plant operators and simulation studies.
 
-The central theoretical point is that measured composite data identify the effective measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. Once that distinction is made explicit, the model becomes conceptually cleaner, the estimation problem becomes more precise, and the uncertainty analysis becomes easier to interpret. Under that reading, baseline COBRE is best understood as an analytically constrained steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, but narrower in scope than a full dynamic mechanistic simulator.
-
-When non-negativity of intermediate ASM components is also required, the clean extension is not a post-hoc correction. The clean extension is the end-to-end constrained formulation of Section 11, which parameterizes the admissible state directly, regresses coefficients against the final projected measured outputs, and preserves the additive block interpretation while enforcing fitted-support non-negativity of the projected ASM state. For outputs whose composition-map rows are elementwise nonnegative, that component-space guarantee transfers directly to the final measured predictions.
+The central theoretical point is that measured composite data identify the effective measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. Once that distinction is made explicit, the model becomes conceptually cleaner, the estimation problem becomes more precise, and the uncertainty analysis becomes easier to interpret. Under that reading, ICSOR is best understood as an analytically constrained steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, but narrower in scope than a full dynamic mechanistic simulator.
 
 ## References
 
@@ -1044,4 +883,3 @@ When non-negativity of intermediate ASM components is also required, the clean e
 3. Golub, G. H., and Van Loan, C. F. Matrix Computations. 4th ed. Johns Hopkins University Press, 2013.
 4. Seber, G. A. F., and Lee, A. J. Linear Regression Analysis. 2nd ed. Wiley, 2003.
 5. Rao, C. R., and Mitra, S. Generalized Inverse of Matrices and Its Applications. Wiley, 1971.
-6. Boyd, S., and Vandenberghe, L. Convex Optimization. Cambridge University Press, 2004.

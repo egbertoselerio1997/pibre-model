@@ -26,7 +26,7 @@ where $B$ is the coefficient matrix assembled from the learned latent factors. I
 
 ## 4. Inputs, outputs, and assumptions
 
-Inputs are the notebook-managed operational-plus-fractional benchmark features. Outputs are the measured effluent composites used for direct comparison with COBRE and the other classical regressors.
+Inputs are the notebook-managed operational-plus-fractional benchmark features. Outputs are the measured effluent composites used for direct comparison with ICSOR and the other classical regressors.
 
 The important implementation assumption is that estimator-side scaling remains false. All scaling is handled centrally in src/utils/train.py so the split governance, inverse transforms, and persistence contract stay uniform across models.
 

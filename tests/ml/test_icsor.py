@@ -1,4 +1,4 @@
-"""Minimal end-to-end tests for the COBRE projected OLS model."""
+"""Minimal end-to-end tests for the icsor projected OLS model."""
 
 from __future__ import annotations
 
@@ -13,18 +13,18 @@ import numpy as np
 import pandas as pd
 from scipy.linalg import null_space
 
-from src.models.ml.cobre import (
-    build_cobre_design_frame,
-    predict_cobre_model,
-    run_cobre_pipeline,
-    train_cobre_model,
+from src.models.ml.icsor import (
+    build_icsor_design_frame,
+    predict_icsor_model,
+    run_icsor_pipeline,
+    train_icsor_model,
 )
-from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
+from src.models.simulation.asm2d_tsn_simulation import generate_asm2d_tsn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
 from src.utils.process import (
     DatasetSplit,
-    build_cobre_supervised_dataset,
+    build_icsor_supervised_dataset,
     build_projection_operator,
     make_train_test_split,
     project_to_nonnegative_feasible_set,
@@ -46,26 +46,26 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
     return a_matrix
 
 
-class CobreModelTests(unittest.TestCase):
+class icsorModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=29)
+        dataset, metadata, matrix_bundle = generate_asm2d_tsn_dataset(n_samples=12, random_seed=29)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]
         cls.petersen_matrix = matrix_bundle["petersen_matrix"]
         cls.a_matrix = _compute_a_matrix(cls.petersen_matrix, cls.composition_matrix)
-        cls.cobre_dataset = build_cobre_supervised_dataset(cls.dataset, cls.metadata, cls.composition_matrix)
+        cls.icsor_dataset = build_icsor_supervised_dataset(cls.dataset, cls.metadata, cls.composition_matrix)
 
     def test_run_pipeline_returns_raw_and_projected_metrics(self) -> None:
         params = self._tiny_params()
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
 
-        result = run_cobre_pipeline(
+        result = run_icsor_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -133,11 +133,11 @@ class CobreModelTests(unittest.TestCase):
     def test_predict_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
-        result = run_cobre_pipeline(
+        result = run_icsor_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -148,9 +148,9 @@ class CobreModelTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir_name:
-            model_path = Path(temp_dir_name) / "cobre_model.pkl"
+            model_path = Path(temp_dir_name) / "icsor_model.pkl"
             save_pickle_file(model_path, result["model_bundle"])
-            prediction_result = predict_cobre_model(
+            prediction_result = predict_icsor_model(
                 self.dataset.iloc[:8].copy(),
                 model_path,
                 metadata=self.metadata,
@@ -178,12 +178,12 @@ class CobreModelTests(unittest.TestCase):
     def test_rank_deficient_training_uses_bootstrap_uncertainty_in_auto_mode(self) -> None:
         params = self._tiny_params()
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
 
-        result = run_cobre_pipeline(
+        result = run_icsor_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -210,12 +210,12 @@ class CobreModelTests(unittest.TestCase):
     def test_rank_deficient_training_allows_forced_analytic_uncertainty(self) -> None:
         params = self._tiny_params(uncertainty_method="analytic")
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
 
-        result = run_cobre_pipeline(
+        result = run_icsor_pipeline(
             dataset_splits.train,
             dataset_splits.test,
             self.a_matrix,
@@ -246,7 +246,7 @@ class CobreModelTests(unittest.TestCase):
         synthetic_train, synthetic_test, a_matrix, composition_matrix = self._make_full_rank_synthetic_splits()
         params = self._tiny_params(bootstrap_samples=16)
 
-        result = run_cobre_pipeline(
+        result = run_icsor_pipeline(
             synthetic_train,
             synthetic_test,
             a_matrix,
@@ -334,13 +334,13 @@ class CobreModelTests(unittest.TestCase):
     def test_projected_ols_matches_explicit_kronecker_solution(self) -> None:
         params = self._tiny_params(ols_backend="numpy_lstsq")
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=7,
         )
         train_split = dataset_splits.train
 
-        training_result = train_cobre_model(
+        training_result = train_icsor_model(
             {
                 "features": train_split.features,
                 "targets": train_split.targets,
@@ -352,7 +352,7 @@ class CobreModelTests(unittest.TestCase):
             training_options={"show_progress": False},
         )
 
-        design_frame, _ = build_cobre_design_frame(
+        design_frame, _ = build_icsor_design_frame(
             train_split.features,
             list(train_split.constraint_reference.columns),
             include_bias_term=True,
@@ -382,16 +382,16 @@ class CobreModelTests(unittest.TestCase):
             rtol=1e-8,
         )
 
-    @patch("src.models.ml.cobre.create_progress_bar")
+    @patch("src.models.ml.icsor.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
 
-        train_cobre_model(
+        train_icsor_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -405,16 +405,16 @@ class CobreModelTests(unittest.TestCase):
         self.assertTrue(progress_factory.called)
         self.assertTrue(progress_factory.call_args.kwargs["enabled"])
 
-    @patch("src.models.ml.cobre.create_progress_bar")
+    @patch("src.models.ml.icsor.create_progress_bar")
     def test_train_supports_progress_opt_out(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
         dataset_splits = make_train_test_split(
-            self.cobre_dataset,
+            self.icsor_dataset,
             test_fraction=0.2,
             random_seed=11,
         )
 
-        train_cobre_model(
+        train_icsor_model(
             {
                 "features": dataset_splits.train.features,
                 "targets": dataset_splits.train.targets,
@@ -482,7 +482,7 @@ class CobreModelTests(unittest.TestCase):
         constraint_reference = features.loc[:, ["In_S1"]].rename(columns={"In_S1": "S1"})
         composition_matrix = np.asarray([[1.0], [1.75]], dtype=float)
         a_matrix = np.zeros((0, 1), dtype=float)
-        design_frame, _ = build_cobre_design_frame(
+        design_frame, _ = build_icsor_design_frame(
             features,
             list(constraint_reference.columns),
             include_bias_term=True,
@@ -513,3 +513,5 @@ class CobreModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

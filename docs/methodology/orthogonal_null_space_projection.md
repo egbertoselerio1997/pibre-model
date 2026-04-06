@@ -2,12 +2,12 @@
 
 ## 1. Purpose
 
-This note explains how orthogonal projection is used in the machine-learning pipelines in this repository after the COBRE refactor to the strict fractional-space formulation.
+This note explains how orthogonal projection is used in the machine-learning pipelines in this repository after the ICSOR refactor to the strict fractional-space formulation.
 
 The central distinction is now explicit:
 
-- the classical regressors now benchmark on the same operational and influent fractional inputs used by COBRE, while still training measured-output targets and applying projection afterward in measured space
-- COBRE now trains from a fractional-space raw model whose physically admissible state is collapsed into the measured-output basis analytically
+- the classical regressors now benchmark on the same operational and influent fractional inputs used by ICSOR, while still training measured-output targets and applying projection afterward in measured space
+- ICSOR now trains from a fractional-space raw model whose physically admissible state is collapsed into the measured-output basis analytically
 
 Those are related ideas, but they are not the same implementation.
 
@@ -15,9 +15,9 @@ Those are related ideas, but they are not the same implementation.
 
 The notebook keeps two different invariant constructions because the repository currently supports two different model families.
 
-### 2.1 Fractional invariant matrix for COBRE
+### 2.1 Fractional invariant matrix for ICSOR
 
-For COBRE, the invariant matrix is derived directly from the Petersen matrix:
+For ICSOR, the invariant matrix is derived directly from the Petersen matrix:
 
 $$
 A_{frac} = \operatorname{null\_space}(\nu)^T
@@ -65,18 +65,18 @@ $$
 
 The helper that builds this projector lives in `src/utils/process.py`.
 
-## 4. Classical regressors: COBRE-aligned inputs with measured-space post-projection
+## 4. Classical regressors: ICSOR-aligned inputs with measured-space post-projection
 
 The classical regressors in `src/models/ml` still follow the measured-space path:
 
-1. build the same operational-plus-fractional input feature frame used by COBRE
+1. build the same operational-plus-fractional input feature frame used by ICSOR
 2. keep the supervised target in measured-output space
 3. keep the projection reference in measured composite space
 4. fit an unconstrained regressor in measured-output space
 5. generate raw measured-output predictions
 6. project those predictions onto the affine measured-space invariant set using the measured-space constraint reference
 
-This benchmark contract makes the direct comparison with COBRE stricter at the input and split level, even though the classical models still remain measured-output regressors rather than fractional-state regressors.
+This benchmark contract makes the direct comparison with ICSOR stricter at the input and split level, even though the classical models still remain measured-output regressors rather than fractional-state regressors.
 
 For those models the projected prediction is:
 
@@ -92,9 +92,9 @@ with:
 
 This remains a post-processing step outside the estimator fitting itself.
 
-## 5. COBRE: strict fractional-space projection with measured-space collapse
+## 5. ICSOR: strict fractional-space projection with measured-space collapse
 
-COBRE now uses a different path.
+ICSOR now uses a different path.
 
 ### 5.1 Raw model space
 
@@ -104,7 +104,7 @@ The notebook prepares:
 - influent fractional states $C_{in}$
 - measured effluent targets $Y$
 
-The raw COBRE model predicts fractional states:
+The raw ICSOR model predicts fractional states:
 
 $$
 C_{raw} = W_u u + W_{in} C_{in} + b + \Theta_{uu}(u \otimes u) + \Theta_{cc}(C_{in} \otimes C_{in}) + \Theta_{uc}(u \otimes C_{in})
@@ -175,9 +175,9 @@ For the classical regressors:
 - when $A_{measured}$ is non-trivial, projection-adjustment diagnostics summarize how far the raw measured prediction moved during post-projection
 - when $A_{measured}$ is trivial, the notebook reports only the raw measured-output metrics and marks the classical projection path as inactive
 
-### 6.2 COBRE
+### 6.2 ICSOR
 
-For COBRE:
+For ICSOR:
 
 - regression metrics are reported for raw, affine, and final projected measured-output predictions after mapping through the composition matrix
 - constraint residuals are measured on the fractional raw, affine, and final projected states against the fractional influent reference
@@ -190,10 +190,10 @@ The repository now uses a unified high-level report shape with a direct comparis
 
 The notebook remains the only place where train-test splitting and any Optuna-only subset creation occur. After the benchmark refactor, the notebook therefore carries two aligned supervised datasets:
 
-- a classical benchmark dataset with COBRE-aligned operational-plus-fractional inputs, measured-output targets, and measured-space projection references
-- a COBRE-specific dataset with fractional influent features and measured targets
+- a classical benchmark dataset with ICSOR-aligned operational-plus-fractional inputs, measured-output targets, and measured-space projection references
+- a ICSOR-specific dataset with fractional influent features and measured targets
 
-The notebook also keeps both invariant matrices so later classical-regressor cells can continue to use the measured-space projector while the COBRE cells use the strict fractional projector.
+The notebook also keeps both invariant matrices so later classical-regressor cells can continue to use the measured-space projector while the ICSOR cells use the strict fractional projector.
 
 If the measured-space null space collapses to zero dimension, the notebook now prints that status explicitly and suppresses the classical projected-result and measured-space discrepancy tables. This avoids misreading a vacuous projector as evidence that an unconstrained classical regressor satisfied mass balance.
 
@@ -201,7 +201,7 @@ If the measured-space null space collapses to zero dimension, the notebook now p
 
 The present repository design intentionally supports both projection strategies at once. That choice preserves backward compatibility for the classical regressors, but it means a reader must distinguish carefully between:
 
-- the fractional COBRE invariant matrix
+- the fractional ICSOR invariant matrix
 - the measured-space classical-regressor invariant matrix
 
 Confusing those two objects will lead to incorrect interpretations of the reported residuals or of the fitted coefficient matrices.

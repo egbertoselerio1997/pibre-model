@@ -1,7 +1,7 @@
 [project]
-name = "cobre-model"
+name = "icsor-model"
 version = "0.1.0"
-description = "Simulation-driven and ML-oriented modeling workspace for cobre-model."
+description = "Simulation-driven and ML-oriented modeling workspace for icsor-model."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -32,3 +32,5 @@ explicit = true  # Ensures this index is only used when specified
 torch = { index = "pytorch-cu124" }
 torchvision = { index = "pytorch-cu124" }
 torchaudio = { index = "pytorch-cu124" }
+
+

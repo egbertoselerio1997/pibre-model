@@ -1,10 +1,10 @@
-# Constrained Orthogonal Bilinear Regression (COBRE) for Activated Sludge Surrogate Modeling
+# Constrained Orthogonal Bilinear Regression (ICSOR) for Activated Sludge Surrogate Modeling
 
 ## Abstract
 
-This article presents a revised theoretical framework for Constrained Orthogonal Bilinear Regression (COBRE), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of COBRE is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and guaranteeing nonnegative deployed component concentrations. The key difficulty is that the conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. COBRE resolves that mismatch in two stages. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, a state-weighted convex projection maps that raw prediction onto the intersection of the invariant-consistent affine set and the nonnegative orthant. The corrected component state is then collapsed into measured output space through a linear composition map.
+This article presents a revised theoretical framework for Constrained Orthogonal Bilinear Regression (ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and guaranteeing nonnegative deployed component concentrations. The key difficulty is that the conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. ICSOR resolves that mismatch in two stages. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, a state-weighted convex projection maps that raw prediction onto the intersection of the invariant-consistent affine set and the nonnegative orthant. The corrected component state is then collapsed into measured output space through a linear composition map.
 
-The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The physical assumptions are stated explicitly. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The positivity-preserving correction is formulated as a strictly convex quadratic program under a state-dependent metric inspired by Kircher and Votsmeier (2025). The distinction between global component-space fit parameters and locally interpretable measured-space sensitivities is made explicit. The result is a precise and reproducible formulation that clarifies which properties COBRE guarantees by construction, which objects remain only locally interpretable, and why end-to-end estimation is necessarily nonlinear in the positivity-preserving setting.
+The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The physical assumptions are stated explicitly. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The positivity-preserving correction is formulated as a strictly convex quadratic program under a state-dependent metric inspired by Kircher and Votsmeier (2025). The distinction between global component-space fit parameters and locally interpretable measured-space sensitivities is made explicit. The result is a precise and reproducible formulation that clarifies which properties ICSOR guarantees by construction, which objects remain only locally interpretable, and why end-to-end estimation is necessarily nonlinear in the positivity-preserving setting.
 
 ## 1. Introduction and Modeling Objective
 
@@ -17,7 +17,7 @@ The source of the problem is a mismatch between two spaces.
 
 These two spaces are related, but they are not the same. Conservation laws are naturally expressed in the ASM component basis because the stoichiometric matrix acts on individual components. Observations, however, are usually available only after those components have been aggregated into measurable composites. A surrogate that learns only in measured-output space may reproduce the observed aggregates while obscuring physically impossible changes in the underlying component inventory.
 
-COBRE is designed to address exactly that mismatch. Given operating conditions and an influent ASM component state, it predicts the steady-state effluent in a way that is flexible enough to capture nonlinear operating-loading interactions and structured enough to preserve the stoichiometric invariants implied by the chosen reaction network while preventing physically impossible negative deployed component concentrations. The model is constructed to answer one precise question:
+ICSOR is designed to address exactly that mismatch. Given operating conditions and an influent ASM component state, it predicts the steady-state effluent in a way that is flexible enough to capture nonlinear operating-loading interactions and structured enough to preserve the stoichiometric invariants implied by the chosen reaction network while preventing physically impossible negative deployed component concentrations. The model is constructed to answer one precise question:
 
 > Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state must remain consistent with the conserved quantities implied by the adopted stoichiometric model and must remain nonnegative componentwise after correction?
 
@@ -45,9 +45,9 @@ The surrogate must therefore operate across two linked spaces:
 1. ASM component space, where stoichiometry, conserved quantities, and componentwise nonnegativity are defined.
 2. Measured composite space, where prediction targets are observed and evaluated.
 
-COBRE learns and constrains the prediction in component space and only then maps the result to measured space. That order is essential. The conservation structure originates in the component basis, and the nonnegativity claim is also made in that basis, not in the aggregated measurement basis.
+ICSOR learns and constrains the prediction in component space and only then maps the result to measured space. That order is essential. The conservation structure originates in the component basis, and the nonnegativity claim is also made in that basis, not in the aggregated measurement basis.
 
-Before introducing symbols, it is useful to separate three distinct objects that will appear repeatedly. The first is the component state, which is the detailed ASM description used by the stoichiometric model. The second is the measured state, which is the aggregate laboratory or simulator output actually reported to the engineer. The third is the feasible correction set, which contains only those component states that satisfy the invariant relations and nonnegativity conditions chosen for deployment. COBRE first predicts in the component basis, then corrects that prediction in component space, and only then converts the result into measured variables.
+Before introducing symbols, it is useful to separate three distinct objects that will appear repeatedly. The first is the component state, which is the detailed ASM description used by the stoichiometric model. The second is the measured state, which is the aggregate laboratory or simulator output actually reported to the engineer. The third is the feasible correction set, which contains only those component states that satisfy the invariant relations and nonnegativity conditions chosen for deployment. ICSOR first predicts in the component basis, then corrects that prediction in component space, and only then converts the result into measured variables.
 
 ### 2.3 Notation
 
@@ -59,7 +59,7 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $c_{in}$ | $\mathbb{R}^{F}$ | Influent ASM component concentration vector |
 | $c_{out}$ | $\mathbb{R}^{F}$ | True steady-state effluent ASM component concentration vector |
 | $c_{raw}$ | $\mathbb{R}^{F}$ | Unconstrained surrogate prediction of the effluent ASM component concentration vector |
-| $c_{aff}$ | $\mathbb{R}^{F}$ | Euclidean affine projection of $c_{raw}$ onto the invariant-consistent set, retained as the original COBRE reference |
+| $c_{aff}$ | $\mathbb{R}^{F}$ | Euclidean affine projection of $c_{raw}$ onto the invariant-consistent set, retained as the original ICSOR reference |
 | $c_{w,aff}$ | $\mathbb{R}^{F}$ | State-weighted affine reference projection of $c_{raw}$ onto the invariant-consistent set |
 | $c^*$ | $\mathbb{R}^{F}$ | Final weighted nonnegative projected effluent ASM component prediction |
 | $y$ | $\mathbb{R}^{K}$ | Measured effluent composite vector |
@@ -67,8 +67,8 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $\nu$ | $\mathbb{R}^{R \times F}$ | Stoichiometric matrix with $R$ reactions and $F$ ASM components |
 | $\xi$ | $\mathbb{R}^{R}$ | Net reaction progress vector expressed in concentration-equivalent units so that $\nu^T \xi$ has the same units as $c_{out} - c_{in}$ |
 | $A$ | $\mathbb{R}^{q \times F}$ | Full-row-rank matrix whose rows form a basis of $\operatorname{null}(\nu)$ |
-| $P_{inv}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the row space of $A$ in the original Euclidean affine COBRE reference |
-| $P_{adm}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the admissible change space, $I_F - P_{inv}$, in the original Euclidean affine COBRE reference |
+| $P_{inv}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the row space of $A$ in the original Euclidean affine ICSOR reference |
+| $P_{adm}$ | $\mathbb{R}^{F \times F}$ | Orthogonal projector onto the admissible change space, $I_F - P_{inv}$, in the original Euclidean affine ICSOR reference |
 | $\phi(u, c_{in})$ | $\mathbb{R}^{D}$ | Engineered second-order feature map |
 | $D$ | scalar | Feature dimension, $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$ |
 | $B$ | $\mathbb{R}^{F \times D}$ | Raw component-space coefficient matrix |
@@ -198,7 +198,7 @@ In activated-sludge systems, operating conditions and influent component concent
 1. Operating variables such as hydraulic retention time, dissolved-oxygen setpoint, or recycle settings alter the process environment.
 2. Influent component concentrations describe the material inventory entering that environment.
 
-Treating those two groups as interchangeable predictors hides an important engineering distinction. COBRE therefore partitions the input into an operational block $u$ and an influent component block $c_{in}$.
+Treating those two groups as interchangeable predictors hides an important engineering distinction. ICSOR therefore partitions the input into an operational block $u$ and an influent component block $c_{in}$.
 
 ### 5.2 Feature map
 
@@ -259,9 +259,9 @@ Each block has a physical interpretation.
 2. $W_{in} c_{in}$ captures direct carry-through and first-order dependence on influent composition.
 3. $\Theta_{uu}(u \otimes u)$ captures nonlinear interactions among operating variables.
 4. $\Theta_{cc}(c_{in} \otimes c_{in})$ captures nonlinear dependence on influent composition.
-5. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that motivates the COBRE name.
+5. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that motivates the ICSOR name.
 
-The model is therefore not purely bilinear in the strict algebraic sense because it includes self-quadratic terms as well as cross terms. The name COBRE is retained because the operational-loading interaction remains the defining structural idea, but the mathematical class should be understood precisely as a partitioned second-order regression model with bilinear cross interactions.
+The model is therefore not purely bilinear in the strict algebraic sense because it includes self-quadratic terms as well as cross terms. The name ICSOR is retained because the operational-loading interaction remains the defining structural idea, but the mathematical class should be understood precisely as a partitioned second-order regression model with bilinear cross interactions.
 
 The raw surrogate is flexible enough to capture curvature and interaction, but it is data-driven and unconstrained. There is no reason for $c_{raw}$ to satisfy the invariant relation $A c_{raw} = A c_{in}$ or the componentwise nonnegativity requirement without an additional correction step. The next section therefore introduces the weighted constrained correction that separates learned variation from invariant and positivity enforcement.
 
@@ -321,7 +321,7 @@ This state-weighted affine correction is an important reference object because i
 
 ### 6.3 Final positivity-preserving correction problem
 
-The deployed positivity-preserving COBRE predictor is defined by the weighted convex projection
+The deployed positivity-preserving ICSOR predictor is defined by the weighted convex projection
 
 $$
 c^* = \arg\min_{c \in \mathbb{R}^{F}} \; \frac{1}{2}(c - c_{raw})^T W(c_{raw})^2 (c - c_{raw})
@@ -379,9 +379,9 @@ $$
 
 These conditions show that the final correction combines invariant-restoring directions with the conic effect of the active nonnegativity constraints. When the active set changes, the local sensitivity of the deployed map changes as well.
 
-### 6.6 Relation to weighted affine and original affine COBRE
+### 6.6 Relation to weighted affine and original affine ICSOR
 
-The deployed positivity-preserving predictor contains both the weighted affine reference and the original Euclidean affine COBRE model as special cases.
+The deployed positivity-preserving predictor contains both the weighted affine reference and the original Euclidean affine ICSOR model as special cases.
 
 1. If $c_{w,aff} \ge 0$ componentwise, then $c_{w,aff}$ is feasible for the deployed problem and therefore
 
@@ -389,15 +389,15 @@ $$
 c^* = c_{w,aff}
 $$
 
-2. If $W(c_{raw}) = I_F$ and the nonnegativity constraints are inactive, then the deployed predictor reduces to the original affine COBRE projector
+2. If $W(c_{raw}) = I_F$ and the nonnegativity constraints are inactive, then the deployed predictor reduces to the original affine ICSOR projector
 
 $$
 c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}
 $$
 
-3. If $W(c_{raw}) = I_F$ but one or more nonnegativity constraints are active, then the deployed predictor reduces to the Euclidean nonnegative COBRE correction.
+3. If $W(c_{raw}) = I_F$ but one or more nonnegativity constraints are active, then the deployed predictor reduces to the Euclidean nonnegative ICSOR correction.
 
-These recovery statements explain why the COBRE name is retained historically even though the deployed correction is no longer an orthogonal projector in the Euclidean sense.
+These recovery statements explain why the ICSOR name is retained historically even though the deployed correction is no longer an orthogonal projector in the Euclidean sense.
 
 ### 6.7 What the projection guarantees and what it does not
 
@@ -482,7 +482,7 @@ y^*(u, c_{in}; B) = y_{w,aff}(u, c_{in}; B)
 c_{w,aff}(u, c_{in}; B) \ge 0
 $$
 
-If the weights are further specialized to $W(c_{raw}) = I_F$, then the weighted affine reference collapses to the original Euclidean affine COBRE predictor.
+If the weights are further specialized to $W(c_{raw}) = I_F$, then the weighted affine reference collapses to the original Euclidean affine ICSOR predictor.
 
 ### 7.3 Local sensitivity and interpretability
 
@@ -570,7 +570,7 @@ where $e_i \in \mathbb{R}^{K}$ collects model and measurement errors. As in the 
 
 ### 8.2 End-to-end estimator
 
-Because the deployed prediction depends on $B$ through the raw state, the weights, and the active inequality set, the positivity-preserving COBRE estimator is nonlinear. The natural primary estimator is penalized nonlinear least squares,
+Because the deployed prediction depends on $B$ through the raw state, the weights, and the active inequality set, the positivity-preserving ICSOR estimator is nonlinear. The natural primary estimator is penalized nonlinear least squares,
 
 $$
 \widehat B = \arg\min_{B \in \mathbb{R}^{F \times D}} \; \sum_{i=1}^{N} \lVert y_i - f_i(B) \rVert_2^2 + \lambda_{reg} \lVert B \rVert_F^2
@@ -699,7 +699,7 @@ The partitioned feature map still separates operating effects, influent-composit
 
 ### 10.3 State-weighted positivity-preserving metric
 
-The state-weighted metric is the mechanism that biases invariant-restoring corrections away from depleted components. It is therefore substantively part of the model, not a harmless numerical detail. The choice of weighting rule and floor parameter affects the geometry of the deployment correction, the stability of local sensitivities, and the extent to which large positive components absorb the constraint-enforcement burden. For the same reason, the deployed correction is no longer orthogonal in the Euclidean sense. The COBRE name is retained historically because the raw surrogate class and the invariant-correction philosophy remain continuous with the earlier model.
+The state-weighted metric is the mechanism that biases invariant-restoring corrections away from depleted components. It is therefore substantively part of the model, not a harmless numerical detail. The choice of weighting rule and floor parameter affects the geometry of the deployment correction, the stability of local sensitivities, and the extent to which large positive components absorb the constraint-enforcement burden. For the same reason, the deployed correction is no longer orthogonal in the Euclidean sense. The ICSOR name is retained historically because the raw surrogate class and the invariant-correction philosophy remain continuous with the earlier model.
 
 ### 10.4 Projection before measurement collapse
 
@@ -707,11 +707,11 @@ Enforcing the invariant and nonnegativity relations before collapsing to measure
 
 ### 10.5 Global fit parameters versus local measured-space sensitivities
 
-In the positivity-preserving mainline formulation, the global fit parameters are the entries of $B$, but the directly interpretable measured-space objects are local Jacobians and deployed predictions. This is a sharper distinction than in affine COBRE. The entries of $B$ determine the raw component-space surface, yet the measured-space response also depends on the state-weighted constrained projection. Direct engineering interpretation is therefore strongest for deployed outputs, active-set behavior, and local sensitivities evaluated at operating points of interest rather than for raw entries of $B$ viewed as globally valid measured-space effects.
+In the positivity-preserving mainline formulation, the global fit parameters are the entries of $B$, but the directly interpretable measured-space objects are local Jacobians and deployed predictions. This is a sharper distinction than in affine ICSOR. The entries of $B$ determine the raw component-space surface, yet the measured-space response also depends on the state-weighted constrained projection. Direct engineering interpretation is therefore strongest for deployed outputs, active-set behavior, and local sensitivities evaluated at operating points of interest rather than for raw entries of $B$ viewed as globally valid measured-space effects.
 
 ## 11. Limitations
 
-COBRE is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
+ICSOR is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
 
 1. It is steady-state and does not represent temporal dynamics or path dependence.
 2. It enforces only the invariant relations encoded by the chosen stoichiometric basis and system boundary together with componentwise nonnegativity.
@@ -728,9 +728,9 @@ These limitations should be stated explicitly in any application. Doing so does 
 
 ## 12. Conclusion
 
-COBRE now combines a partitioned second-order surrogate with a state-weighted convex projection derived from stoichiometric invariants and componentwise nonnegativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component states, and returns predictions in the measured variables used by plant operators and simulation studies.
+ICSOR now combines a partitioned second-order surrogate with a state-weighted convex projection derived from stoichiometric invariants and componentwise nonnegativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component states, and returns predictions in the measured variables used by plant operators and simulation studies.
 
-The central theoretical point of the revised formulation is that positivity preservation changes the mathematical character of the model. The deployed predictor is no longer one global affine measured-space map. Instead, the global component-space coefficient matrix $B$ is fitted through a nonlinear end-to-end optimization, while direct engineering interpretation is carried by deployed predictions and local measured-space sensitivities of the constrained map. Under that reading, positivity-preserving COBRE is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than the affine-only formulation when negative component states would otherwise occur, but also more nonlinear in its estimation and uncertainty structure.
+The central theoretical point of the revised formulation is that positivity preservation changes the mathematical character of the model. The deployed predictor is no longer one global affine measured-space map. Instead, the global component-space coefficient matrix $B$ is fitted through a nonlinear end-to-end optimization, while direct engineering interpretation is carried by deployed predictions and local measured-space sensitivities of the constrained map. Under that reading, positivity-preserving ICSOR is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than the affine-only formulation when negative component states would otherwise occur, but also more nonlinear in its estimation and uncertainty structure.
 
 ## References
 

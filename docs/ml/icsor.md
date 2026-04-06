@@ -1,14 +1,14 @@
-# COBRE Model Summary
+# ICSOR Model Summary
 
 ## 1. Title and model summary
 
-This document describes the repository implementation of non-negative COBRE as a constrained second-order surrogate over ASM component-space influent states. The model predicts measured effluent composites while preserving stoichiometric invariants and enforcing non-negativity of the deployed ASM component prediction.
+This document describes the repository implementation of non-negative ICSOR as a constrained second-order surrogate over ASM component-space influent states. The model predicts measured effluent composites while preserving stoichiometric invariants and enforcing non-negativity of the deployed ASM component prediction.
 
-This file is an implementation companion, not the primary theory source. The authoritative mathematical specification is `docs/article/qp_cobre_theoretical_framework.md`. If any notation or derivation in this file conflicts with that article, the article is the source of truth.
+This file is an implementation companion, not the primary theory source. The authoritative mathematical specification is `docs/article/ICSOR-quadratic-programming.md`. If any notation or derivation in this file conflicts with that article, the article is the source of truth.
 
 ## 2. Background and use case
 
-The repository uses COBRE when an interpretable physics-informed surrogate is preferred over a generic black-box regressor. COBRE separates two physically distinct input roles:
+The repository uses ICSOR when an interpretable physics-informed surrogate is preferred over a generic black-box regressor. ICSOR separates two physically distinct input roles:
 
 - operational controls $u \in \mathbb{R}^{M_{op}}$
 - influent ASM component states $c_{in} \in \mathbb{R}^{F}$
@@ -17,7 +17,7 @@ This separation matters because the effluent must reflect both reactor operating
 
 ## 3. Theory-aligned notation
 
-The implementation follows the article notation in notebook displays and COBRE-specific reports:
+The implementation follows the article notation in notebook displays and ICSOR-specific reports:
 
 - $u$: operational control vector
 - $c_{in}$: influent ASM component state
@@ -48,7 +48,7 @@ $$
 A = \operatorname{null\_space}(\nu)^T
 $$
 
-The repository keeps the original affine COBRE projector as a reference stage:
+The repository keeps the original affine ICSOR projector as a reference stage:
 
 $$
 c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}
@@ -88,12 +88,12 @@ The repository solves this affine-core least-squares problem analytically. One a
 
 ## 6. Returned artifacts and persisted bundle fields
 
-The COBRE training pipeline returns:
+The ICSOR training pipeline returns:
 
 - the fitted model bundle for serialization and later prediction
 - raw component-space coefficient blocks for lower-level diagnostics
 - affine measured-space coefficient blocks for notebook interpretation
-- metric tables and staged COBRE evaluation reports
+- metric tables and staged ICSOR evaluation reports
 - coefficient uncertainty summaries for the affine measured-space core
 
 The persisted model bundle stores the data needed to reproduce predictions:
@@ -108,7 +108,7 @@ The persisted model bundle stores the data needed to reproduce predictions:
 
 ## 7. Coefficient uncertainty
 
-COBRE returns uncertainty information for the affine measured-space core estimated during training.
+ICSOR returns uncertainty information for the affine measured-space core estimated during training.
 
 The top-level training result includes:
 
@@ -130,7 +130,7 @@ The default confidence level, bootstrap count, and OSQP settings are all loaded 
 
 Prediction proceeds as follows:
 
-1. Load the persisted COBRE bundle.
+1. Load the persisted ICSOR bundle.
 2. Rebuild or align the feature frame to the saved operational and influent schema.
 3. Rebuild the second-order design matrix.
 4. Compute the raw component prediction $c_{raw}$.
@@ -141,7 +141,7 @@ Prediction proceeds as follows:
 9. Collapse the affine and final component states into measured space.
 10. If inference metadata are present, compute affine-core prediction uncertainty.
 
-`predict_cobre_model()` returns both the affine reference prediction and the final deployed prediction:
+`predict_icsor_model()` returns both the affine reference prediction and the final deployed prediction:
 
 - `affine_predictions` and `affine_fractional_predictions`
 - `projected_predictions` and `projected_fractional_predictions`
@@ -179,7 +179,7 @@ Expected failure modes include feature-order mismatches, inconsistent compositio
 
 ## 11. References
 
-For the formal COBRE derivation used as the repository gold standard, see `docs/article/qp_cobre_theoretical_framework.md`.
+For the formal ICSOR derivation used as the repository gold standard, see `docs/article/ICSOR-quadratic-programming.md`.
 
 Additional background references used by the repository include:
 
@@ -187,3 +187,4 @@ Additional background references used by the repository include:
 - Gujer, W. Systems Analysis for Water Technology. Springer, 2008.
 - Golub, G. H., and Van Loan, C. F. Matrix Computations. Johns Hopkins University Press, 2013.
 - Boyd, S., and Vandenberghe, L. Convex Optimization. Cambridge University Press, 2004.
+

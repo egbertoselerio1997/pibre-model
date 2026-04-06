@@ -253,7 +253,7 @@ def _solve_reduced_nonnegative_projection(
 	result = solver.solve()
 	status = str(result.info.status)
 	if result.x is None or status.lower() not in {"solved", "solved inaccurate"}:
-		raise RuntimeError(f"OSQP failed to solve the COBRE nonnegative projection: {status}.")
+		raise RuntimeError(f"OSQP failed to solve the icsor nonnegative projection: {status}.")
 
 	projected_point = np.asarray(affine_point, dtype=float) + np.asarray(null_space_basis, dtype=float) @ np.asarray(
 		result.x,
@@ -261,7 +261,7 @@ def _solve_reduced_nonnegative_projection(
 	)
 	if np.min(projected_point) < -float(nonnegativity_tolerance):
 		raise RuntimeError(
-			"OSQP returned a COBRE projection that still violates the nonnegativity tolerance."
+			"OSQP returned a icsor projection that still violates the nonnegativity tolerance."
 		)
 	projected_point = projected_point.copy()
 	projected_point[(projected_point < 0.0) & (projected_point >= -float(nonnegativity_tolerance))] = 0.0
@@ -273,7 +273,7 @@ def _solve_reduced_nonnegative_projection(
 	)
 	if residuals.shape[1] > 0 and float(np.max(np.abs(residuals))) > float(constraint_tolerance):
 		raise RuntimeError(
-			"OSQP returned a COBRE projection that violates the invariant-equality tolerance."
+			"OSQP returned a icsor projection that violates the invariant-equality tolerance."
 		)
 
 	return projected_point, status, int(result.info.iter)
@@ -364,7 +364,7 @@ def project_to_nonnegative_feasible_set(
 		projection_stage[qp_active_mask] = "qp_corrected"
 		if np.any(qp_active_mask):
 			if str(projection_solver).strip().lower() != "osqp":
-				raise ValueError("COBRE nonnegative projection requires projection_solver='osqp'.")
+				raise ValueError("icsor nonnegative projection requires projection_solver='osqp'.")
 			null_space_basis = build_null_space_basis(constraint_matrix)
 			solver = _setup_osqp_projection_solver(
 				null_space_basis,
@@ -402,7 +402,7 @@ def project_to_nonnegative_feasible_set(
 	)
 	projected_feasible_mask = projected_diagnostics["constraint_feasible"] & projected_diagnostics["nonnegative_feasible"]
 	if not bool(np.all(projected_feasible_mask)):
-		raise RuntimeError("COBRE nonnegative projection produced an infeasible deployed component state.")
+		raise RuntimeError("icsor nonnegative projection produced an infeasible deployed component state.")
 
 	return {
 		"affine_predictions": affine_predictions,
@@ -461,10 +461,10 @@ def build_fractional_input_measured_output_dataset(
 	metadata: dict[str, Any],
 	composition_matrix: np.ndarray,
 ) -> SupervisedDatasetFrames:
-	"""Build the COBRE-aligned classical benchmark dataset.
+	"""Build the icsor-aligned classical benchmark dataset.
 
 	Features stay in the operational-plus-fractional influent basis so the classical
-	regressors consume the same inputs as COBRE, while the constraint reference
+	regressors consume the same inputs as icsor, while the constraint reference
 	remains in measured composite space for post-projection diagnostics.
 	"""
 
@@ -503,12 +503,12 @@ def build_fractional_input_measured_output_dataset(
 	)
 
 
-def build_cobre_supervised_dataset(
+def build_icsor_supervised_dataset(
 	dataset: pd.DataFrame,
 	metadata: dict[str, Any],
 	composition_matrix: np.ndarray,
 ) -> SupervisedDatasetFrames:
-	"""Build the strict COBRE dataset with fractional influent states and measured effluent targets."""
+	"""Build the strict icsor dataset with fractional influent states and measured effluent targets."""
 
 	state_columns = list(metadata["state_columns"])
 	measured_output_columns = list(metadata["measured_output_columns"])
@@ -534,7 +534,7 @@ def build_cobre_supervised_dataset(
 
 	if np.asarray(composition_matrix, dtype=float).shape != (len(measured_output_columns), len(state_columns)):
 		raise ValueError(
-			"composition_matrix shape must match measured_output_columns x state_columns for the COBRE contract."
+			"composition_matrix shape must match measured_output_columns x state_columns for the icsor contract."
 		)
 
 	return SupervisedDatasetFrames(
@@ -812,7 +812,7 @@ __all__ = [
 	"TrainTestDatasetSplits",
 	"build_null_space_basis",
 	"build_projection_operator",
-	"build_cobre_supervised_dataset",
+	"build_icsor_supervised_dataset",
 	"build_measured_supervised_dataset",
 	"combine_dataset_splits",
 	"compute_measured_composites",
@@ -833,3 +833,4 @@ __all__ = [
 	"transform_dataset_splits",
 	"TrainTestSplitIndices",
 ]
+

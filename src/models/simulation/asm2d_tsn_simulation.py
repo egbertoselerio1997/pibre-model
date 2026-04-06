@@ -1,4 +1,4 @@
-"""ASM2d-TCN workbook, matrix, and mechanistic steady-state simulation helpers."""
+"""ASM2D-TSN workbook, matrix, and mechanistic steady-state simulation helpers."""
 
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ from src.utils.simulation import (
 )
 
 
-MODEL_NAME = "asm2d_tcn_simulation"
-WORKBOOK_PATH_KEY = "asm2d_tcn_reference_workbook"
-DATA_PATTERN_KEY = "asm2d_tcn_simulation_data_pattern"
-METADATA_PATTERN_KEY = "asm2d_tcn_simulation_metadata_pattern"
+MODEL_NAME = "asm2d_tsn_simulation"
+WORKBOOK_PATH_KEY = "asm2d_tsn_reference_workbook"
+DATA_PATTERN_KEY = "asm2d_tsn_simulation_data_pattern"
+METADATA_PATTERN_KEY = "asm2d_tsn_simulation_metadata_pattern"
 STOICHIOMETRIC_SHEET_NAME = "stoichiometric_matrix"
 COMPOSITION_SHEET_NAME = "composition_matrix"
 PARAMETER_SHEET_NAME = "parameter_table"
@@ -186,13 +186,13 @@ TSS_CONTINUITY_TERMS = {
 }
 
 
-def load_asm2d_tcn_simulation_params(repo_root: str | Path | None = None) -> dict[str, Any]:
-    """Load the configured ASM2d-TCN simulation definition."""
+def load_asm2d_tsn_simulation_params(repo_root: str | Path | None = None) -> dict[str, Any]:
+    """Load the configured ASM2D-TSN simulation definition."""
 
     return load_model_params(MODEL_NAME, repo_root)
 
 
-def resolve_asm2d_tcn_workbook_path(
+def resolve_asm2d_tsn_workbook_path(
     repo_root: str | Path | None = None,
     *,
     paths_config: Mapping[str, Any] | None = None,
@@ -204,13 +204,13 @@ def resolve_asm2d_tcn_workbook_path(
     return root / Path(config[WORKBOOK_PATH_KEY])
 
 
-def resolve_asm2d_tcn_simulation_artifact_paths(
+def resolve_asm2d_tsn_simulation_artifact_paths(
     repo_root: str | Path | None = None,
     *,
     timestamp: str | None = None,
     paths_config: Mapping[str, Any] | None = None,
 ) -> tuple[Path, Path, str]:
-    """Resolve the configured ASM2d-TCN dataset and metadata output paths."""
+    """Resolve the configured ASM2D-TSN dataset and metadata output paths."""
 
     return render_simulation_artifact_paths(
         MODEL_NAME,
@@ -222,29 +222,29 @@ def resolve_asm2d_tcn_simulation_artifact_paths(
     )
 
 
-def create_asm2d_tcn_workbook(
+def create_asm2d_tsn_workbook(
     workbook_path: str | Path | None = None,
     *,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Create the canonical ASM2d-TCN workbook with formula-driven matrices."""
+    """Create the canonical ASM2D-TSN workbook with formula-driven matrices."""
 
-    workbook = build_asm2d_tcn_workbook(model_params=model_params, repo_root=repo_root)
-    output_path = Path(workbook_path) if workbook_path is not None else resolve_asm2d_tcn_workbook_path(repo_root)
+    workbook = build_asm2d_tsn_workbook(model_params=model_params, repo_root=repo_root)
+    output_path = Path(workbook_path) if workbook_path is not None else resolve_asm2d_tsn_workbook_path(repo_root)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
     return output_path.resolve()
 
 
-def build_asm2d_tcn_workbook(
+def build_asm2d_tsn_workbook(
     *,
     model_params: Mapping[str, Any] | None = None,
     repo_root: str | Path | None = None,
 ) -> Workbook:
-    """Build the workbook object for the configured ASM2d-TCN reference model."""
+    """Build the workbook object for the configured ASM2D-TSN reference model."""
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params(repo_root)
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params(repo_root)
     workbook_config = _validate_workbook_config(params)
     parameter_refs = _build_parameter_reference_map(workbook_config["parameters"])
 
@@ -265,10 +265,10 @@ def build_asm2d_tcn_workbook(
     return workbook
 
 
-def get_asm2d_tcn_matrices(model_params: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Build numeric Petersen and composition matrices for the configured ASM2d-TCN model."""
+def get_asm2d_tsn_matrices(model_params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build numeric Petersen and composition matrices for the configured ASM2D-TSN model."""
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params()
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params()
     runtime = _validate_runtime_structure(params)
     workbook_config = runtime["workbook_config"]
     parameter_values = _build_parameter_value_map(workbook_config["parameters"])
@@ -333,14 +333,14 @@ def get_asm2d_tcn_matrices(model_params: Mapping[str, Any] | None = None) -> dic
     }
 
 
-def build_asm2d_tcn_metadata(
+def build_asm2d_tsn_metadata(
     model_params: Mapping[str, Any],
     *,
     sample_count: int,
     random_seed: int,
     dataset_file: str | None = None,
 ) -> dict[str, Any]:
-    """Create the metadata contract for the ASM2d-TCN mixed-schema dataset."""
+    """Create the metadata contract for the ASM2D-TSN mixed-schema dataset."""
 
     runtime = _validate_runtime_structure(model_params)
     state_columns = list(runtime["state_columns"])
@@ -377,7 +377,7 @@ def build_asm2d_tcn_metadata(
     }
 
 
-def generate_asm2d_tcn_dataset(
+def generate_asm2d_tsn_dataset(
     *,
     model_params: Mapping[str, Any] | None = None,
     n_samples: int | None = None,
@@ -388,9 +388,9 @@ def generate_asm2d_tcn_dataset(
     show_progress: bool = False,
     progress_description: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
-    """Generate a mechanistic steady-state ASM2d-TCN dataset with input/output fractions and composites."""
+    """Generate a mechanistic steady-state ASM2D-TSN dataset with input/output fractions and composites."""
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params()
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params()
     runtime = _validate_runtime_structure(params)
     configured_hyperparameters = params["hyperparameters"]
     sample_count = int(n_samples if n_samples is not None else configured_hyperparameters["n_samples"])
@@ -407,7 +407,7 @@ def generate_asm2d_tcn_dataset(
         else configured_hyperparameters.get("parallel_chunk_size", sample_count or 1)
     )
 
-    matrix_bundle = get_asm2d_tcn_matrices(params)
+    matrix_bundle = get_asm2d_tsn_matrices(params)
     state_columns = list(runtime["state_columns"])
     operational_columns = list(runtime["operational_columns"])
     measured_output_columns = list(runtime["measured_output_columns"])
@@ -437,13 +437,13 @@ def generate_asm2d_tcn_dataset(
         if worker_count == 1 or len(chunk_specs) == 1:
             progress_bar = tqdm(
                 total=sample_count,
-                desc=progress_description or "ASM2d-TCN simulation",
+                desc=progress_description or "ASM2D-TSN simulation",
                 unit="sample",
                 disable=not show_progress,
             )
             try:
                 chunk_results = [
-                    _generate_asm2d_tcn_dataset_chunk(progress_bar=progress_bar, **chunk_spec)
+                    _generate_asm2d_tsn_dataset_chunk(progress_bar=progress_bar, **chunk_spec)
                     for chunk_spec in chunk_specs
                 ]
             finally:
@@ -451,12 +451,12 @@ def generate_asm2d_tcn_dataset(
         else:
             with ProcessPoolExecutor(max_workers=worker_count) as executor:
                 future_map = {
-                    executor.submit(_generate_asm2d_tcn_dataset_chunk, **chunk_spec): int(chunk_spec["chunk_size"])
+                    executor.submit(_generate_asm2d_tsn_dataset_chunk, **chunk_spec): int(chunk_spec["chunk_size"])
                     for chunk_spec in chunk_specs
                 }
                 progress_bar = tqdm(
                     total=sample_count,
-                    desc=progress_description or "ASM2d-TCN simulation",
+                    desc=progress_description or "ASM2D-TSN simulation",
                     unit="sample",
                     disable=not show_progress,
                 )
@@ -486,7 +486,7 @@ def generate_asm2d_tcn_dataset(
     measured_df = pd.DataFrame(measured_outputs, columns=[f"Out_{name}" for name in measured_output_columns])
     dataset = pd.concat([operational_df, influent_df, influent_composite_df, effluent_df, measured_df], axis=1)
 
-    metadata = build_asm2d_tcn_metadata(
+    metadata = build_asm2d_tsn_metadata(
         params,
         sample_count=sample_count,
         random_seed=seed,
@@ -497,7 +497,7 @@ def generate_asm2d_tcn_dataset(
         solver_diagnostics = pd.DataFrame(solver_diagnostic_records).sort_values("sample_index").reset_index(drop=True)
         simulation_bundle["effluent_states"] = pd.DataFrame(effluent_states, columns=state_columns)
         simulation_bundle["solver_diagnostics"] = solver_diagnostics
-        simulation_bundle["solver_summary"] = _summarize_asm2d_tcn_solver_diagnostics(
+        simulation_bundle["solver_summary"] = _summarize_asm2d_tsn_solver_diagnostics(
             solver_diagnostics,
             float(runtime["solver"]["acceptance_residual_max"]),
         )
@@ -505,7 +505,7 @@ def generate_asm2d_tcn_dataset(
     return dataset, metadata, simulation_bundle
 
 
-def run_asm2d_tcn_simulation(
+def run_asm2d_tsn_simulation(
     *,
     save_artifacts: bool = True,
     repo_root: str | Path | None = None,
@@ -518,11 +518,11 @@ def run_asm2d_tcn_simulation(
     show_progress: bool = False,
     progress_description: str | None = None,
 ) -> dict[str, Any]:
-    """Run the ASM2d-TCN steady-state simulation and optionally persist artifacts."""
+    """Run the ASM2D-TSN steady-state simulation and optionally persist artifacts."""
 
-    params = load_asm2d_tcn_simulation_params(repo_root)
+    params = load_asm2d_tsn_simulation_params(repo_root)
     simulation_bundle: dict[str, Any]
-    dataset, metadata, simulation_bundle = generate_asm2d_tcn_dataset(
+    dataset, metadata, simulation_bundle = generate_asm2d_tsn_dataset(
         model_params=params,
         n_samples=n_samples,
         random_seed=random_seed,
@@ -568,7 +568,7 @@ def run_asm2d_tcn_simulation(
     }
 
 
-def sweep_asm2d_tcn_operating_space(
+def sweep_asm2d_tsn_operating_space(
     *,
     model_params: Mapping[str, Any] | None = None,
     n_samples: int = 512,
@@ -576,16 +576,16 @@ def sweep_asm2d_tcn_operating_space(
     show_progress: bool = False,
     progress_description: str | None = None,
 ) -> dict[str, Any]:
-    """Sample the configured operating space and summarize ASM2d-TCN solver behavior."""
+    """Sample the configured operating space and summarize ASM2D-TSN solver behavior."""
 
     if n_samples < 1:
         raise ValueError("n_samples must be at least 1.")
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tcn_simulation_params()
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params()
     runtime = _validate_runtime_structure(params)
     configured_hyperparameters = params["hyperparameters"]
     seed = int(random_seed if random_seed is not None else configured_hyperparameters["seed"])
-    matrix_bundle = get_asm2d_tcn_matrices(params)
+    matrix_bundle = get_asm2d_tsn_matrices(params)
     state_columns = list(runtime["state_columns"])
     operational_columns = list(runtime["operational_columns"])
     state_index = dict(matrix_bundle["state_index"])
@@ -598,7 +598,7 @@ def sweep_asm2d_tcn_operating_space(
 
     progress_bar = tqdm(
         total=n_samples,
-        desc=progress_description or "ASM2d-TCN sweep",
+        desc=progress_description or "ASM2D-TSN sweep",
         unit="sample",
         disable=not show_progress,
     )
@@ -607,7 +607,7 @@ def sweep_asm2d_tcn_operating_space(
             sampled_state = _sample_named_ranges(rng, 1, state_columns, runtime["influent_state_ranges"])[0]
             influent_state = _build_influent_state_sample(sampled_state, state_index, parameter_values)
             operating_point = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
-            effluent_state, diagnostics = simulate_asm2d_tcn_steady_state(
+            effluent_state, diagnostics = simulate_asm2d_tsn_steady_state(
                 influent_state=influent_state,
                 hrt_hours=float(operating_point[0]),
                 aeration=float(operating_point[1]),
@@ -629,7 +629,7 @@ def sweep_asm2d_tcn_operating_space(
         progress_bar.close()
 
     solver_diagnostics = pd.DataFrame(diagnostic_records).sort_values("sample_index").reset_index(drop=True)
-    summary = _summarize_asm2d_tcn_solver_diagnostics(
+    summary = _summarize_asm2d_tsn_solver_diagnostics(
         solver_diagnostics,
         float(runtime["solver"]["acceptance_residual_max"]),
     )
@@ -646,13 +646,13 @@ def sweep_asm2d_tcn_operating_space(
 
 def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]:
     if "workbook" not in model_params:
-        raise KeyError("asm2d_tcn_simulation must define a workbook section.")
+        raise KeyError("asm2d_tsn_simulation must define a workbook section.")
 
     workbook_config = dict(model_params["workbook"])
     expected_sheets = [STOICHIOMETRIC_SHEET_NAME, COMPOSITION_SHEET_NAME, PARAMETER_SHEET_NAME]
     configured_sheets = list(workbook_config["sheets"])
     if configured_sheets != expected_sheets:
-        raise ValueError("asm2d_tcn_simulation workbook sheets must match the required three-sheet contract.")
+        raise ValueError("asm2d_tsn_simulation workbook sheets must match the required three-sheet contract.")
 
     dissolved_state_columns = list(workbook_config["dissolved_state_columns"])
     particulate_state_columns = list(workbook_config["particulate_state_columns"])
@@ -668,19 +668,19 @@ def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]
     _validate_unique_names(composite_variables, "composite_variables")
 
     if state_columns != dissolved_state_columns + particulate_state_columns:
-        raise ValueError("asm2d_tcn_simulation state_columns must concatenate dissolved and particulate state columns.")
+        raise ValueError("asm2d_tsn_simulation state_columns must concatenate dissolved and particulate state columns.")
 
     missing_state_units = [state_name for state_name in state_columns if state_name not in state_units]
     if missing_state_units:
         missing_display = ", ".join(missing_state_units)
-        raise KeyError(f"asm2d_tcn_simulation missing state units for: {missing_display}")
+        raise KeyError(f"asm2d_tsn_simulation missing state units for: {missing_display}")
 
     if len(processes) != len(STOICHIOMETRIC_COEFFICIENTS):
-        raise ValueError("asm2d_tcn_simulation workbook process count does not match the stoichiometric matrix definition.")
+        raise ValueError("asm2d_tsn_simulation workbook process count does not match the stoichiometric matrix definition.")
 
     process_indices = [int(process["index"]) for process in processes]
     if process_indices != list(range(1, len(processes) + 1)):
-        raise ValueError("asm2d_tcn_simulation workbook processes must be sequentially indexed from 1.")
+        raise ValueError("asm2d_tsn_simulation workbook processes must be sequentially indexed from 1.")
 
     parameter_names = [str(parameter_row["excel_name"]) for parameter_row in parameter_rows]
     _validate_unique_names(parameter_names, "parameter excel_name")
@@ -688,7 +688,7 @@ def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]
     for parameter_row in parameter_rows:
         for required_key in ("category", "symbol", "excel_name", "description", "value", "unit"):
             if required_key not in parameter_row:
-                raise KeyError(f"asm2d_tcn_simulation parameter row missing '{required_key}'.")
+                raise KeyError(f"asm2d_tsn_simulation parameter row missing '{required_key}'.")
         float(parameter_row["value"])
 
     return workbook_config
@@ -712,22 +712,22 @@ def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, An
 
     if measured_output_columns != composite_variables:
         raise ValueError(
-            "asm2d_tcn_simulation measured_output_columns must match workbook composite_variables for the "
+            "asm2d_tsn_simulation measured_output_columns must match workbook composite_variables for the "
             "measured-output composition contract."
         )
 
     if len(process_types) != len(process_names):
-        raise ValueError("asm2d_tcn_simulation process_types must align with the configured process list.")
+        raise ValueError("asm2d_tsn_simulation process_types must align with the configured process list.")
 
     missing_state_ranges = [state_name for state_name in state_columns if state_name not in influent_state_ranges]
     if missing_state_ranges:
         missing_display = ", ".join(missing_state_ranges)
-        raise KeyError(f"asm2d_tcn_simulation missing influent_state_ranges for: {missing_display}")
+        raise KeyError(f"asm2d_tsn_simulation missing influent_state_ranges for: {missing_display}")
 
     missing_operational_ranges = [name for name in operational_columns if name not in operational_ranges]
     if missing_operational_ranges:
         missing_display = ", ".join(missing_operational_ranges)
-        raise KeyError(f"asm2d_tcn_simulation missing operational_ranges for: {missing_display}")
+        raise KeyError(f"asm2d_tsn_simulation missing operational_ranges for: {missing_display}")
 
     return {
         "workbook_config": workbook_config,
@@ -744,7 +744,7 @@ def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, An
 
 def _validate_solver_config(model_params: Mapping[str, Any]) -> dict[str, Any]:
     if "solver" not in model_params:
-        raise KeyError("asm2d_tcn_simulation must define a solver section.")
+        raise KeyError("asm2d_tsn_simulation must define a solver section.")
 
     solver = dict(model_params["solver"])
     required_keys = (
@@ -778,27 +778,27 @@ def _validate_solver_config(model_params: Mapping[str, Any]) -> dict[str, Any]:
 
     for key in required_keys:
         if key not in solver:
-            raise KeyError(f"asm2d_tcn_simulation solver missing '{key}'.")
+            raise KeyError(f"asm2d_tsn_simulation solver missing '{key}'.")
         float(solver[key])
 
     lower_bound = float(solver["lower_bound"])
     upper_bound = float(solver["upper_bound"])
     initial_guess_floor = float(solver["initial_guess_floor"])
     if lower_bound < 0.0:
-        raise ValueError("asm2d_tcn_simulation solver lower_bound must be non-negative.")
+        raise ValueError("asm2d_tsn_simulation solver lower_bound must be non-negative.")
     if upper_bound <= lower_bound:
-        raise ValueError("asm2d_tcn_simulation solver upper_bound must exceed lower_bound.")
+        raise ValueError("asm2d_tsn_simulation solver upper_bound must exceed lower_bound.")
     if not (lower_bound <= initial_guess_floor <= upper_bound):
         raise ValueError(
-            "asm2d_tcn_simulation solver initial_guess_floor must lie between lower_bound and upper_bound."
+            "asm2d_tsn_simulation solver initial_guess_floor must lie between lower_bound and upper_bound."
         )
 
     previous_weight = float(solver["warm_start_previous_weight"])
     influent_weight = float(solver["warm_start_influent_weight"])
     if previous_weight < 0.0 or influent_weight < 0.0:
-        raise ValueError("asm2d_tcn_simulation warm-start weights must be non-negative.")
+        raise ValueError("asm2d_tsn_simulation warm-start weights must be non-negative.")
     if previous_weight + influent_weight <= 0.0:
-        raise ValueError("asm2d_tcn_simulation warm-start weights must sum to a positive value.")
+        raise ValueError("asm2d_tsn_simulation warm-start weights must sum to a positive value.")
 
     return solver
 
@@ -810,7 +810,7 @@ def _validate_unique_names(names: list[str], name_type: str) -> None:
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
         duplicate_display = ", ".join(duplicates)
-        raise ValueError(f"asm2d_tcn_simulation {name_type} contains duplicates: {duplicate_display}")
+        raise ValueError(f"asm2d_tsn_simulation {name_type} contains duplicates: {duplicate_display}")
 
 
 def _build_parameter_reference_map(parameter_rows: list[Mapping[str, Any]]) -> dict[str, str]:
@@ -1182,7 +1182,7 @@ def _steady_state_residuals(
     return residual
 
 
-def simulate_asm2d_tcn_steady_state(
+def simulate_asm2d_tsn_steady_state(
     *,
     influent_state: np.ndarray,
     hrt_hours: float,
@@ -1192,9 +1192,9 @@ def simulate_asm2d_tcn_steady_state(
     previous_solution: np.ndarray | None = None,
     enforce_acceptance: bool = True,
 ) -> tuple[np.ndarray, dict[str, float | bool | int]]:
-    """Solve a single mechanistic steady-state ASM2d-TCN operating point."""
+    """Solve a single mechanistic steady-state ASM2D-TSN operating point."""
 
-    matrix_bundle = matrix_bundle if matrix_bundle is not None else get_asm2d_tcn_matrices(model_params)
+    matrix_bundle = matrix_bundle if matrix_bundle is not None else get_asm2d_tsn_matrices(model_params)
     runtime = _validate_runtime_structure(model_params)
     parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
     state_columns = list(runtime["state_columns"])
@@ -1294,7 +1294,7 @@ def simulate_asm2d_tcn_steady_state(
 
     if enforce_acceptance and (not accepted):
         raise RuntimeError(
-            "asm2d_tcn_simulation steady-state solve failed: "
+            "asm2d_tsn_simulation steady-state solve failed: "
             f"success={result.success}, status={result.status}, residual_max={diagnostics['residual_max']:.3e}"
         )
 
@@ -1305,7 +1305,7 @@ def _compute_measured_output_values(state: np.ndarray, matrix_bundle: Mapping[st
     return np.asarray(matrix_bundle["composition_matrix"], dtype=float) @ state
 
 
-def _generate_asm2d_tcn_dataset_chunk(
+def _generate_asm2d_tsn_dataset_chunk(
     *,
     chunk_start: int,
     chunk_size: int,
@@ -1340,7 +1340,7 @@ def _generate_asm2d_tcn_dataset_chunk(
             candidate_operational = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
 
             try:
-                effluent_state, diagnostics = simulate_asm2d_tcn_steady_state(
+                effluent_state, diagnostics = simulate_asm2d_tsn_steady_state(
                     influent_state=candidate_influent,
                     hrt_hours=float(candidate_operational[0]),
                     aeration=float(candidate_operational[1]),
@@ -1354,12 +1354,12 @@ def _generate_asm2d_tcn_dataset_chunk(
 
             if not diagnostics["accepted"]:
                 last_error = RuntimeError(
-                    "asm2d_tcn_simulation steady-state solve did not satisfy the configured acceptance threshold."
+                    "asm2d_tsn_simulation steady-state solve did not satisfy the configured acceptance threshold."
                 )
                 continue
 
             if not np.all(np.isfinite(effluent_state)):
-                last_error = RuntimeError("asm2d_tcn_simulation produced non-finite effluent states.")
+                last_error = RuntimeError("asm2d_tsn_simulation produced non-finite effluent states.")
                 continue
 
             previous_solution = effluent_state
@@ -1379,14 +1379,14 @@ def _generate_asm2d_tcn_dataset_chunk(
             break
         else:
             raise RuntimeError(
-                "asm2d_tcn_simulation failed to generate a valid sample after "
+                "asm2d_tsn_simulation failed to generate a valid sample after "
                 f"{max_sample_attempts} attempts at sample index {chunk_start + local_index}."
             ) from last_error
 
     return chunk_start, influent_states, operational, effluent_states, measured_outputs, solver_diagnostics
 
 
-def _summarize_asm2d_tcn_solver_diagnostics(
+def _summarize_asm2d_tsn_solver_diagnostics(
     solver_diagnostics: pd.DataFrame,
     acceptance_threshold: float,
 ) -> dict[str, Any]:
@@ -1639,15 +1639,15 @@ def _auto_size_columns(worksheet) -> None:
 
 
 __all__ = [
-    "build_asm2d_tcn_workbook",
-    "build_asm2d_tcn_metadata",
-    "create_asm2d_tcn_workbook",
-    "generate_asm2d_tcn_dataset",
-    "get_asm2d_tcn_matrices",
-    "load_asm2d_tcn_simulation_params",
-    "resolve_asm2d_tcn_simulation_artifact_paths",
-    "resolve_asm2d_tcn_workbook_path",
-    "run_asm2d_tcn_simulation",
-    "simulate_asm2d_tcn_steady_state",
-    "sweep_asm2d_tcn_operating_space",
+    "build_asm2d_tsn_workbook",
+    "build_asm2d_tsn_metadata",
+    "create_asm2d_tsn_workbook",
+    "generate_asm2d_tsn_dataset",
+    "get_asm2d_tsn_matrices",
+    "load_asm2d_tsn_simulation_params",
+    "resolve_asm2d_tsn_simulation_artifact_paths",
+    "resolve_asm2d_tsn_workbook_path",
+    "run_asm2d_tsn_simulation",
+    "simulate_asm2d_tsn_steady_state",
+    "sweep_asm2d_tsn_operating_space",
 ]

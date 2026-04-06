@@ -20,9 +20,10 @@
   "ml_model_bundle_pattern": "results/{model_name}/model_{date_time}.pkl",
   "ml_metrics_pattern": "results/{model_name}/metrics_{date_time}.json",
   "ml_optuna_pattern": "results/{model_name}/optuna_{date_time}.json",
-  "asm2d_tcn_reference_workbook": "data/asm2d-tcn/asm2d_tcn_workbook.xlsx",
-  "asm2d_tcn_simulation_data_pattern": "data/asm2d-tcn/simulation/data_{date_time}.csv",
-  "asm2d_tcn_simulation_metadata_pattern": "data/asm2d-tcn/simulation/metadata_{date_time}.json",
+  "asm2d_tsn_reference_workbook": "data/asm2d-tsn/asm2d_tsn_workbook.xlsx",
+  "asm2d_tsn_simulation_data_pattern": "data/asm2d-tsn/simulation/data_{date_time}.csv",
+  "asm2d_tsn_simulation_metadata_pattern": "data/asm2d-tsn/simulation/metadata_{date_time}.json",
   "simulation_data_pattern": "data/{simulation_name}/data_{date_time}.csv",
   "simulation_metadata_pattern": "data/{simulation_name}/metadata_{date_time}.json"
 }
+

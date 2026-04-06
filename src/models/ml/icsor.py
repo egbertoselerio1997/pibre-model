@@ -1,4 +1,4 @@
-"""COBRE (Constrained Bilinear Regression) solved in fractional space with a collapsed measured-output objective."""
+"""icsor (Constrained Bilinear Regression) solved in fractional space with a collapsed measured-output objective."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from src.utils.process import (
     DatasetSplit,
     ScalingBundle,
     TrainTestDatasetSplits,
-    build_cobre_supervised_dataset,
+    build_icsor_supervised_dataset,
     build_projection_operator,
     fit_scalers,
     project_to_nonnegative_feasible_set,
@@ -22,9 +22,9 @@ from src.utils.process import (
 )
 from src.utils.simulation import load_model_params
 from src.utils.test import (
-    build_cobre_projection_stage_frame,
-    build_cobre_projection_stage_summary,
-    evaluate_cobre_prediction_bundle,
+    build_icsor_projection_stage_frame,
+    build_icsor_projection_stage_summary,
+    evaluate_icsor_prediction_bundle,
 )
 from src.utils.train import (
     load_model_bundle,
@@ -36,7 +36,7 @@ from src.utils.train import (
 )
 
 
-MODEL_NAME = "cobre"
+MODEL_NAME = "icsor"
 VALID_OLS_BACKENDS = {"numpy_lstsq"}
 DEFAULT_CONFIDENCE_LEVEL = 0.95
 DEFAULT_UNCERTAINTY_METHOD = "auto"
@@ -62,8 +62,8 @@ AFFINE_CORE_PREDICTION_UNCERTAINTY_NOTE = (
 )
 
 
-def load_cobre_params(repo_root: str | Path | None = None) -> dict[str, Any]:
-    """Load the configured parameters for the COBRE model."""
+def load_icsor_params(repo_root: str | Path | None = None) -> dict[str, Any]:
+    """Load the configured parameters for the icsor model."""
 
     return load_model_params(MODEL_NAME, repo_root)
 
@@ -75,7 +75,7 @@ def _resolve_training_options(
 ) -> dict[str, Any]:
     options = dict(training_options or {})
     options.setdefault("show_progress", True)
-    options.setdefault("progress_description", "Training COBRE")
+    options.setdefault("progress_description", "Training icsor")
     options.setdefault("objective_name", objective_name)
     return options
 
@@ -84,15 +84,15 @@ def _resolve_ols_backend(model_hyperparameters: Mapping[str, Any]) -> str:
     backend_name = str(model_hyperparameters.get("ols_backend", "numpy_lstsq")).strip().lower()
     if backend_name not in VALID_OLS_BACKENDS:
         valid_values = ", ".join(sorted(VALID_OLS_BACKENDS))
-        raise ValueError(f"COBRE requires ols_backend to be one of: {valid_values}.")
+        raise ValueError(f"icsor requires ols_backend to be one of: {valid_values}.")
     return backend_name
 
 
 def _validate_scaling_configuration(hyperparameters: Mapping[str, Any]) -> None:
     if bool(hyperparameters.get("scale_features", False)):
-        raise ValueError("COBRE requires scale_features=False so fractional influent states remain physical.")
+        raise ValueError("icsor requires scale_features=False so fractional influent states remain physical.")
     if bool(hyperparameters.get("scale_targets", False)):
-        raise ValueError("COBRE requires scale_targets=False because the collapsed OLS target lives in measured-output space.")
+        raise ValueError("icsor requires scale_targets=False because the collapsed OLS target lives in measured-output space.")
 
 
 def _validate_composition_shape(
@@ -105,7 +105,7 @@ def _validate_composition_shape(
     expected_shape = (len(target_columns), len(constraint_columns))
     if composition_array.shape != expected_shape:
         raise ValueError(
-            "COBRE requires composition_matrix shape to match target_columns x constraint_columns."
+            "icsor requires composition_matrix shape to match target_columns x constraint_columns."
         )
     return composition_array
 
@@ -113,21 +113,21 @@ def _validate_composition_shape(
 def _resolve_confidence_level(model_hyperparameters: Mapping[str, Any]) -> float:
     confidence_level = float(model_hyperparameters.get("confidence_level", DEFAULT_CONFIDENCE_LEVEL))
     if not 0.0 < confidence_level < 1.0:
-        raise ValueError("COBRE confidence_level must be between 0 and 1.")
+        raise ValueError("icsor confidence_level must be between 0 and 1.")
     return confidence_level
 
 
 def _resolve_uncertainty_method(model_hyperparameters: Mapping[str, Any]) -> str:
     method_name = str(model_hyperparameters.get("uncertainty_method", DEFAULT_UNCERTAINTY_METHOD)).strip().lower()
     if method_name not in {"auto", "analytic", "bootstrap"}:
-        raise ValueError("COBRE uncertainty_method must be one of: analytic, auto, bootstrap.")
+        raise ValueError("icsor uncertainty_method must be one of: analytic, auto, bootstrap.")
     return method_name
 
 
 def _resolve_bootstrap_samples(model_hyperparameters: Mapping[str, Any]) -> int:
     bootstrap_samples = int(model_hyperparameters.get("bootstrap_samples", DEFAULT_BOOTSTRAP_SAMPLES))
     if bootstrap_samples < 2:
-        raise ValueError("COBRE bootstrap_samples must be at least 2.")
+        raise ValueError("icsor bootstrap_samples must be at least 2.")
     return bootstrap_samples
 
 
@@ -139,7 +139,7 @@ def _resolve_projection_settings(model_hyperparameters: Mapping[str, Any]) -> di
     solver_name = str(model_hyperparameters.get("projection_solver", DEFAULT_PROJECTION_SOLVER)).strip().lower()
     if solver_name not in VALID_PROJECTION_SOLVERS:
         valid_values = ", ".join(sorted(VALID_PROJECTION_SOLVERS))
-        raise ValueError(f"COBRE projection_solver must be one of: {valid_values}.")
+        raise ValueError(f"icsor projection_solver must be one of: {valid_values}.")
 
     settings = {
         "projection_solver": solver_name,
@@ -157,13 +157,13 @@ def _resolve_projection_settings(model_hyperparameters: Mapping[str, Any]) -> di
         "osqp_warm_start": bool(model_hyperparameters.get("osqp_warm_start", DEFAULT_OSQP_WARM_START)),
     }
     if settings["constraint_tolerance"] <= 0.0:
-        raise ValueError("COBRE constraint_tolerance must be positive.")
+        raise ValueError("icsor constraint_tolerance must be positive.")
     if settings["nonnegativity_tolerance"] <= 0.0:
-        raise ValueError("COBRE nonnegativity_tolerance must be positive.")
+        raise ValueError("icsor nonnegativity_tolerance must be positive.")
     if settings["osqp_eps_abs"] <= 0.0 or settings["osqp_eps_rel"] <= 0.0:
-        raise ValueError("COBRE OSQP tolerances must be positive.")
+        raise ValueError("icsor OSQP tolerances must be positive.")
     if settings["osqp_max_iter"] < 1:
-        raise ValueError("COBRE osqp_max_iter must be at least 1.")
+        raise ValueError("icsor osqp_max_iter must be at least 1.")
     return settings
 
 
@@ -204,10 +204,10 @@ def _resolve_feature_partition(
     expected_influent_columns = [f"In_{column_name}" for column_name in constraint_columns]
 
     if not operational_columns:
-        raise ValueError("COBRE requires at least one operational feature column.")
+        raise ValueError("icsor requires at least one operational feature column.")
     if influent_columns != expected_influent_columns:
         raise ValueError(
-            "COBRE requires influent fractional feature columns to match constraint_reference columns in order."
+            "icsor requires influent fractional feature columns to match constraint_reference columns in order."
         )
 
     return operational_columns, influent_columns
@@ -228,13 +228,13 @@ def _build_outer_product_block(
     return block_values, block_columns
 
 
-def build_cobre_design_frame(
+def build_icsor_design_frame(
     feature_frame: pd.DataFrame,
     constraint_columns: list[str],
     *,
     include_bias_term: bool,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Build the partitioned second-order COBRE design matrix over operational and fractional influent inputs."""
+    """Build the partitioned second-order icsor design matrix over operational and fractional influent inputs."""
 
     feature_column_list = list(feature_frame.columns)
     operational_columns, influent_columns = _resolve_feature_partition(feature_column_list, constraint_columns)
@@ -453,7 +453,7 @@ def _estimate_output_covariance(
 ) -> np.ndarray:
     residual_array = np.asarray(fit_residual_matrix, dtype=float)
     if degrees_of_freedom <= 0:
-        raise ValueError("COBRE residual degrees of freedom must be positive to estimate analytic covariance.")
+        raise ValueError("icsor residual degrees of freedom must be positive to estimate analytic covariance.")
     return residual_array.T @ residual_array / float(degrees_of_freedom)
 
 
@@ -853,7 +853,7 @@ def _predict_from_bundle(
     transformed_features = transform_feature_frame(feature_frame, scaling_bundle)
     constraint_columns = list(model_bundle["constraint_columns"])
     selected_constraint_reference = constraint_reference.loc[:, constraint_columns].copy()
-    design_frame, _ = build_cobre_design_frame(
+    design_frame, _ = build_icsor_design_frame(
         transformed_features,
         constraint_columns,
         include_bias_term=bool(model_bundle["design_schema"]["include_bias_term"]),
@@ -903,7 +903,7 @@ def _predict_from_bundle(
     return prediction_result
 
 
-def train_cobre_model(
+def train_icsor_model(
     training_dataset: Mapping[str, pd.DataFrame | np.ndarray],
     model_hyperparameters: Mapping[str, Any],
     *,
@@ -911,7 +911,7 @@ def train_cobre_model(
     composition_matrix: np.ndarray,
     training_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fit the strict COBRE estimator on notebook-prepared fractional features and measured targets."""
+    """Fit the strict icsor estimator on notebook-prepared fractional features and measured targets."""
 
     _validate_scaling_configuration(model_hyperparameters)
     confidence_level = _resolve_confidence_level(model_hyperparameters)
@@ -932,7 +932,7 @@ def train_cobre_model(
     collapse_operator = composition_array @ projection_complement
     pass_through_operator = composition_array @ projection_matrix
 
-    design_frame, design_schema = build_cobre_design_frame(
+    design_frame, design_schema = build_icsor_design_frame(
         feature_frame,
         list(constraint_frame.columns),
         include_bias_term=bool(model_hyperparameters.get("include_bias_term", True)),
@@ -1103,14 +1103,14 @@ def train_cobre_model(
     }
 
 
-def predict_cobre_model(
+def predict_icsor_model(
     test_dataset: pd.DataFrame | Mapping[str, pd.DataFrame | np.ndarray],
     model_path: str | Path,
     *,
     metadata: Mapping[str, Any] | None = None,
     composition_matrix: np.ndarray | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Load a persisted COBRE bundle and generate aligned measured and fractional predictions."""
+    """Load a persisted icsor bundle and generate aligned measured and fractional predictions."""
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
@@ -1118,13 +1118,13 @@ def predict_cobre_model(
     if isinstance(test_dataset, pd.DataFrame):
         if metadata is None or composition_matrix is None:
             raise ValueError("metadata and composition_matrix are required when predicting from a raw dataset.")
-        cobre_dataset = build_cobre_supervised_dataset(
+        icsor_dataset = build_icsor_supervised_dataset(
             test_dataset,
             dict(metadata),
             np.asarray(composition_matrix, dtype=float),
         )
-        feature_frame = cobre_dataset.features
-        constraint_reference = cobre_dataset.constraint_reference
+        feature_frame = icsor_dataset.features
+        constraint_reference = icsor_dataset.constraint_reference
     else:
         feature_frame = pd.DataFrame(test_dataset["features"], columns=scaling_bundle.feature_columns)
         constraint_reference = pd.DataFrame(
@@ -1171,11 +1171,11 @@ def predict_cobre_model(
             columns=model_bundle["constraint_columns"],
         ),
         "constraint_reference": prediction_payload["constraint_reference"],
-        "projection_stage_diagnostics": build_cobre_projection_stage_frame(
+        "projection_stage_diagnostics": build_icsor_projection_stage_frame(
             prediction_payload["projection_details"],
             index=feature_frame.index,
         ),
-        "projection_stage_summary": build_cobre_projection_stage_summary(prediction_payload["projection_details"]),
+        "projection_stage_summary": build_icsor_projection_stage_summary(prediction_payload["projection_details"]),
     }
 
     prediction_uncertainty = prediction_payload.get("prediction_uncertainty")
@@ -1220,7 +1220,7 @@ def predict_cobre_model(
     return result
 
 
-def run_cobre_pipeline(
+def run_icsor_pipeline(
     training_split: DatasetSplit,
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
@@ -1234,9 +1234,9 @@ def run_cobre_pipeline(
     persist_artifacts: bool = True,
     timestamp: str | None = None,
 ) -> dict[str, Any]:
-    """Train, evaluate, and optionally persist one strict-theory COBRE bundle."""
+    """Train, evaluate, and optionally persist one strict-theory icsor bundle."""
 
-    params = dict(model_params) if model_params is not None else load_cobre_params(repo_root)
+    params = dict(model_params) if model_params is not None else load_icsor_params(repo_root)
     split_params = dict(params["hyperparameters"])
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
     _validate_scaling_configuration({**split_params, **selected_hyperparameters})
@@ -1244,7 +1244,7 @@ def run_cobre_pipeline(
 
     progress_bar = create_progress_bar(
         total=5,
-        desc="Training COBRE",
+        desc="Training icsor",
         enabled=show_progress,
         unit="stage",
     )
@@ -1261,7 +1261,7 @@ def run_cobre_pipeline(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="fit", objective=objective_label)
-        training_result = train_cobre_model(
+        training_result = train_icsor_model(
             {
                 "features": scaled_training_split.features,
                 "targets": scaled_training_split.targets,
@@ -1272,7 +1272,7 @@ def run_cobre_pipeline(
             composition_matrix=np.asarray(composition_matrix, dtype=float),
             training_options={
                 "show_progress": False,
-                "progress_description": "Training COBRE",
+                "progress_description": "Training icsor",
                 "objective_name": objective_label,
             },
         )
@@ -1309,7 +1309,7 @@ def run_cobre_pipeline(
             model_bundle,
             scaling_bundle=scaling_bundle,
         )
-        train_report = evaluate_cobre_prediction_bundle(
+        train_report = evaluate_icsor_prediction_bundle(
             training_split.targets.to_numpy(dtype=float),
             train_prediction_payload["raw_fractional_predictions"],
             train_prediction_payload["affine_fractional_predictions"],
@@ -1323,7 +1323,7 @@ def run_cobre_pipeline(
             prediction_uncertainty=train_prediction_payload.get("prediction_uncertainty"),
             projection_details=train_prediction_payload.get("projection_details"),
         )
-        test_report = evaluate_cobre_prediction_bundle(
+        test_report = evaluate_icsor_prediction_bundle(
             test_split.targets.to_numpy(dtype=float),
             test_prediction_payload["raw_fractional_predictions"],
             test_prediction_payload["affine_fractional_predictions"],
@@ -1385,9 +1385,10 @@ def run_cobre_pipeline(
 
 __all__ = [
     "MODEL_NAME",
-    "build_cobre_design_frame",
-    "load_cobre_params",
-    "predict_cobre_model",
-    "run_cobre_pipeline",
-    "train_cobre_model",
+    "build_icsor_design_frame",
+    "load_icsor_params",
+    "predict_icsor_model",
+    "run_icsor_pipeline",
+    "train_icsor_model",
 ]
+

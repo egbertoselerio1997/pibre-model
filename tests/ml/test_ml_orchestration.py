@@ -10,10 +10,10 @@ import numpy as np
 from scipy.linalg import null_space
 
 from src.models.ml.adaboost_regressor import build_adaboost_regressor_model, load_adaboost_regressor_params
-from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
+from src.models.simulation.asm2d_tsn_simulation import generate_asm2d_tsn_dataset
 from src.utils.process import (
     apply_train_test_split_indices,
-    build_cobre_supervised_dataset,
+    build_icsor_supervised_dataset,
     build_fractional_input_measured_output_dataset,
     make_train_test_split,
     make_train_test_split_indices,
@@ -53,7 +53,7 @@ def _build_tiny_adaboost_params() -> dict[str, object]:
 class MlOrchestrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=23)
+        dataset, metadata, matrix_bundle = generate_asm2d_tsn_dataset(n_samples=12, random_seed=23)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]
@@ -64,7 +64,7 @@ class MlOrchestrationTests(unittest.TestCase):
             metadata,
             cls.composition_matrix,
         )
-        cls.cobre_dataset = build_cobre_supervised_dataset(dataset, metadata, cls.composition_matrix)
+        cls.icsor_dataset = build_icsor_supervised_dataset(dataset, metadata, cls.composition_matrix)
 
     def test_expanded_simulation_schema_is_excluded_from_ml_features_and_targets(self) -> None:
         state_columns = list(self.metadata["state_columns"])
@@ -83,15 +83,15 @@ class MlOrchestrationTests(unittest.TestCase):
         self.assertNotIn("Out_S_A", self.classical_benchmark_dataset.features.columns)
         self.assertNotIn("Out_S_A", self.classical_benchmark_dataset.targets.columns)
 
-    def test_shared_split_indices_align_classical_benchmark_with_cobre(self) -> None:
+    def test_shared_split_indices_align_classical_benchmark_with_icsor(self) -> None:
         split_indices = make_train_test_split_indices(self.dataset.index, test_fraction=0.2, random_seed=17)
         classical_splits = apply_train_test_split_indices(self.classical_benchmark_dataset, split_indices)
-        cobre_splits = apply_train_test_split_indices(self.cobre_dataset, split_indices)
+        icsor_splits = apply_train_test_split_indices(self.icsor_dataset, split_indices)
 
-        self.assertTrue(classical_splits.train.features.index.equals(cobre_splits.train.features.index))
-        self.assertTrue(classical_splits.test.features.index.equals(cobre_splits.test.features.index))
-        self.assertTrue(classical_splits.train.features.columns.equals(cobre_splits.train.features.columns))
-        self.assertTrue(classical_splits.test.targets.columns.equals(cobre_splits.test.targets.columns))
+        self.assertTrue(classical_splits.train.features.index.equals(icsor_splits.train.features.index))
+        self.assertTrue(classical_splits.test.features.index.equals(icsor_splits.test.features.index))
+        self.assertTrue(classical_splits.train.features.columns.equals(icsor_splits.train.features.columns))
+        self.assertTrue(classical_splits.test.targets.columns.equals(icsor_splits.test.targets.columns))
 
     def test_optuna_subset_is_drawn_from_training_pool_only(self) -> None:
         main_splits = make_train_test_split(self.classical_benchmark_dataset, test_fraction=0.2, random_seed=17)
@@ -173,3 +173,4 @@ class MlOrchestrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

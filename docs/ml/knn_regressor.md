@@ -6,7 +6,7 @@ The knn_regressor module implements a measured-space surrogate based on sklearn.
 
 ## 2. Background and use case
 
-K-nearest neighbors regression is a non-parametric baseline that predicts one output vector from the local neighborhood of similar samples. It is useful in this repository because it tests whether the ASM2d-TCN mapping can be recovered from local geometric similarity alone, without fitting an explicit global parametric relationship.
+K-nearest neighbors regression is a non-parametric baseline that predicts one output vector from the local neighborhood of similar samples. It is useful in this repository because it tests whether the ASM2D-TSN mapping can be recovered from local geometric similarity alone, without fitting an explicit global parametric relationship.
 
 ## 3. Mathematical definition
 

@@ -293,7 +293,7 @@ class PlotHelperTests(unittest.TestCase):
 			train_predicted,
 			test_actual,
 			test_predicted,
-			title="COBRE projected parity plots",
+			title="icsor projected parity plots",
 			x_label="Actual value",
 			y_label="Projected prediction",
 		)
@@ -404,7 +404,7 @@ class PlotHelperTests(unittest.TestCase):
 				"Out_COD": hrt_mesh + 2.0 * aeration_mesh,
 				"Out_TN": hrt_mesh - aeration_mesh,
 			},
-			title="COBRE operational response surfaces",
+			title="icsor operational response surfaces",
 			x_label="HRT",
 			y_label="Aeration",
 			training_domain={
@@ -463,3 +463,4 @@ class PlotHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+

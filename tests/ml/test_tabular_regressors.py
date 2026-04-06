@@ -54,7 +54,7 @@ from src.models.ml.xgboost_regressor import (
     predict_xgboost_regressor_model,
     run_xgboost_regressor_pipeline,
 )
-from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
+from src.models.simulation.asm2d_tsn_simulation import generate_asm2d_tsn_dataset
 from src.utils.io import save_pickle_file
 from src.utils.metrics import summarize_mass_balance_residuals
 from src.utils.process import build_fractional_input_measured_output_dataset, has_active_projection, make_train_test_split
@@ -114,7 +114,7 @@ def _build_tiny_params(base_params: dict[str, object], *, iteration_key: str | N
 class TabularRegressorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=19)
+        dataset, metadata, matrix_bundle = generate_asm2d_tsn_dataset(n_samples=12, random_seed=19)
         cls.dataset = dataset
         cls.metadata = metadata
         cls.composition_matrix = matrix_bundle["composition_matrix"]

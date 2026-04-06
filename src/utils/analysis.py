@@ -31,7 +31,7 @@ DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS: tuple[PredictionFrameSpec, ...] = (
 	("projected", "projected_predictions", "Projected_"),
 )
 
-COBRE_NEGATIVE_PREDICTION_FAMILY_SPECS: dict[str, tuple[PredictionFrameSpec, ...]] = {
+icsor_NEGATIVE_PREDICTION_FAMILY_SPECS: dict[str, tuple[PredictionFrameSpec, ...]] = {
 	"composite": DEFAULT_NEGATIVE_PREDICTION_FRAME_SPECS,
 	"fractional": (
 		("raw", "raw_fractional_predictions", "RawFractional_"),
@@ -337,16 +337,16 @@ def load_latest_classical_training_context(
 	}
 
 
-def persist_cobre_training_context(
+def persist_icsor_training_context(
 	result: Mapping[str, Any],
 	dataset_splits: Mapping[str, DatasetSplit] | Any,
 	*,
 	repo_root: str | Path | None = None,
 	timestamp: str | None = None,
 ) -> dict[str, Any]:
-	"""Persist the latest COBRE training context needed by downstream notebook cells."""
+	"""Persist the latest icsor training context needed by downstream notebook cells."""
 
-	artifact_group = "training/cobre/context"
+	artifact_group = "training/icsor/context"
 	resolved_timestamp = make_simulation_timestamp(timestamp)
 	train_split = dataset_splits["train"] if isinstance(dataset_splits, Mapping) else dataset_splits.train
 	test_split = dataset_splits["test"] if isinstance(dataset_splits, Mapping) else dataset_splits.test
@@ -397,13 +397,13 @@ def persist_cobre_training_context(
 	}
 
 
-def load_latest_cobre_training_context(
+def load_latest_icsor_training_context(
 	*,
 	repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
-	"""Load the newest persisted COBRE training context for downstream notebook cells."""
+	"""Load the newest persisted icsor training context for downstream notebook cells."""
 
-	artifact_group = "training/cobre/context"
+	artifact_group = "training/icsor/context"
 	loaded_bundle = load_latest_named_table_artifacts(
 		artifact_group,
 		repo_root=repo_root,
@@ -604,7 +604,7 @@ def build_separated_negative_prediction_tables(
 	if not reports_by_split:
 		raise ValueError("reports_by_split must include at least one split report.")
 
-	resolved_family_specs = dict(family_specs or COBRE_NEGATIVE_PREDICTION_FAMILY_SPECS)
+	resolved_family_specs = dict(family_specs or icsor_NEGATIVE_PREDICTION_FAMILY_SPECS)
 	separated_tables: dict[str, dict[str, dict[str, pd.DataFrame]]] = {}
 
 	for family_name, frame_specs in resolved_family_specs.items():
@@ -678,7 +678,7 @@ _DEFAULT_ANALYSIS_SETTINGS = {
 	"random_seed": 42,
 }
 
-_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS = {
+_DEFAULT_icsor_RESPONSE_SURFACE_SETTINGS = {
 	"grid_points_per_axis": 49,
 	"contour_levels": 18,
 	"operational_extension_fraction": 0.5,
@@ -727,36 +727,36 @@ def load_analysis_defaults(repo_root: str | Path | None = None) -> dict[str, int
 	}
 
 
-def load_cobre_response_surface_defaults(repo_root: str | Path | None = None) -> dict[str, int | float | str]:
-	"""Load configurable defaults for the COBRE operational response-surface study."""
+def load_icsor_response_surface_defaults(repo_root: str | Path | None = None) -> dict[str, int | float | str]:
+	"""Load configurable defaults for the icsor operational response-surface study."""
 
 	orchestration_params = load_ml_orchestration_params(repo_root)
 	analysis_params = dict(orchestration_params.get("analysis", {}))
-	response_surface_params = dict(analysis_params.get("cobre_response_surface", {}))
+	response_surface_params = dict(analysis_params.get("icsor_response_surface", {}))
 
 	return {
 		"grid_points_per_axis": int(
 			response_surface_params.get(
 				"grid_points_per_axis",
-				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["grid_points_per_axis"],
+				_DEFAULT_icsor_RESPONSE_SURFACE_SETTINGS["grid_points_per_axis"],
 			)
 		),
 		"contour_levels": int(
 			response_surface_params.get(
 				"contour_levels",
-				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["contour_levels"],
+				_DEFAULT_icsor_RESPONSE_SURFACE_SETTINGS["contour_levels"],
 			)
 		),
 		"operational_extension_fraction": float(
 			response_surface_params.get(
 				"operational_extension_fraction",
-				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["operational_extension_fraction"],
+				_DEFAULT_icsor_RESPONSE_SURFACE_SETTINGS["operational_extension_fraction"],
 			)
 		),
 		"fixed_influent_profile": str(
 			response_surface_params.get(
 				"fixed_influent_profile",
-				_DEFAULT_COBRE_RESPONSE_SURFACE_SETTINGS["fixed_influent_profile"],
+				_DEFAULT_icsor_RESPONSE_SURFACE_SETTINGS["fixed_influent_profile"],
 			)
 		),
 	}
@@ -768,7 +768,7 @@ def _resolve_response_surface_metadata(
 	repo_root: str | Path | None = None,
 ) -> dict[str, list[str]]:
 	params = load_params_config(repo_root)
-	simulation_params = dict(params["asm2d_tcn_simulation"])
+	simulation_params = dict(params["asm2d_tsn_simulation"])
 	workbook_params = dict(simulation_params.get("workbook", {}))
 	resolved_metadata = dict(metadata or {})
 
@@ -786,11 +786,11 @@ def _resolve_response_surface_metadata(
 	)
 
 	if "HRT" not in operational_columns or "Aeration" not in operational_columns:
-		raise ValueError("The COBRE response surface requires HRT and Aeration operational columns.")
+		raise ValueError("The icsor response surface requires HRT and Aeration operational columns.")
 	if not state_columns:
-		raise ValueError("At least one influent state column is required to build a COBRE response surface.")
+		raise ValueError("At least one influent state column is required to build a icsor response surface.")
 	if not measured_output_columns:
-		raise ValueError("At least one measured output column is required to build a COBRE response surface.")
+		raise ValueError("At least one measured output column is required to build a icsor response surface.")
 
 	return {
 		"operational_columns": operational_columns,
@@ -805,7 +805,7 @@ def _build_midpoint_influent_profile(
 	repo_root: str | Path | None = None,
 ) -> dict[str, float]:
 	params = load_params_config(repo_root)
-	influent_ranges = dict(params["asm2d_tcn_simulation"]["influent_state_ranges"])
+	influent_ranges = dict(params["asm2d_tsn_simulation"]["influent_state_ranges"])
 	profile: dict[str, float] = {}
 
 	for state_column in state_columns:
@@ -849,7 +849,7 @@ def _resolve_operational_domain(
 		raise ValueError("operational_extension_fraction must be greater than or equal to 0.")
 
 	params = load_params_config(repo_root)
-	operational_ranges = dict(params["asm2d_tcn_simulation"]["operational_ranges"])
+	operational_ranges = dict(params["asm2d_tsn_simulation"]["operational_ranges"])
 	training_domain: dict[str, dict[str, float]] = {}
 	extended_domain: dict[str, dict[str, float]] = {}
 
@@ -870,7 +870,7 @@ def _resolve_operational_domain(
 	return training_domain, extended_domain
 
 
-def build_cobre_response_surface_prediction_data(
+def build_icsor_response_surface_prediction_data(
 	model_path: str | Path,
 	*,
 	metadata: Mapping[str, Any] | None = None,
@@ -879,11 +879,11 @@ def build_cobre_response_surface_prediction_data(
 	operational_extension_fraction: float | None = None,
 	fixed_influent_profile: str | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-	"""Build a COBRE prediction grid over HRT and Aeration with a fixed influent profile."""
+	"""Build a icsor prediction grid over HRT and Aeration with a fixed influent profile."""
 
-	from src.models.ml import predict_cobre_model
+	from src.models.ml import predict_icsor_model
 
-	defaults = load_cobre_response_surface_defaults(repo_root)
+	defaults = load_icsor_response_surface_defaults(repo_root)
 	selected_grid_points = int(
 		grid_points_per_axis
 		if grid_points_per_axis is not None
@@ -950,7 +950,7 @@ def build_cobre_response_surface_prediction_data(
 		}
 	)
 
-	prediction_result = predict_cobre_model(
+	prediction_result = predict_icsor_model(
 		{
 			"features": feature_frame,
 			"constraint_reference": constraint_reference,
@@ -2046,7 +2046,7 @@ __all__ = [
 	"build_effective_aggregate_metrics",
 	"build_train_test_gap_summary",
 	"ModelRunner",
-	"build_cobre_response_surface_prediction_data",
+	"build_icsor_response_surface_prediction_data",
 	"build_dataset_size_schedule",
 	"collate_model_analysis_results",
 	"describe_and_display_table",
@@ -2054,13 +2054,13 @@ __all__ = [
 	"is_higher_better_metric",
 	"load_latest_analysis_result",
 	"load_latest_classical_training_context",
-	"load_latest_cobre_training_context",
+	"load_latest_icsor_training_context",
 	"load_latest_named_table_artifacts",
-	"load_cobre_response_surface_defaults",
+	"load_icsor_response_surface_defaults",
 	"load_analysis_defaults",
 	"persist_analysis_result_artifacts",
 	"persist_classical_training_context",
-	"persist_cobre_training_context",
+	"persist_icsor_training_context",
 	"persist_named_table_artifacts",
 	"rank_metric_summary",
 	"run_model_dataset_size_analysis",
@@ -2068,3 +2068,4 @@ __all__ = [
 	"summarize_prediction_diagnostics",
 	"summarize_prediction_diagnostics_by_target",
 ]
+

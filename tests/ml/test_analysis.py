@@ -13,29 +13,29 @@ import numpy as np
 import pandas as pd
 from scipy.linalg import null_space
 
-from src.models.ml.cobre import run_cobre_pipeline
-from src.models.simulation.asm2d_tcn_simulation import generate_asm2d_tcn_dataset
+from src.models.ml.icsor import run_icsor_pipeline
+from src.models.simulation.asm2d_tsn_simulation import generate_asm2d_tsn_dataset
 from src.utils.analysis import (
 	add_effective_metric_columns,
 	build_negative_prediction_tables,
 	build_notebook_table_recorder,
 	build_train_test_gap_summary,
 	build_separated_negative_prediction_tables,
-	build_cobre_response_surface_prediction_data,
+	build_icsor_response_surface_prediction_data,
 	build_dataset_size_schedule,
 	collate_model_analysis_results,
 	load_latest_analysis_result,
 	load_latest_classical_training_context,
-	load_latest_cobre_training_context,
+	load_latest_icsor_training_context,
 	persist_analysis_result_artifacts,
 	persist_classical_training_context,
-	persist_cobre_training_context,
+	persist_icsor_training_context,
 	rank_metric_summary,
 	run_model_dataset_size_analysis,
 	summarize_metric_distribution,
 )
 from src.utils.io import save_pickle_file
-from src.utils.process import DatasetSplit, SupervisedDatasetFrames, build_cobre_supervised_dataset, make_train_test_split
+from src.utils.process import DatasetSplit, SupervisedDatasetFrames, build_icsor_supervised_dataset, make_train_test_split
 from src.utils.test import evaluate_prediction_bundle
 
 
@@ -120,7 +120,7 @@ def _compute_a_matrix(petersen_matrix: np.ndarray) -> np.ndarray:
 	return a_matrix
 
 
-def _tiny_cobre_params() -> dict[str, Any]:
+def _tiny_icsor_params() -> dict[str, Any]:
 	return copy.deepcopy(
 		{
 			"hyperparameters": {
@@ -160,11 +160,11 @@ def _write_temp_paths_config(repo_root: Path) -> None:
 class AnalysisHelperTests(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls) -> None:
-		dataset, metadata, matrix_bundle = generate_asm2d_tcn_dataset(n_samples=12, random_seed=17)
-		cls.cobre_dataset = build_cobre_supervised_dataset(dataset, metadata, matrix_bundle["composition_matrix"])
-		cls.cobre_metadata = metadata
-		cls.cobre_composition_matrix = matrix_bundle["composition_matrix"]
-		cls.cobre_a_matrix = _compute_a_matrix(matrix_bundle["petersen_matrix"])
+		dataset, metadata, matrix_bundle = generate_asm2d_tsn_dataset(n_samples=12, random_seed=17)
+		cls.icsor_dataset = build_icsor_supervised_dataset(dataset, metadata, matrix_bundle["composition_matrix"])
+		cls.icsor_metadata = metadata
+		cls.icsor_composition_matrix = matrix_bundle["composition_matrix"]
+		cls.icsor_a_matrix = _compute_a_matrix(matrix_bundle["petersen_matrix"])
 
 	def test_dataset_size_schedule_includes_capped_maximum(self) -> None:
 		schedule = build_dataset_size_schedule(
@@ -544,15 +544,15 @@ class AnalysisHelperTests(unittest.TestCase):
 				Path("results/new_model.pkl"),
 			)
 
-	def test_persist_and_load_latest_cobre_training_context_roundtrip(self) -> None:
+	def test_persist_and_load_latest_icsor_training_context_roundtrip(self) -> None:
 		dataset = _build_synthetic_dataset()
 		dataset_splits = make_train_test_split(dataset, test_fraction=0.25, random_seed=7)
 		prefixed = lambda frame, prefix: frame.rename(columns=lambda column_name: f"{prefix}{column_name}")
-		cobre_result = {
+		icsor_result = {
 			"best_hyperparameters": {"objective": "projected_ols"},
 			"artifact_paths": {
-				"model_bundle": Path("results/cobre/model.pkl"),
-				"metrics": Path("results/cobre/metrics.json"),
+				"model_bundle": Path("results/icsor/model.pkl"),
+				"metrics": Path("results/icsor/metrics.json"),
 				"optuna": None,
 			},
 			"train_report": {
@@ -586,14 +586,14 @@ class AnalysisHelperTests(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as temp_dir:
 			temp_root = Path(temp_dir)
 			_write_temp_paths_config(temp_root)
-			persist_cobre_training_context(
-				cobre_result,
+			persist_icsor_training_context(
+				icsor_result,
 				{"train": dataset_splits.train, "test": dataset_splits.test},
 				repo_root=temp_root,
 				timestamp="20260406_030303",
 			)
 
-			loaded_context = load_latest_cobre_training_context(repo_root=temp_root)
+			loaded_context = load_latest_icsor_training_context(repo_root=temp_root)
 
 			self.assertEqual(loaded_context["artifact_timestamp"], "20260406_030303")
 			self.assertEqual(list(loaded_context["train_targets"].columns), ["Out_A", "Out_B"])
@@ -601,7 +601,7 @@ class AnalysisHelperTests(unittest.TestCase):
 			self.assertEqual(loaded_context["effective_coefficients"]["Theta_uu"].shape, (2, 2, 2))
 			self.assertEqual(
 				loaded_context["training_artifact_paths"]["model_bundle"],
-				Path("results/cobre/model.pkl"),
+				Path("results/icsor/model.pkl"),
 			)
 
 	def test_build_separated_negative_prediction_tables_splits_composite_and_fractional_families(self) -> None:
@@ -739,18 +739,18 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertEqual(len(composite_projected_per_target), 4)
 		self.assertTrue((composite_projected_per_target["negative_predictions"] == 0).all())
 
-	def test_build_cobre_response_surface_prediction_data_uses_midpoint_profile_and_extended_domain(self) -> None:
+	def test_build_icsor_response_surface_prediction_data_uses_midpoint_profile_and_extended_domain(self) -> None:
 		dataset_splits = make_train_test_split(
-			self.cobre_dataset,
+			self.icsor_dataset,
 			test_fraction=0.25,
 			random_seed=11,
 		)
-		result = run_cobre_pipeline(
+		result = run_icsor_pipeline(
 			dataset_splits.train,
 			dataset_splits.test,
-			self.cobre_a_matrix,
-			composition_matrix=self.cobre_composition_matrix,
-			model_params=_tiny_cobre_params(),
+			self.icsor_a_matrix,
+			composition_matrix=self.icsor_composition_matrix,
+			model_params=_tiny_icsor_params(),
 			show_progress=False,
 			persist_artifacts=False,
 		)
@@ -759,9 +759,9 @@ class AnalysisHelperTests(unittest.TestCase):
 			model_path = tempfile.NamedTemporaryFile(dir=temp_dir_name, suffix=".pkl", delete=False)
 			model_path.close()
 			save_pickle_file(model_path.name, result["model_bundle"])
-			response_surface = build_cobre_response_surface_prediction_data(
+			response_surface = build_icsor_response_surface_prediction_data(
 				model_path.name,
-				metadata=self.cobre_metadata,
+				metadata=self.icsor_metadata,
 				grid_points_per_axis=7,
 				operational_extension_fraction=0.5,
 			)
@@ -785,7 +785,7 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertGreaterEqual(float(response_surface["prediction_table"]["Aeration"].min()), 0.0)
 		self.assertEqual(
 			set(response_surface["per_target_surfaces"].keys()),
-			set(f"Out_{name}" for name in self.cobre_metadata["measured_output_columns"]),
+			set(f"Out_{name}" for name in self.icsor_metadata["measured_output_columns"]),
 		)
 		self.assertIn("Projected_Out_COD", response_surface["prediction_table"].columns)
 		self.assertIn("ConstraintReference_S_A", response_surface["prediction_table"].columns)
@@ -794,3 +794,4 @@ class AnalysisHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
 	unittest.main()
+

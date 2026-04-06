@@ -333,11 +333,11 @@ Maintain this section as a compact command playbook for recurring Windows workfl
 - Repository inspection before edits: use PowerShell workspace inspection (`Get-ChildItem -Name`) plus targeted file reads.
 - Bulk in-repo hard-cutover renames for modules, docs, and tests: use PowerShell `Move-Item` so the filesystem rename is explicit before patching content.
 - Repository contract validation (after updates to CODEBASE_RULES.md, docs/ml, docs/simulation, scaffold, or path/parameter contracts): `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract`.
-- Simulation contract validation (after ASM2d-TCN integration, schema refactor, solver change, matrix exposure change, or measured-output definition change): `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm2d_tcn_simulation`.
-- Downstream ML compatibility validation after simulation contract changes: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_cobre tests.ml.test_ml_orchestration`.
-- Measured-space model and orchestration validation: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_cobre tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
-- Broad regression safety sweep: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm2d_tcn_simulation tests.ml.test_cobre tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
-- ASM2d-TCN public API smoke check without artifacts: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c "from src.models.simulation.asm2d_tcn_simulation import run_asm2d_tcn_simulation; result = run_asm2d_tcn_simulation(save_artifacts=False, n_samples=4, random_seed=17, parallel_workers=1); print(result['dataset'].shape); print(result['metadata']['measured_output_columns']); print(result['composition_matrix'].shape)"`.
+- Simulation contract validation (after ASM2D-TSN integration, schema refactor, solver change, matrix exposure change, or measured-output definition change): `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm2d_tsn_simulation`.
+- Downstream ML compatibility validation after simulation contract changes: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_ICSOR tests.ml.test_ml_orchestration`.
+- Measured-space model and orchestration validation: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.ml.test_ICSOR tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
+- Broad regression safety sweep: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m unittest tests.bootstrap.test_repo_contract tests.simulation.test_asm2d_tsn_simulation tests.ml.test_ICSOR tests.ml.test_tabular_regressors tests.ml.test_ml_orchestration`.
+- ASM2D-TSN public API smoke check without artifacts: `uv run c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -c "from src.models.simulation.asm2d_tsn_simulation import run_asm2d_tsn_simulation; result = run_asm2d_tsn_simulation(save_artifacts=False, n_samples=4, random_seed=17, parallel_workers=1); print(result['dataset'].shape); print(result['metadata']['measured_output_columns']); print(result['composition_matrix'].shape)"`.
 - Notebook JSON integrity validation after notebook edits: `c:/Users/eselerio/projects/pibre-model/.venv/Scripts/python.exe -m json.tool main.ipynb > $null`.
 - Dependency refresh after pyproject.toml changes: `uv sync`.
 
@@ -361,4 +361,5 @@ Maintain this section as a compact command playbook for recurring Windows workfl
 - Keep this section short and reusable.
 - Replace or merge overlapping entries instead of appending near-duplicate cases.
 - Add a new bullet only when it introduces a new command pattern, escalation rule, or durable pitfall.
+
 

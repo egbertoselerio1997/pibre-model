@@ -3,7 +3,7 @@
     "hyperparameters": {},
     "notes": "Replace template_model with a concrete model name when implementing a model."
   },
-  "asm2d_tcn_simulation": {
+  "asm2d_tsn_simulation": {
     "schema_version": "1.2",
     "hyperparameters": {
       "n_samples": 10000,
@@ -926,7 +926,7 @@
       "total_sample_step": 950,
       "n_repeats": 10,
       "test_fraction": 0.2,
-      "cobre_response_surface": {
+      "icsor_response_surface": {
         "grid_points_per_axis": 100,
         "contour_levels": 20,
         "operational_extension_fraction": 3,
@@ -934,7 +934,7 @@
       }
     }
   },
-  "cobre": {
+  "icsor": {
     "hyperparameters": {
       "random_seed": 42,
       "scale_features": false,
@@ -1633,3 +1633,5 @@
     }
   }
 }
+
+
