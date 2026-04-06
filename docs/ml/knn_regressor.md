@@ -36,7 +36,7 @@ The adopted architecture is distance-weighted multi-output k-nearest-neighbors r
 
 ## 7. Training or optimization notes
 
-The notebook-owned Optuna path tunes neighborhood size, weighting mode, search algorithm, leaf size, and the Minkowski exponent. Because the estimator is instance-based rather than gradient-trained, there is no internal epoch loop. The repository progress bars still report the shared training stages so the model participates in the same orchestration contract as the other regressors.
+The notebook-owned Optuna path now tunes all non-infrastructure KNN controls used in this benchmark: neighborhood size, weighting mode, search algorithm, leaf size, Minkowski exponent, and distance-metric selection. The only fixed KNN setting is worker count in config/params.json. Because the estimator is instance-based rather than gradient-trained, there is no internal epoch loop, but the shared repository progress bars still report each pipeline stage.
 
 ## 8. Prediction workflow
 

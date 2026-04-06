@@ -75,7 +75,12 @@ def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarra
     return a_matrix
 
 
-def _build_tiny_params(base_params: dict[str, object], *, iteration_key: str | None) -> dict[str, object]:
+def _build_tiny_params(
+    base_params: dict[str, object],
+    *,
+    iteration_key: str | None,
+    fixed_iteration_key: str | None = None,
+) -> dict[str, object]:
     params = copy.deepcopy(base_params)
     params["hyperparameters"]["random_seed"] = 11
     params["artifact_options"] = {
@@ -89,6 +94,12 @@ def _build_tiny_params(base_params: dict[str, object], *, iteration_key: str | N
     if "hidden_layer_sizes" in params["training_defaults"]:
         params["training_defaults"]["learning_rate_init"] = 0.01
         params["training_defaults"]["tol"] = 0.01
+
+    if fixed_iteration_key is not None and fixed_iteration_key in params["training_defaults"]:
+        if fixed_iteration_key == "max_iter":
+            params["training_defaults"][fixed_iteration_key] = 50
+        else:
+            params["training_defaults"][fixed_iteration_key] = 12
 
     if iteration_key is not None and iteration_key in params["training_defaults"]:
         if iteration_key == "max_iter":
@@ -141,21 +152,24 @@ class TabularRegressorTests(unittest.TestCase):
                 "load_params": load_ann_shallow_regressor_params,
                 "run_pipeline": run_ann_shallow_regressor_pipeline,
                 "predict_model": predict_ann_shallow_regressor_model,
-                "iteration_key": "max_iter",
+                "iteration_key": None,
+                "fixed_iteration_key": "max_iter",
             },
             {
                 "name": "ann_medium_regressor",
                 "load_params": load_ann_medium_regressor_params,
                 "run_pipeline": run_ann_medium_regressor_pipeline,
                 "predict_model": predict_ann_medium_regressor_model,
-                "iteration_key": "max_iter",
+                "iteration_key": None,
+                "fixed_iteration_key": "max_iter",
             },
             {
                 "name": "ann_deep_regressor",
                 "load_params": load_ann_deep_regressor_params,
                 "run_pipeline": run_ann_deep_regressor_pipeline,
                 "predict_model": predict_ann_deep_regressor_model,
-                "iteration_key": "max_iter",
+                "iteration_key": None,
+                "fixed_iteration_key": "max_iter",
             },
             {
                 "name": "xgboost_regressor",
@@ -163,6 +177,7 @@ class TabularRegressorTests(unittest.TestCase):
                 "run_pipeline": run_xgboost_regressor_pipeline,
                 "predict_model": predict_xgboost_regressor_model,
                 "iteration_key": "n_estimators",
+                "fixed_iteration_key": None,
             },
             {
                 "name": "lightgbm_regressor",
@@ -170,6 +185,7 @@ class TabularRegressorTests(unittest.TestCase):
                 "run_pipeline": run_lightgbm_regressor_pipeline,
                 "predict_model": predict_lightgbm_regressor_model,
                 "iteration_key": "n_estimators",
+                "fixed_iteration_key": None,
             },
             {
                 "name": "catboost_regressor",
@@ -177,6 +193,7 @@ class TabularRegressorTests(unittest.TestCase):
                 "run_pipeline": run_catboost_regressor_pipeline,
                 "predict_model": predict_catboost_regressor_model,
                 "iteration_key": "iterations",
+                "fixed_iteration_key": None,
             },
             {
                 "name": "adaboost_regressor",
@@ -184,6 +201,7 @@ class TabularRegressorTests(unittest.TestCase):
                 "run_pipeline": run_adaboost_regressor_pipeline,
                 "predict_model": predict_adaboost_regressor_model,
                 "iteration_key": "n_estimators",
+                "fixed_iteration_key": None,
             },
             {
                 "name": "random_forest_regressor",
@@ -191,6 +209,7 @@ class TabularRegressorTests(unittest.TestCase):
                 "run_pipeline": run_random_forest_regressor_pipeline,
                 "predict_model": predict_random_forest_regressor_model,
                 "iteration_key": "n_estimators",
+                "fixed_iteration_key": None,
             },
             {
                 "name": "svr_regressor",
@@ -198,6 +217,7 @@ class TabularRegressorTests(unittest.TestCase):
                 "run_pipeline": run_svr_regressor_pipeline,
                 "predict_model": predict_svr_regressor_model,
                 "iteration_key": None,
+                "fixed_iteration_key": None,
             },
         ]
 
@@ -215,7 +235,11 @@ class TabularRegressorTests(unittest.TestCase):
 
         for spec in self.model_specs:
             with self.subTest(model=spec["name"]):
-                params = _build_tiny_params(spec["load_params"](), iteration_key=spec["iteration_key"])
+                params = _build_tiny_params(
+                    spec["load_params"](),
+                    iteration_key=spec["iteration_key"],
+                    fixed_iteration_key=spec.get("fixed_iteration_key"),
+                )
                 result = spec["run_pipeline"](
                     dataset_splits.train,
                     dataset_splits.test,

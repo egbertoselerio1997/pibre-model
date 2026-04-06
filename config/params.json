@@ -914,17 +914,17 @@
       "optuna_dataset_fraction": 0.5,
       "optuna_test_fraction": 0.2,
       "tuning_epochs": 500,
-      "n_trials": 30,
+      "n_trials": 100,
       "timeout_seconds": null
     },
     "benchmark": {
-      "use_optuna": false
+      "use_optuna": true
     },
     "analysis": {
       "min_total_samples": 500,
       "max_total_samples": 10000,
       "total_sample_step": 950,
-      "n_repeats": 10,
+      "n_repeats": 100,
       "test_fraction": 0.2,
       "icsor_response_surface": {
         "grid_points_per_axis": 100,
@@ -1034,6 +1034,13 @@
         "low": 0.001,
         "high": 10.0,
         "log": true
+      },
+      "tree_method": {
+        "type": "categorical",
+        "choices": [
+          "hist",
+          "approx"
+        ]
       }
     },
     "artifact_options": {
@@ -1282,6 +1289,13 @@
         "low": 0.5,
         "high": 1.0,
         "log": false
+      },
+      "bootstrap": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
       }
     },
     "artifact_options": {
@@ -1301,7 +1315,10 @@
       "epsilon": 0.05,
       "kernel": "rbf",
       "gamma": "scale",
-      "degree": 3
+      "degree": 3,
+      "tol": 0.001,
+      "shrinking": true,
+      "coef0": 0.0
     },
     "search_space": {
       "C": {
@@ -1334,7 +1351,26 @@
       "degree": {
         "type": "int",
         "low": 2,
-        "high": 4,
+        "high": 5,
+        "log": false
+      },
+      "tol": {
+        "type": "float",
+        "low": 1e-05,
+        "high": 0.01,
+        "log": true
+      },
+      "shrinking": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
+      },
+      "coef0": {
+        "type": "float",
+        "low": 0.0,
+        "high": 1.0,
         "log": false
       }
     },
@@ -1378,6 +1414,7 @@
         "choices": [
           "auto",
           "ball_tree",
+          "kd_tree",
           "brute"
         ]
       },
@@ -1391,7 +1428,16 @@
         "type": "categorical",
         "choices": [
           1,
-          2
+          2,
+          3
+        ]
+      },
+      "metric": {
+        "type": "categorical",
+        "choices": [
+          "minkowski",
+          "euclidean",
+          "manhattan"
         ]
       }
     },
@@ -1463,6 +1509,14 @@
       "verbose": false
     },
     "search_space": {
+      "activation": {
+        "type": "categorical",
+        "choices": [
+          "relu",
+          "tanh",
+          "logistic"
+        ]
+      },
       "alpha": {
         "type": "float",
         "low": 1e-06,
@@ -1484,17 +1538,18 @@
         "high": 0.01,
         "log": true
       },
-      "max_iter": {
-        "type": "int",
-        "low": 200,
-        "high": 1000,
-        "log": false
-      },
       "tol": {
         "type": "float",
         "low": 1e-05,
         "high": 0.001,
         "log": true
+      },
+      "shuffle": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
       }
     },
     "artifact_options": {
@@ -1527,6 +1582,14 @@
       "verbose": false
     },
     "search_space": {
+      "activation": {
+        "type": "categorical",
+        "choices": [
+          "relu",
+          "tanh",
+          "logistic"
+        ]
+      },
       "alpha": {
         "type": "float",
         "low": 1e-06,
@@ -1548,17 +1611,18 @@
         "high": 0.01,
         "log": true
       },
-      "max_iter": {
-        "type": "int",
-        "low": 200,
-        "high": 1000,
-        "log": false
-      },
       "tol": {
         "type": "float",
         "low": 1e-05,
         "high": 0.001,
         "log": true
+      },
+      "shuffle": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
       }
     },
     "artifact_options": {
@@ -1592,6 +1656,14 @@
       "verbose": false
     },
     "search_space": {
+      "activation": {
+        "type": "categorical",
+        "choices": [
+          "relu",
+          "tanh",
+          "logistic"
+        ]
+      },
       "alpha": {
         "type": "float",
         "low": 1e-06,
@@ -1613,17 +1685,18 @@
         "high": 0.01,
         "log": true
       },
-      "max_iter": {
-        "type": "int",
-        "low": 200,
-        "high": 1000,
-        "log": false
-      },
       "tol": {
         "type": "float",
         "low": 1e-05,
         "high": 0.001,
         "log": true
+      },
+      "shuffle": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
       }
     },
     "artifact_options": {

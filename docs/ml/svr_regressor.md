@@ -45,7 +45,7 @@ The adopted architecture is epsilon-insensitive support vector regression with c
 
 ## 7. Training or optimization notes
 
-Optuna tunes the regularization parameter $C$, the epsilon tube width, the kernel choice, the gamma setting, and the polynomial degree parameter when relevant. Because SVR is scale-sensitive, feature standardization is enabled by default for this model in config/params.json, while the notebook orchestration block controls the shared Optuna trial budget.
+Optuna now tunes the full SVR hyperparameter set used by this benchmark: the regularization parameter $C$, epsilon tube width, kernel family, gamma policy, polynomial degree, numerical tolerance, shrinking strategy, and $\text{coef0}$ offset. Because SVR is scale-sensitive, feature standardization remains enabled by default in config/params.json, while the notebook orchestration block controls the shared Optuna trial budget.
 
 ## 8. Prediction workflow
 

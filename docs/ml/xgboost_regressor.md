@@ -64,7 +64,7 @@ This is not a shared multi-task tree model. The coupling among targets is introd
 
 ## 7. Training or optimization notes
 
-The Optuna search space tunes the number of trees, learning rate, maximum tree depth, child-weight control, subsampling, column subsampling, and L1 and L2 regularization strengths. Fixed implementation choices such as the squared-error objective and histogram tree method are stored in config/params.json rather than hardcoded in the source module, while the global Optuna trial budget is defined in the shared notebook orchestration block.
+The Optuna search space now tunes all non-infrastructure XGBoost controls declared for this benchmark: number of trees, learning rate, maximum tree depth, child-weight control, row subsampling, column subsampling, L1 and L2 regularization strengths, and tree-method variant. Only infrastructure constants remain fixed in config/params.json, namely the squared-error objective, random seed, worker count, and verbosity settings, while the global Optuna trial budget remains notebook-owned.
 
 ## 8. Prediction workflow
 

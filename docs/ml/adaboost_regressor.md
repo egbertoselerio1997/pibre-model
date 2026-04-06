@@ -42,7 +42,7 @@ The adopted architecture is adaptive boosting for regression, using the AdaBoost
 
 ## 7. Training or optimization notes
 
-Optuna tunes the number of weak learners, the boosting learning rate, and the selected AdaBoost loss formulation. The repository keeps these choices in config/params.json so the source module remains free of hardcoded parameter values, while main.ipynb controls the shared Optuna trial budget and tuning subset.
+Optuna now tunes all learnable AdaBoost controls used in this benchmark: number of weak learners, boosting learning rate, and loss formulation. The only fixed AdaBoost parameter is the random seed in config/params.json. As required by the repository contract, main.ipynb still owns the shared Optuna trial budget and tuning subset definition.
 
 ## 8. Prediction workflow
 

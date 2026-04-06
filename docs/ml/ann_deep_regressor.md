@@ -40,7 +40,7 @@ The adopted architecture is a three-hidden-layer multilayer perceptron with hidd
 
 ## 7. Training or optimization notes
 
-The notebook-owned Optuna path tunes regularization strength, batch size, learning rate, iteration budget, and tolerance while keeping the deep shape fixed. This preserves a clean comparison against the shallow and medium ANN variants.
+The notebook-owned Optuna path now tunes all non-fixed deep-ANN controls used in this benchmark: activation function, regularization strength, batch size, learning rate, tolerance, and shuffle behavior. The deep shape stays fixed to preserve clean architecture-class comparison with shallow and medium ANN variants, and max_iter remains fixed as the repository epoch exception. Solver, early-stopping flag, random seed, and verbosity remain fixed compatibility or infrastructure constants.
 
 The deeper architecture has more room to capture nonlinear structure, but it also has higher optimization cost and a larger risk of unstable convergence or unnecessary capacity relative to the size of the benchmark target space.
 

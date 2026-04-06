@@ -46,7 +46,7 @@ The adopted architecture is CatBoost gradient boosting with oblivious trees. The
 
 ## 7. Training or optimization notes
 
-Optuna tunes the number of boosting iterations, learning rate, tree depth, L2 leaf regularization, bagging temperature, and random-strength settings. The tuning run is launched from main.ipynb against a notebook-managed subset, and the implementation disables CatBoost file writing so training remains inside the repository artifact contract.
+Optuna tunes all non-fixed CatBoost training controls declared in this benchmark configuration: number of boosting iterations, learning rate, tree depth, L2 leaf regularization, bagging temperature, and random-strength settings. A small fixed set remains in config/params.json for compatibility and infrastructure reasons (MultiRMSE loss family, bootstrap type, random seed, verbosity, and file-writing disablement). The tuning run is still launched from main.ipynb against a notebook-managed subset.
 
 ## 8. Prediction workflow
 

@@ -20,6 +20,7 @@ from src.utils.process import (
     sample_dataset_fraction,
     sample_dataset_split_indices,
 )
+from src.utils.simulation import load_params_config
 from src.utils.train import tune_tabular_regressor_hyperparameters
 
 
@@ -48,6 +49,35 @@ def _build_tiny_adaboost_params() -> dict[str, object]:
         "loss": {"type": "categorical", "choices": ["linear", "square"]},
     }
     return params
+
+
+CLASSICAL_MODEL_NAMES = [
+    "xgboost_regressor",
+    "lightgbm_regressor",
+    "catboost_regressor",
+    "adaboost_regressor",
+    "random_forest_regressor",
+    "svr_regressor",
+    "knn_regressor",
+    "pls_regressor",
+    "ann_shallow_regressor",
+    "ann_medium_regressor",
+    "ann_deep_regressor",
+]
+
+FIXED_HYPERPARAMETER_KEYS = {
+    "xgboost_regressor": {"objective", "random_state", "n_jobs", "verbosity"},
+    "lightgbm_regressor": {"objective", "random_state", "verbosity", "n_jobs"},
+    "catboost_regressor": {"loss_function", "bootstrap_type", "random_seed", "verbose", "allow_writing_files"},
+    "adaboost_regressor": {"random_state"},
+    "random_forest_regressor": {"random_state", "n_jobs"},
+    "svr_regressor": set(),
+    "knn_regressor": {"n_jobs"},
+    "pls_regressor": {"scale", "copy"},
+    "ann_shallow_regressor": {"hidden_layer_sizes", "solver", "max_iter", "early_stopping", "random_state", "verbose"},
+    "ann_medium_regressor": {"hidden_layer_sizes", "solver", "max_iter", "early_stopping", "random_state", "verbose"},
+    "ann_deep_regressor": {"hidden_layer_sizes", "solver", "max_iter", "early_stopping", "random_state", "verbose"},
+}
 
 
 class MlOrchestrationTests(unittest.TestCase):
@@ -104,6 +134,23 @@ class MlOrchestrationTests(unittest.TestCase):
         self.assertTrue(set(main_splits.test.features.index).isdisjoint(tuning_splits.test.features.index))
         self.assertLess(len(tuning_dataset.features), len(main_splits.train.features))
         self.assertEqual(set(tuning_dataset.features.index), set(tuning_indices))
+
+    def test_classical_search_space_covers_non_fixed_training_defaults(self) -> None:
+        params = load_params_config()
+
+        for model_name in CLASSICAL_MODEL_NAMES:
+            with self.subTest(model=model_name):
+                model_params = params[model_name]
+                training_keys = set(model_params["training_defaults"])
+                search_keys = set(model_params["search_space"])
+                fixed_keys = FIXED_HYPERPARAMETER_KEYS[model_name]
+
+                self.assertTrue(fixed_keys.issubset(training_keys))
+                self.assertTrue(fixed_keys.isdisjoint(search_keys))
+
+                tuned_keys = training_keys - fixed_keys
+                self.assertTrue(tuned_keys)
+                self.assertEqual(tuned_keys, tuned_keys & search_keys)
 
     def test_external_tabular_tuning_returns_hyperparameters(self) -> None:
         params = _build_tiny_adaboost_params()

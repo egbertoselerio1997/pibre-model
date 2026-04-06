@@ -42,7 +42,7 @@ The adopted architecture is multi-output partial least squares regression with a
 
 ## 7. Training or optimization notes
 
-The notebook-owned Optuna path tunes the number of latent components together with the iterative solver controls max_iter and tol. Because repository scaling is already applied before fit, the estimator runs with scale=false. This keeps the model consistent with the shared classical-regressor contract and avoids hidden model-specific preprocessing.
+The notebook-owned Optuna path tunes all non-compatibility PLS controls in this benchmark: number of latent components together with the iterative solver controls max_iter and tol. The scale and copy flags remain fixed in config/params.json because preprocessing is already governed by the shared repository scaling contract.
 
 ## 8. Prediction workflow
 

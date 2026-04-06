@@ -48,7 +48,7 @@ The adopted architecture is histogram-based gradient-boosted decision trees as i
 
 ## 7. Training or optimization notes
 
-The Optuna search space tunes the number of boosting rounds, learning rate, number of leaves, depth control, minimum child samples, subsampling ratios, and L1 and L2 penalties. Fixed choices such as the regression objective and verbosity settings are supplied from config/params.json, while the notebook-owned orchestration block defines the shared Optuna trial budget.
+The Optuna search space now covers all non-infrastructure LightGBM controls defined for this benchmark: number of boosting rounds, learning rate, number of leaves, depth control, minimum child samples, row subsampling, column subsampling, and L1 and L2 penalties. Only infrastructure constants stay fixed in config/params.json (objective, random seed, verbosity, and worker count), while the notebook-owned orchestration block sets the shared Optuna budget.
 
 ## 8. Prediction workflow
 

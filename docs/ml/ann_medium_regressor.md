@@ -54,7 +54,7 @@ Fourth, the shape remains small enough that the shared sklearn-based training pa
 
 ## 7. Training or optimization notes
 
-The notebook-owned Optuna path tunes regularization strength, batch size, learning rate, iteration budget, and tolerance while leaving the architecture fixed. The shape is fixed intentionally so architecture comparison remains interpretable across the shallow, medium, and deep ANN entries.
+The notebook-owned Optuna path now tunes all non-fixed medium-ANN controls used in this benchmark: activation function, regularization strength, batch size, learning rate, tolerance, and shuffle behavior. The architecture stays fixed so shallow, medium, and deep entries remain directly comparable, and max_iter remains fixed as the repository epoch exception. Solver, early-stopping flag, random seed, and verbosity remain fixed compatibility or infrastructure constants.
 
 The repository uses sklearn MLPRegressor rather than a custom torch training loop because the current classical-regressor contract already provides compatible scaling, persistence, Optuna integration, and reporting for sklearn estimators. That keeps the ANN family inside the same benchmark machinery as the other classical models.
 

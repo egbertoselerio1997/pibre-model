@@ -36,7 +36,7 @@ The adopted architecture is a single-hidden-layer multilayer perceptron with hid
 
 ## 7. Training or optimization notes
 
-The notebook-owned Optuna branch tunes regularization strength, batch size, learning rate, iteration budget, and tolerance while keeping the hidden-layer shape fixed. The shape is fixed intentionally so the ANN comparison remains about architecture class rather than mixed architecture-and-hyperparameter drift.
+The notebook-owned Optuna branch now tunes all non-fixed shallow-ANN controls used in this benchmark: activation function, regularization strength, batch size, learning rate, tolerance, and shuffle behavior. The hidden-layer shape stays fixed by design for architecture comparability, and max_iter remains fixed as the repository epoch exception. Solver, early-stopping flag, random seed, and verbosity also remain fixed compatibility or infrastructure constants.
 
 ## 8. Prediction workflow
 

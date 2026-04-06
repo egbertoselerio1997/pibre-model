@@ -44,7 +44,7 @@ The adopted architecture is bootstrap-aggregated decision-tree regression, speci
 
 ## 7. Training or optimization notes
 
-The Optuna search space tunes the number of trees, maximum tree depth, minimum split size, minimum leaf size, and the fraction of features considered at each split. Bootstrap sampling and the random seed are configured through config/params.json, while the shared Optuna trial count is controlled from the notebook orchestration block.
+The Optuna search space now tunes all non-infrastructure random-forest controls used in this benchmark: number of trees, maximum tree depth, minimum split size, minimum leaf size, feature fraction per split, and bootstrap sampling mode. Only infrastructure constants (random seed and worker count) remain fixed in config/params.json, while the shared Optuna trial count stays notebook-owned.
 
 ## 8. Prediction workflow
 
