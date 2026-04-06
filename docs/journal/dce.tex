@@ -13,6 +13,37 @@
 
 \title{An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}
 
+\maketitle
+
+\section*{Nomenclature}
+\begin{tabbing}
+\hspace{2.5cm} \= \kill
+$A$ \> Full-row-rank invariant matrix defining the null space of the stoichiometric matrix \\
+$B$ \> Latent component-space parameter matrix of the unconstrained surrogate \\
+$c_{in}$ \> Influent ASM component concentration vector ($c_{in} \in \mathbb{R}^{F}$) \\
+$c_{out}$ \> True steady-state effluent ASM component concentration vector ($c_{out} \in \mathbb{R}^{F}$) \\
+$c_{raw}$ \> Unconstrained surrogate prediction of the effluent ASM component state \\
+$c^*$ \> Final non-negative, invariant-projected ASM component prediction \\
+$c_{aff}$ \> Orthogonal affine projection of the raw prediction \\
+$D$ \> Total dimension of the second-order feature map \\
+$F$ \> Number of mechanistic ASM components \\
+$I_{comp}$ \> Composition matrix mapping ASM components to measured composites ($I_{comp} \in \mathbb{R}^{K \times F}$) \\
+$K$ \> Number of measured composite variables \\
+$M$ \> Effective identifiable affine matrix in measured space ($M \in \mathbb{R}^{K \times D}$) \\
+$M_{op}$ \> Number of operational variables \\
+$P_{adm}$ \> Orthogonal projector onto the admissible change space \\
+$P_{inv}$ \> Orthogonal projector onto the row space of $A$ \\
+$R$ \> Number of reactions in the mechanistic model \\
+$u$ \> Operational input vector ($u \in \mathbb{R}^{M_{op}}$) \\
+$y$ \> True measured effluent composite vector ($y \in \mathbb{R}^{K}$) \\
+$y^*$ \> Deployed projected measured prediction \\
+$y_{raw}$ \> Unconstrained raw measured prediction \\
+$\nu$ \> Stoichiometric matrix ($\nu \in \mathbb{R}^{R \times F}$) \\
+$\xi$ \> Net reaction progress vector \\
+$\phi$ \> Partitioned second-order feature map \\
+$\otimes$ \> Kronecker product \\
+\end{tabbing}
+
 \section{Introduction}
 
 Water pollution presents a critical environmental and public health challenge worldwide, with particularly severe repercussions in developing nations (Lin et al., 2022; Madhav et al., 2020). Biological wastewater treatment systems, particularly those based on the activated sludge process, are the dominant approach applied to combat this issue (Duan et al., 2022). However, their modeling and analysis present formidable engineering and computational challenges (Xiao et al., 2025). The underlying biophysical mechanisms are governed by the Activated Sludge Models (ASM) (Henze et al., 2006), which rely on coupled, multiplicative non-linear kinetic expressions to describe microbial growth and substrate consumption. This inherent non-linearity limits the practical application of transparent analytical methods for process design, frequently forcing engineers to rely on iterative trial-and-error approaches or computationally expensive heuristic algorithms (Aboagye et al., 2021; Padron-Paez et al., 2020).
@@ -25,9 +56,7 @@ By bypassing the latent component space $\mathbb{R}^F$, black-box regressors (su
 
 This study addresses this epistemological and physical mismatch through the development of Invariant-Constrained Second-Order Regression (ICSOR), a physics-informed surrogate framework for steady-state activated sludge systems. ICSOR is designed to answer a precise question: given a steady-state influent state and operating condition, what measured effluent state should be predicted if the underlying ASM component state must satisfy the stoichiometric invariants of the reaction network and remain componentwise non-negative? 
 
-To achieve this, ICSOR employs a partitioned second-order feature map $\phi(u, c_{in})$ that explicitly separates operational variables (which alter the process environment) from influent concentrations (which dictate the material inventory). By retaining full vectorized quadratic blocks via the Kronecker product (e.g., $u \otimes u$, $c_{in} \otimes c_{in}$, and $u \otimes c_{in}$), the model transparently captures all pairwise non-linear operation-loading interactions. Specifically, these bilinear terms naturally approximate the multiplicative interactions inherent in the biological processes, such as the biomass-substrate coupling characteristic of Monod-type kinetics. Crucially, the raw surrogate prediction is corrected in the latent component space before being collapsed to measured outputs. This correction is executed in two stages: first, an orthogonal affine projection maps the raw prediction onto the invariant-consistent set ($Ac = Ac_{in}$); second, if this affine projection yields negative component concentrations, a strictly convex quadratic program (QP) finds the closest Euclidean point on the intersection of the invariant affine set and the non-negative orthant ($c \ge 0$). Because this projection relies on a Euclidean metric, it is inherently sensitive to component scaling, treating the unweighted concentration coordinates as the definitive geometric space. 
-
-By enforcing the correction in a latent space, ICSOR formally delineates what can be learned from data versus what must be assumed. Measured composite data uniquely identify an affine core in measured space, but they do not uniquely identify the latent component-space coefficients. Therefore, the final inequality-constrained deployed predictor is fully specified only after a latent component-space representative has been fixed. Only after this physical discipline is enforced is the corrected state mapped to the measured composite variables via $I_{comp}$. Consequently, component non-negativity guarantees composite non-negativity, provided the relevant rows of $I_{comp}$ are entrywise non-negative.
+To achieve this, ICSOR employs a partitioned second-order feature map $\phi(u, c_{in})$ that explicitly separates operational variables (which alter the process environment) from influent concentrations (which dictate the material inventory). By retaining full vectorized quadratic blocks via the Kronecker product (e.g., $u \otimes u$, $c_{in} \otimes c_{in}$, and $u \otimes c_{in}$), the model transparently captures all pairwise non-linear operation-loading interactions. Specifically, these bilinear terms naturally approximate the multiplicative interactions inherent in the biological processes, such as the biomass-substrate coupling characteristic of Monod-type kinetics. Crucially, the raw surrogate prediction is corrected in the latent component space before being collapsed to measured outputs. This correction is executed in two stages: first, an orthogonal affine projection maps the raw prediction onto the invariant-consistent set ($Ac = Ac_{in}$); second, if this affine projection yields negative component concentrations, a strictly convex quadratic program (QP) finds the closest Euclidean point on the intersection of the invariant affine set and the non-negative orthant ($c \ge 0$). Component non-negativity guarantees composite non-negativity, provided the relevant rows of $I_{comp}$ are entrywise non-negative.
 
 The objective of this article is to formulate the ICSOR framework as an analytically structured surrogate and to evaluate its efficacy on a standalone Continuous Stirred Tank Reactor (CSTR). By comparing ICSOR against the aforementioned unconstrained measured-space baselines, this study assesses whether the proposed model can achieve competitive predictive accuracy while explicitly guaranteeing the parsimony, interpretability, and rigorous physical consistency required for reliable process analysis. The framework presented herein is strictly bounded to steady-state predictions; while it guarantees stoichiometric invariance and non-negativity, it does not claim to enforce full kinetic or thermodynamic feasibility, nor does it replace dynamic trajectory simulators. Instead, it occupies a necessary middle ground: a surrogate simple enough to have its affine core estimated from data by least squares, yet mathematically constrained to respect the fundamental mass balances of wastewater engineering.
 
@@ -37,9 +66,9 @@ The mathematical framework of Invariant-Constrained Second-Order Regression (ICS
 
 \subsection{Physical Scope, State Spaces, and Notation}
 
-We consider a fixed reactor block or process unit represented by quasi-steady samples. The system boundary is identical to the boundary used to define the influent and effluent state vectors. Any external source or sink crossing that boundary must be explicitly represented in the adopted stoichiometric model; otherwise, it is excluded from the claim of invariant preservation. 
+A fixed reactor block or process unit represented by quasi-steady samples is considered. The system boundary is identical to the boundary used to define the influent and effluent state vectors. Any external source or sink crossing that boundary must be explicitly represented in the adopted stoichiometric model; otherwise, it is excluded from the claim of invariant preservation. 
 
-Let $M_{op}$ be the number of operational variables, $F$ the number of ASM components, $K$ the number of measured composite variables, and $R$ the number of reactions. Single-sample vectors are written as column vectors. We define the following state spaces and operators:
+Let $M_{op}$ be the number of operational variables, $F$ the number of ASM components, $K$ the number of measured composite variables, and $R$ the number of reactions. Single-sample vectors are written as column vectors. The following state spaces and operators are defined:
 \begin{itemize}
     \item $u \in \mathbb{R}^{M_{op}}$: Operational input vector (e.g., hydraulic retention time, aeration intensity).
     \item $c_{in} \in \mathbb{R}^{F}$: Influent ASM component concentration vector.
@@ -59,7 +88,7 @@ Let $\nu \in \mathbb{R}^{R \times F}$ be the stoichiometric matrix written in th
 \begin{equation}
 c_{out} - c_{in} = \nu^T \xi
 \end{equation}
-The vector $\xi$ is rarely observed. To eliminate it and isolate the conserved quantities, we introduce a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ whose transposed rows form a basis of $\operatorname{null}(\nu)$. Equivalently, $A \nu^T = 0$. Multiplying the stoichiometric change relation by $A$ yields:
+The vector $\xi$ is rarely observed. To eliminate it and isolate the conserved quantities, a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ is introduced, whose transposed rows form a basis of $\operatorname{null}(\nu)$. Equivalently, $A \nu^T = 0$. Multiplying the stoichiometric change relation by $A$ yields:
 \begin{equation}
 A(c_{out} - c_{in}) = A \nu^T \xi = 0 \quad \implies \quad A c_{out} = A c_{in}
 \end{equation}
@@ -92,7 +121,7 @@ Each block has a distinct engineering interpretation in the latent space: $W_u u
 
 \subsection{Projection onto the Invariant-Consistent Non-Negative Set}
 
-To enforce physical discipline, the raw prediction must be corrected. We define the invariant-consistent non-negative feasible set for a given influent state as:
+To enforce physical discipline, the raw prediction must be corrected. The invariant-consistent non-negative feasible set for a given influent state is defined as:
 \begin{equation}
 \mathcal{S}_+(c_{in}) = \{ c \in \mathbb{R}^{F} : A c = A c_{in}, \; c \ge 0 \}
 \end{equation}
@@ -102,7 +131,7 @@ c^* = \arg\min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{raw} \rVert_2
 \end{equation}
 Because the objective is strictly convex and the feasible set is closed and non-empty (assuming $c_{in} \ge 0$), the minimizer $c^*$ exists and is unique. Because this metric is Euclidean in raw concentration coordinates, component scaling directly influences the magnitude and direction of the correction.
 
-This formulation contains the orthogonal affine projection as a reference solution. If we drop the non-negativity constraint, the closed-form affine projection is:
+This formulation contains the orthogonal affine projection as a reference solution. If the non-negativity constraint is dropped, the closed-form affine projection is:
 \begin{equation}
 c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}
 \end{equation}
@@ -203,7 +232,7 @@ The simulation domain was sampled using Latin hypercube sampling (LHS) to ensure
 \end{tabular}
 \end{table}
 
-For each sampled influent-operating point, the effluent steady state was obtained by solving the nonlinear ASM2d-TSN algebraic balance equations under bound constraints. The primary solve used bound-constrained nonlinear least squares with lower and upper state bounds of $10^{-8}$ and 1500, variable, residual, and gradient tolerances of $10^{-9}$, and a maximum of 1200 function evaluations. Two starting points were tested for each sample: an initial guess assembled from the current influent state and the previous accepted solution, and a multistart perturbation of that initial guess. If neither trial reduced the maximum absolute residual below the configured acceptance threshold of 5.0, a dynamic-relaxation step was performed by integrating the governing residual dynamics for 20 days with a Backward Differentiation Formula (BDF) solver before re-solving the steady-state problem. Only solutions that both converged and satisfied the acceptance threshold were retained. If a sampled influent-operating point failed, a new point was drawn; up to 25 additional attempts were allowed for each required sample.
+For each sampled influent-operating point, the effluent steady state was obtained by solving the nonlinear ASM2d-TSN algebraic balance equations under bound constraints. Although LHS independently samples the input space, the nonlinear ASM algebraic solver inherently acts as a physical filter: operating points leading to severe washout or non-viable states that fail to converge to a stable steady state within the prescribed residual tolerances are rejected. The generative procedure explicitly continued drawing new samples until exactly 10,000 valid, biologically viable steady-state points were collected. The primary solve used bound-constrained nonlinear least squares with lower and upper state bounds of $10^{-8}$ and 1500, variable, residual, and gradient tolerances of $10^{-9}$, and a maximum of 1200 function evaluations. Two starting points were tested for each sample: an initial guess assembled from the current influent state and the previous accepted solution, and a multistart perturbation of that initial guess. If neither trial reduced the maximum absolute residual below the configured acceptance threshold of 5.0, a dynamic-relaxation step was performed by integrating the governing residual dynamics for 20 days with a Backward Differentiation Formula (BDF) solver before re-solving the steady-state problem. Only solutions that both converged and satisfied the acceptance threshold were retained.
 
 The accepted effluent ASM state $c_{out} \in \mathbb{R}^F$ was then collapsed through the composition matrix $I_{comp}$ to the six measured outputs $y = I_{comp} c_{out}$. The persisted dataset therefore contained operating variables $u$, influent component states $c_{in}$, influent measured composites $I_{comp} c_{in}$, effluent component states $c_{out}$, and effluent measured composites $y$. However, only the measured effluent composites were used as prediction targets in the cross-model benchmark.
 
@@ -223,7 +252,7 @@ The classical regressors were standardized by z-score normalization fitted on th
 
 \subsection{Hyperparameter Optimization}
 
-The hyperparameters of all classical benchmark regressors were selected via Bayesian optimization using the Optuna framework. For each classical model, 50\% of the authoritative training pool was sampled, yielding a 4,000-row tuning subset. That subset was partitioned again with a 20\% validation fraction, producing 3,200 tuning-train rows and 800 tuning-validation rows. Each Optuna study used 30 trials, no wall-clock timeout, random seed 42, and validation mean squared error (MSE) as the objective function. The optimized hyperparameters selected by this procedure are reported in Table~\ref{tab:optuna_hyperparameters}.
+The hyperparameters of all classical benchmark regressors were selected via Bayesian optimization using the Optuna framework. For each classical model, 50\% of the authoritative training pool was sampled, yielding a 4,000-row tuning subset. That subset was partitioned again with a 20\% validation fraction, producing 3,200 tuning-train rows and 800 tuning-validation rows. Each Optuna study used 100 trials, no wall-clock timeout, random seed 42, and validation mean squared error (MSE) as the objective function. The optimized hyperparameters selected by this procedure are reported in Table~\ref{tab:optuna_hyperparameters}.
 
 \begin{table}[htbp]
 \centering
@@ -439,5 +468,446 @@ where $\overline{\mathrm{RMSE}}_{\mathrm{test}}$ and $\overline{\mathrm{RMSE}}_{
 Per-target effective RMSE leaderboards rank all models independently for each of the six measured outputs (COD, TN, TKN, TP, TSS, VSS). For each target, models are sorted in ascending order of their effective test RMSE at the largest training size, providing a fine-grained view of which model families excel for specific effluent quality indicators.
 
 Physical behavior was assessed in parallel through effective negative-prediction rates and, for ICSOR, the magnitude of raw-to-projected corrections $\|c^* - c_{raw}\|$ and component-space constraint residuals $\|Ac^* - Ac_{in}\|$. These diagnostic quantities were interpreted as complementary descriptors of model behavior rather than as substitute ranking criteria.
+
+\section{Results and Discussion}
+
+This section reports the results of the cross-model comparison described in Section~3. All twelve models---ICSOR, XGBoost, LightGBM, CatBoost, AdaBoost, Random Forest (RF), SVR, $k$-NN, PLS, MLP Shallow, MLP Medium, and MLP Deep---were evaluated under the identical repeated dataset-size analysis protocol. The primary ranking metric is the effective test RMSE, where \textit{effective} denotes the projected prediction $y^* = I_{comp}\,c^*$ for ICSOR and the raw measured-space prediction for each classical regressor, as defined in Section~3.6. All results are averaged across the resampling repetitions at each training size unless stated otherwise.
+
+\subsection{Overall Model Ranking at Maximum Training Size}
+
+Table~\ref{tab:leaderboard} presents the effective test metrics for all twelve models at the largest training size (8{,}000 samples). Three distinct performance tiers emerge.
+
+\begin{table}[htbp]
+\centering
+\caption{Effective test metrics at the largest training size (8{,}000 training samples, 2{,}000 test samples), sorted by effective test RMSE rank. Values are means across the resampling repetitions. ICSOR uses the projected prediction $y^* = I_{comp}\,c^*$; all classical models use their raw measured-space output.}
+\label{tab:leaderboard}
+\small
+\begin{tabular}{@{}rlccccc@{}}
+\toprule
+\textbf{Rank} & \textbf{Model} & \textbf{RMSE} & \textbf{MAE} & \textbf{$R^2$} & \textbf{MAPE} & \textbf{MSE} \\
+\midrule
+1 & MLP Medium   & 4.928  & 2.333  & 0.9848 & 0.0171 & 24.34 \\
+2 & MLP Deep     & 4.957  & 2.334  & 0.9851 & 0.0164 & 24.61 \\
+3 & MLP Shallow  & 5.308  & 2.638  & 0.9834 & 0.0185 & 28.24 \\
+4 & SVR          & 7.142  & 4.074  & 0.9717 & 0.0293 & 51.04 \\
+5 & LightGBM     & 7.146  & 3.956  & 0.9753 & 0.0254 & 51.09 \\
+6 & ICSOR        & 7.215  & 3.945  & 0.9722 & 0.0264 & 52.11 \\
+7 & XGBoost      & 7.421  & 4.093  & 0.9735 & 0.0263 & 55.12 \\
+8 & CatBoost     & 7.995  & 4.605  & 0.9665 & 0.0321 & 64.00 \\
+9 & PLS          & 14.347 & 8.792  & 0.9150 & 0.0538 & 205.88 \\
+10 & RF          & 17.420 & 10.617 & 0.8737 & 0.0706 & 303.60 \\
+11 & $k$-NN      & 20.492 & 13.158 & 0.7678 & 0.0974 & 419.99 \\
+12 & AdaBoost    & 21.625 & 13.347 & 0.8180 & 0.0862 & 467.73 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The \textbf{top tier} consists of the three MLP architectures, which separate decisively from all other models. MLP Medium achieves the lowest effective test RMSE (4.928), closely followed by MLP Deep (4.957) and MLP Shallow (5.308). The gap between MLP Medium (rank~1) and the next non-MLP model---SVR at 7.142---is 2.21~RMSE units, representing a 31\% relative error reduction. The three MLP variants explain 98.3--98.5\% of the effluent variance ($R^2 \ge 0.983$), and their MAPE values of 1.6--1.9\% indicate that the mean prediction error is less than 2\% of the effluent magnitude. An interesting rank inversion occurs between MLP Medium and MLP Deep: while MLP Medium achieves the lower RMSE (4.928 vs.\ 4.957), MLP Deep achieves the higher $R^2$ (0.9851 vs.\ 0.9848) and the lower MAPE (0.0164 vs.\ 0.0171). This indicates that MLP Deep distributes its errors more uniformly across the target range, whereas MLP Medium achieves a marginally lower total squared error at the cost of slightly less balanced relative accuracy.
+
+The \textbf{middle tier} spans SVR (7.142), LightGBM (7.146), ICSOR (7.215), XGBoost (7.421), and CatBoost (7.995), a range of only 0.85~RMSE units. Within this group, ICSOR achieves the lowest MAE (3.945), which is lower than both SVR (4.074) and LightGBM (3.956), despite ranking 6th in RMSE. This indicates that ICSOR's error distribution has lighter tails relative to its squared-error magnitude, consistent with the regularizing effect of the invariant projection $c^* \in \mathcal{S}_+(c_{in})$ developed in Section~2.4. The $R^2$ values of the middle tier range from 0.9665 (CatBoost) to 0.9753 (LightGBM), confirming that all five models explain over 96.5\% of the test-set variance.
+
+The \textbf{bottom tier} includes PLS (14.347), RF (17.420), $k$-NN (20.492), and AdaBoost (21.625). These models deliver effective test RMSE values 2--4$\times$ worse than the top tier. The particularly poor performance of $k$-NN ($R^2 = 0.768$, MAPE $= 9.7\%$) and AdaBoost ($R^2 = 0.818$, MAPE $= 8.6\%$) renders them unsuitable for this prediction task. PLS, while achieving near-perfect $R^2$ (0.915), is fundamentally limited by its inability to capture the Monod-type multiplicative nonlinearities in the ASM2d-TSN kinetics using its linear latent-variable structure.
+
+\subsection{Consistency Across Metrics and Training Sizes: Average Rank Analysis}
+
+Table~\ref{tab:leaderboard} ranks models only at the largest training size. To assess consistency across the full range of data availability, Table~\ref{tab:avg_rank} reports the average rank of each model computed across all training sizes, all six measured output targets, and all five metrics, as defined in Section~3.7.2.
+
+\begin{table}[htbp]
+\centering
+\caption{Average rank across all training sizes (400--8{,}000), all six measured output targets, and all five metrics (RMSE, MAE, $R^2$, MAPE, MSE). Lower is better. Models are sorted by overall average rank.}
+\label{tab:avg_rank}
+\small
+\begin{tabular}{@{}rlcccccc@{}}
+\toprule
+\textbf{Rank} & \textbf{Model} & \textbf{RMSE} & \textbf{MAE} & \textbf{$R^2$} & \textbf{MAPE} & \textbf{MSE} & \textbf{Overall} \\
+\midrule
+1 & MLP Medium   & 2.02 & 1.91 & 2.03 & 1.94 & 2.05 & 1.99 \\
+2 & MLP Shallow  & 2.53 & 2.70 & 2.55 & 2.67 & 2.55 & 2.60 \\
+3 & MLP Deep     & 3.08 & 3.00 & 3.08 & 2.91 & 3.05 & 3.02 \\
+4 & ICSOR        & 4.18 & 3.97 & 4.20 & 3.98 & 4.20 & 4.11 \\
+5 & LightGBM     & 4.18 & 4.39 & 4.18 & 4.35 & 4.18 & 4.26 \\
+6 & XGBoost      & 6.03 & 6.12 & 6.03 & 6.12 & 6.02 & 6.06 \\
+7 & SVR          & 7.08 & 7.03 & 7.05 & 7.09 & 7.08 & 7.06 \\
+8 & CatBoost     & 7.36 & 7.29 & 7.36 & 7.36 & 7.36 & 7.35 \\
+9 & PLS          & 8.59 & 8.59 & 8.59 & 8.58 & 8.59 & 8.59 \\
+10 & RF          & 10.27 & 10.32 & 10.26 & 10.32 & 10.26 & 10.28 \\
+11 & AdaBoost    & 10.85 & 10.88 & 10.85 & 10.98 & 10.85 & 10.88 \\
+12 & $k$-NN      & 11.83 & 11.80 & 11.83 & 11.70 & 11.83 & 11.80 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The average rank analysis confirms the MLP tier's dominance but reveals an important change in the ordering within that tier relative to the point estimate of Table~\ref{tab:leaderboard}. MLP Medium retains the top position (overall rank 1.99), but MLP Shallow now outranks MLP Deep (2.60 vs.\ 3.02), reversing their RMSE ordering at 8{,}000 samples. This reversal indicates that MLP Shallow is more competitive at smaller training sizes, while MLP Deep requires more data before its additional capacity yields a net benefit. This is consistent with the classical bias-variance tradeoff: the deeper $(128, 64, 32)$ architecture has higher capacity but also higher variance under limited data.
+
+The most notable finding in Table~\ref{tab:avg_rank} concerns ICSOR. While ICSOR ranks 6th at the largest training size (Table~\ref{tab:leaderboard}), it rises to 4th in the overall average rank, surpassing SVR and CatBoost by a wide margin and overtaking XGBoost entirely. The ICSOR average rank (4.11) is nearly identical to LightGBM (4.26), and its per-metric stability is remarkable: the spread between its best metric rank (MAE: 3.97) and worst (MSE: 4.20) is only 0.23. This consistency reflects the inductive bias provided by the stoichiometric constraint projection $c^* \in \mathcal{S}_+(c_{in})$, which restricts the effective hypothesis space and performs implicit regularization. Table~\ref{tab:icsor_density} makes that restriction concrete: under a block-adaptive 1\% retention threshold applied within each identifiable coefficient block, only 303 of 3{,}066 affine-core coefficients are retained, and the high-dimensional $\Theta_{cc,y}$ block keeps just 109 of its 2{,}646 admissible entries. At small training sizes where unconstrained regressors suffer from high variance, ICSOR's physics-informed structure compensates for the limited data, yielding lower effective errors than most classical alternatives.
+
+\subsection{Sample Efficiency: Learning Curve and NAULC Analysis}
+
+Figure~\ref{fig:lc_rmse_mae} presents the effective test RMSE and MAE learning curves across all training sizes. Figure~\ref{fig:lc_r2_mape} presents the corresponding $R^2$ and MAPE learning curves. The shaded bands represent the interquartile range across the resampling repetitions.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: RMSE learning curve
+% Path: results/plot_results/comparison/plots/effective_rmse_learning_curve_20260406_223640.png
+\includegraphics[width=\textwidth]{revision_plots/effective_rmse_learning_curve_20260406_223640.png}
+\caption{Effective test RMSE}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: MAE learning curve
+% Path: results/plot_results/comparison/plots/effective_mae_learning_curve_20260406_223640.png
+\includegraphics[width=\textwidth]{revision_plots/effective_mae_learning_curve_20260406_223640.png}
+\caption{Effective test MAE}
+\end{subfigure}
+\caption{Effective test RMSE and MAE learning curves across training sizes (400--8{,}000 samples). Lines denote the mean across resampling repetitions; shaded bands represent the interquartile range. All twelve models share identical train-test partitions at each size.}
+\label{fig:lc_rmse_mae}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: R2 learning curve
+% Path: results/plot_results/comparison/plots/effective_r2_learning_curve_20260406_223640.png
+\includegraphics[width=\textwidth]{revision_plots/effective_r2_learning_curve_20260406_223640.png}
+\caption{Effective test $R^2$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: MAPE learning curve
+% Path: results/plot_results/comparison/plots/effective_mape_learning_curve_20260406_223640.png
+\includegraphics[width=\textwidth]{revision_plots/effective_mape_learning_curve_20260406_223640.png}
+\caption{Effective test MAPE}
+\end{subfigure}
+\caption{Effective test $R^2$ and MAPE learning curves across training sizes (400--8{,}000 samples). Higher $R^2$ is better; lower MAPE is better.}
+\label{fig:lc_r2_mape}
+\end{figure}
+
+The learning curves in Fig.~\ref{fig:lc_rmse_mae} exhibit three visually distinct trajectory groups. The MLP curves descend steeply from approximately 12~RMSE at 400 training samples to approximately 5~RMSE at 8{,}000 samples, crossing below the middle tier before approximately 1{,}200 training samples. The middle-tier models (ICSOR, LightGBM, SVR, XGBoost, CatBoost) follow a shallower descent from approximately 10--15 to approximately 7--8. The bottom-tier models (PLS, RF, AdaBoost, $k$-NN) show either very slow improvement (AdaBoost shifts from 21.4 to 21.6 across the entire sweep) or persistently high error ($k$-NN remains above 20 throughout). There is no crossover between the MLP tier and any non-MLP model at any training size tested.
+
+Table~\ref{tab:naulc} quantifies these trajectories through the Normalized Area Under the Learning Curve (NAULC) defined in Section~3.7.1. For error metrics (RMSE, MAE, MAPE, MSE), a lower NAULC indicates better sample-averaged performance; for $R^2$, a higher NAULC is better.
+
+\begin{table}[htbp]
+\centering
+\caption{Normalized Area Under the Learning Curve (NAULC) for each model and metric, computed by trapezoidal integration of the effective test metric over the training-size axis and normalized by the training-size span. For RMSE, MAE, MAPE, and MSE, lower is better; for $R^2$, higher is better. Models are sorted by RMSE NAULC.}
+\label{tab:naulc}
+\small
+\begin{tabular}{@{}rlccccc@{}}
+\toprule
+\textbf{Rank} & \textbf{Model} & \textbf{RMSE} & \textbf{MAE} & \textbf{$R^2$} & \textbf{MAPE} & \textbf{MSE} \\
+\midrule
+1  & MLP Medium   & 6.350 & 3.465 & 0.9733 & 0.0251 & 43.58  \\
+2  & MLP Shallow  & 6.562 & 3.655 & 0.9727 & 0.0260 & 45.85  \\
+3  & MLP Deep     & 6.663 & 3.684 & 0.9712 & 0.0262 & 48.33  \\
+4  & ICSOR        & 8.117 & 4.577 & 0.9639 & 0.0296 & 73.24  \\
+5  & LightGBM     & 8.369 & 4.807 & 0.9655 & 0.0307 & 72.88  \\
+6  & SVR          & 8.832 & 5.171 & 0.9565 & 0.0370 & 80.61  \\
+7  & XGBoost      & 8.893 & 5.109 & 0.9614 & 0.0328 & 82.66  \\
+8  & CatBoost     & 8.983 & 5.284 & 0.9566 & 0.0370 & 83.63  \\
+9  & PLS          & 14.336 & 8.855 & 0.9120 & 0.0554 & 205.77 \\
+10 & RF           & 18.715 & 11.521 & 0.8466 & 0.0783 & 352.30 \\
+11 & AdaBoost     & 21.462 & 13.282 & 0.8186 & 0.0859 & 461.02 \\
+12 & $k$-NN       & 21.854 & 14.075 & 0.7332 & 0.1042 & 478.99 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The NAULC confirms the impressions from the learning curves. Within the MLP tier, MLP Medium achieves the best NAULC on all five metrics, and MLP Shallow now outperforms MLP Deep (RMSE NAULC 6.562 vs.\ 6.663), mirroring the average-rank reversal discussed in Section~4.2. This confirms that the deeper MLP architecture's advantage materializes principally at larger training sizes; when performance is integrated across the full data regime, the shallower architecture with fewer parameters is more sample-efficient.
+
+ICSOR achieves the 4th-best RMSE NAULC (8.117), placing it ahead of all five gradient-boosted tree and ensemble regressors. Compared to LightGBM (8.369), ICSOR's 3.0\% NAULC advantage reflects the physics-informed inductive bias discussed in Section~2: the stoichiometric constraint projection $c^* \in \mathcal{S}_+(c_{in})$ reduces the effective dimensionality of the hypothesis space, so that the model achieves competitive accuracy with fewer training samples. This advantage is most pronounced at the smallest training sizes (Fig.~\ref{fig:lc_rmse_mae}a), where the unconstrained regressors suffer from higher variance. As training data grows and the unconstrained models converge, ICSOR's advantage narrows, and by 8{,}000 samples it is slightly surpassed by both SVR and LightGBM in point-wise RMSE (Table~\ref{tab:leaderboard}).
+
+The $R^2$ NAULC further illustrates the separation between tiers. The MLP models sustain $R^2 > 0.97$ on average across the full sweep, while the middle-tier models achieve $R^2 = 0.956$--$0.966$. ICSOR's $R^2$ NAULC (0.9639) is slightly below LightGBM's (0.9655) but well above CatBoost (0.9566) and SVR (0.9565). The bottom-tier models fall below $R^2 = 0.91$ on average, with $k$-NN explaining only 73.3\% of the output variance across the full training-size range---unacceptable for most practical applications.
+
+\subsection{Per-Target Performance Analysis}
+
+Table~\ref{tab:per_target} reports the effective test RMSE for each model at the largest training size, disaggregated by the six measured output targets $y = I_{comp}\,c_{out}$: COD, TN, TKN, TP, TSS, and VSS. The per-target effective RMSE heatmap is presented in Fig.~\ref{fig:target_heatmaps}a.
+
+\begin{table}[htbp]
+\centering
+\caption{Effective test RMSE by measured output target at the largest training size (8{,}000 training samples). Values are means across the resampling repetitions. Bold denotes the best model for each target. Models are sorted by overall effective test RMSE rank (Table~\ref{tab:leaderboard}).}
+\label{tab:per_target}
+\small
+\begin{tabular}{@{}rlcccccc@{}}
+\toprule
+\textbf{Rank} & \textbf{Model} & \textbf{COD} & \textbf{TN} & \textbf{TKN} & \textbf{TP} & \textbf{TSS} & \textbf{VSS} \\
+\midrule
+1 & MLP Medium   & \textbf{7.100}  & \textbf{1.099}  & 3.104  & 0.413  & \textbf{6.891}  & \textbf{6.058} \\
+2 & MLP Deep     & 7.195  & 1.103  & \textbf{3.000}  & 0.445  & 6.892  & 6.131 \\
+3 & MLP Shallow  & 7.695  & 1.277  & 3.111  & 0.388  & 7.297  & 6.709 \\
+4 & SVR          & 11.459 & 1.890  & 3.717  & 0.772  & 9.179  & 8.512 \\
+5 & LightGBM     & 12.105 & 1.730  & 3.443  & 0.470  & 8.726  & 8.280 \\
+6 & ICSOR        & 11.172 & 1.616  & 3.971  & \textbf{0.364}  & 9.372  & 9.007 \\
+7 & XGBoost      & 12.558 & 1.792  & 3.567  & 0.473  & 9.115  & 8.570 \\
+8 & CatBoost     & 13.193 & 2.061  & 4.073  & 0.688  & 10.251 & 9.113 \\
+9 & PLS          & 26.007 & 2.713  & 6.309  & 0.586  & 16.908 & 15.005 \\
+10 & RF          & 33.698 & 3.911  & 6.122  & 2.307  & 18.250 & 17.145 \\
+11 & $k$-NN      & 36.889 & 6.724  & 8.326  & 3.515  & 23.242 & 22.171 \\
+12 & AdaBoost    & 41.276 & 4.200  & 7.971  & 2.080  & 22.582 & 22.507 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: Per-target RMSE heatmap
+% Path: results/plot_results/comparison/plots/effective_rmse_by_target_heatmap_20260406_223648.png
+\includegraphics[width=\textwidth]{revision_plots/effective_rmse_by_target_heatmap_20260406_223648.png}
+\caption{Effective RMSE by target}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: Per-target negative rate heatmap
+% Path: results/plot_results/comparison/plots/negative_prediction_rate_by_target_heatmap_20260406_223648.png
+\includegraphics[width=\textwidth]{revision_plots/negative_prediction_rate_by_target_heatmap_20260406_223648.png}
+\caption{Negative prediction rate by target}
+\end{subfigure}
+\caption{Per-target diagnostic heatmaps at the largest training size (8{,}000 samples). (a)~Effective test RMSE for each model and measured output target. (b)~Percentage of predicted values below zero for each model and target. Models are ordered by overall average rank (best at top).}
+\label{fig:target_heatmaps}
+\end{figure}
+
+The per-target analysis reveals that the aggregate ranking conceals a physically meaningful exception. \textbf{ICSOR achieves the best RMSE on total phosphorus (TP)}: 0.364, surpassing all three MLP architectures (MLP Shallow: 0.388, MLP Medium: 0.413, MLP Deep: 0.445). This is the only target on which ICSOR ranks 1st, and the result has a clear mechanistic interpretation. In the ASM2d-TSN framework, total phosphorus is tightly governed by the stoichiometric constraints associated with phosphorus-accumulating organisms ($X_{PAO}$), the polyphosphate pool ($X_{PP}$), and the metal precipitation pathways ($X_{MeP}$). The invariant projection $Ac^* = Ac_{in}$ enforced by ICSOR (Eq.~2) directly preserves the conserved phosphorus balance implied by the left null space of $\nu$. This hard constraint reduces the effective degrees of freedom available to the prediction, funneling the model toward the physically correct solution along the phosphorus-balance manifold. The MLP models, which predict directly in the measured output space $\mathbb{R}^K$ without access to the latent component-space structure, must learn this balance implicitly from data. At 8{,}000 samples, their implicit learning of the phosphorus balance falls short of the guarantee provided by the explicit projection.
+
+For \textbf{COD}, which represents the broadest aggregate of organic and biomass fractions, MLP Medium leads (7.100) and ICSOR ranks 4th (11.172). The 57\% relative increase in ICSOR's COD error compared to MLP Medium reflects the fact that COD dynamics are predominantly governed by the total magnitude and general nonlinear patterns of the input-output mapping rather than by specific stoichiometric detail. The second-order feature map $\phi(u, c_{in})$ used by ICSOR (Eq.~3) captures pairwise interactions but cannot represent the higher-order nonlinearities that the MLP architectures approximate through their hidden layers.
+
+For \textbf{TKN} (Total Kjeldahl Nitrogen), MLP Deep is marginally the best (3.000), followed closely by MLP Medium (3.104) and MLP Shallow (3.111). LightGBM (3.443) and XGBoost (3.567) outperform ICSOR (3.971), indicating that for nitrogen species, the tree-based ensemble methods capture the relevant input-output structure more effectively than ICSOR's constrained quadratic framework.
+
+For \textbf{TN} (Total Nitrogen), MLP Medium leads (1.099), followed by MLP Deep (1.103). ICSOR ranks 4th (1.616). The small absolute magnitudes reflect the narrow dynamic range of total nitrogen in the ASM2d-TSN simulation domain.
+
+For \textbf{TSS and VSS} (Total and Volatile Suspended Solids), the ranking pattern is nearly identical for both targets, as expected from the linear relationship $\text{VSS} \subset \text{TSS}$ encoded in $I_{comp}$. MLP Medium (TSS: 6.891, VSS: 6.058) and MLP Deep (TSS: 6.892, VSS: 6.131) are virtually tied. ICSOR ranks 7th on both targets (TSS: 9.372, VSS: 9.007), behind the gradient-boosted tree models. The solids targets are influenced by particulate settling dynamics and biomass growth fractions, processes whose nonlinearity exceeds the capacity of the second-order feature map, placing ICSOR at a structural disadvantage for these outputs.
+
+In summary, the per-target analysis delineates a clear pattern: ICSOR's stoichiometric constraint projection provides the greatest advantage on targets most tightly coupled to the conserved quantities of the ASM2d-TSN reaction network (TP), provides moderate benefit for nitrogen-balance targets (TN, TKN), and confers no advantage for the empirical aggregate targets (COD, TSS, VSS), where the unconstrained MLP models dominate through their universal function approximation capacity.
+
+\subsection{Generalization Gap Analysis}
+
+Table~\ref{tab:gen_gap} reports the effective RMSE generalization gap $\Delta_{\mathrm{RMSE}}$ at the largest training size, as defined in Section~3.7.3.
+
+\begin{table}[htbp]
+\centering
+\caption{Effective RMSE generalization gap at the largest training size (8{,}000 training samples). The gap is defined as $\Delta_{\mathrm{RMSE}} = \overline{\mathrm{RMSE}}_{\mathrm{test}} - \overline{\mathrm{RMSE}}_{\mathrm{train}}$. The percentage is normalized by $\overline{\mathrm{RMSE}}_{\mathrm{train}}$. Models are sorted by gap percentage.}
+\label{tab:gen_gap}
+\small
+\begin{tabular}{@{}rlcccc@{}}
+\toprule
+& \textbf{Model} & $\overline{\mathrm{RMSE}}_{\mathrm{test}}$ & $\overline{\mathrm{RMSE}}_{\mathrm{train}}$ & $\Delta_{\mathrm{RMSE}}$ & \textbf{Gap \%} \\
+\midrule
+& PLS          & 14.347 & 14.194 & 0.153  & 1.1\%   \\
+& AdaBoost     & 21.625 & 20.994 & 0.632  & 3.0\%   \\
+& ICSOR        & 7.215  & 6.875  & 0.340  & 4.9\%   \\
+& MLP Shallow  & 5.308  & 4.836  & 0.471  & 9.7\%   \\
+& CatBoost     & 7.995  & 6.911  & 1.084  & 15.7\%  \\
+& MLP Medium   & 4.928  & 3.118  & 1.810  & 58.0\%  \\
+& MLP Deep     & 4.957  & 2.808  & 2.149  & 76.5\%  \\
+& LightGBM     & 7.146  & 3.908  & 3.237  & 82.8\%  \\
+& XGBoost      & 7.421  & 3.482  & 3.940  & 113.1\% \\
+& RF           & 17.420 & 6.380  & 11.040 & 173.1\% \\
+& SVR          & 7.142  & 2.102  & 5.040  & 239.7\% \\
+& $k$-NN       & 20.492 & $\approx$0 & 20.492 & $>$10$^{9}$\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+% Placeholder: Generalization gap learning curve
+% Path: results/plot_results/comparison/plots/effective_rmse_generalization_gap_20260406_223648.png
+\includegraphics[width=0.85\textwidth]{revision_plots/effective_rmse_generalization_gap_20260406_223648.png}
+\caption{Effective RMSE generalization gap ($\Delta_{\mathrm{RMSE}} = \overline{\mathrm{RMSE}}_{\mathrm{test}} - \overline{\mathrm{RMSE}}_{\mathrm{train}}$) as a function of training size. Smaller gaps indicate better generalization. ICSOR (bold) maintains one of the smallest gaps across all training sizes.}
+\label{fig:gen_gap}
+\end{figure}
+
+The generalization gap analysis reveals a striking dichotomy between predictive accuracy and overfitting behavior. Among competitive models (effective test RMSE $< 10$), \textbf{ICSOR exhibits the smallest generalization gap} at 4.9\%, meaning its training-set performance is nearly identical to its test-set performance. This is a direct consequence of the physics-informed constraint structure: the projection $c^* \in \mathcal{S}_+(c_{in})$ restricts the effective model capacity by confining predictions to the invariant-consistent non-negative set, thereby acting as a structural regularizer in the same spirit as the $P_{adm}$ projection (Eq.~7). In contrast, PLS achieves the lowest absolute gap (1.1\%) but its high absolute error (14.35~RMSE) indicates chronic underfitting rather than genuine generalization---the model is too constrained to fit the data in the first place.
+
+The top-performing MLP models exhibit substantial gaps: MLP Medium (58.0\%) and MLP Deep (76.5\%). These gaps indicate that the networks memorize a considerable fraction of the training patterns, achieving much lower training RMSE (3.12 and 2.81, respectively) than test RMSE (4.93 and 4.96). However, their absolute test errors remain the best of all models, confirming that the overfitting has not yet degraded generalization to the point where less flexible models are preferable. This is a well-documented phenomenon in neural network training: moderate overfitting can coexist with strong generalization because stochastic gradient descent and the network architecture together impose substantial implicit regularization. Nevertheless, the 58--77\% gap warrants monitoring for operational deployment, as distribution shifts in the deployment data could cause the networks to degrade more than ICSOR.
+
+The tree-based ensemble methods show consistently large gaps. LightGBM (82.8\%), XGBoost (113.1\%), and RF (173.1\%) achieve low training errors through deep tree structures but pay a substantial generalization penalty. SVR presents the most extreme case among competitive models: a train RMSE of only 2.10 yields a test RMSE of 7.14 (gap $= 239.7\%$), indicating severe overfitting to the RBF kernel's flexible mapping. $k$-NN achieves near-zero training error by construction (it memorizes the training points exactly) but produces the highest test error of all models, confirming that nearest-neighbor interpolation fails in this high-dimensional, nonlinear problem.
+
+\textbf{ICSOR's generalization gap is therefore the best among all models with competitive absolute performance.} This property has practical importance for reliable deployment: if the deployment data distribution shifts modestly from the training distribution, ICSOR's predictions are the least likely to degrade among the set of middle-tier and upper-tier models. The gap remains small across the full training-size sweep (Fig.~\ref{fig:gen_gap}), indicating that this conclusion is not specific to the largest training size.
+
+\subsection{Physical Plausibility Diagnostics}
+
+\subsubsection{Negative Prediction Rates}
+
+At the largest training size, all models produce zero negative predictions except PLS, which produces negatives at a measured rate of 0.08\% across all targets. Disaggregating by target (Fig.~\ref{fig:target_heatmaps}b) reveals that PLS's negatives are concentrated entirely on TKN, with a per-target negative rate of 0.5\%. This is a minor but notable limitation of PLS's linear subspace structure, which cannot enforce output non-negativity. For ICSOR, the absence of negative predictions is not empirical but guaranteed by construction: the quadratic program in Eq.~(6) enforces $c^* \ge 0$ in the latent component space, and the entrywise non-negativity of the relevant rows of $I_{comp}$ then ensures $y^* = I_{comp}\,c^* \ge 0$ in the measured output space. For the remaining classical regressors, the empirical zero-negative rate is an observation that could change under different input distributions.
+
+\subsubsection{Raw-to-Projected Correction Magnitude}
+
+Figure~\ref{fig:icsor_diagnostics}a shows the raw-to-projected correction magnitude $\|c^* - c_{raw}\|_2$ for ICSOR across training sizes. This quantity measures how much the stoichiometric invariant projection and non-negativity correction (Section~2.4) alter the unconstrained second-order surrogate prediction before it is collapsed to the measured output.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: Raw-to-effective adjustment learning curve
+% Path: results/plot_results/comparison/plots/raw_to_effective_adjustment_learning_curve_20260406_223648.png
+\includegraphics[width=\textwidth]{revision_plots/raw_to_effective_adjustment_learning_curve_20260406_223648.png}
+\caption{Raw-to-projected adjustment $\|c^* - c_{raw}\|_2$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.48\textwidth}
+\centering
+% Placeholder: Constraint residual learning curve
+% Path: results/plot_results/comparison/plots/effective_constraint_residual_learning_curve_20260406_223648.png
+\includegraphics[width=\textwidth]{revision_plots/effective_constraint_residual_learning_curve_20260406_223648.png}
+\caption{Constraint residual $\|Ac^* - Ac_{in}\|_2$}
+\end{subfigure}
+\caption{ICSOR-specific physical diagnostics across training sizes. (a)~L2 norm of the correction applied by the stoichiometric invariant projection and non-negativity quadratic program. The decreasing trend indicates that the raw surrogate $c_{raw} = \widehat{B}_{ls}\,\phi(u,c_{in})$ progressively aligns with the physical constraint structure as training data grows. (b)~L2 norm of the constraint residual $Ac^* - Ac_{in}$, confirming machine-precision satisfaction of the stoichiometric invariant at all training sizes.}
+\label{fig:icsor_diagnostics}
+\end{figure}
+
+The correction magnitude begins at approximately 80.0 at 400 training samples and decreases monotonically to 69.9 at 8{,}000 samples, a 12.6\% reduction. This trend has a clear interpretation within the ICSOR framework developed in Section~2. As the training set grows, the least-squares estimate $\widehat{M}^T = \Phi^+ \widetilde{Y}$ (Section~2.6) becomes more accurate, and the induced latent representative $\widehat{B}_{ls} = G^+\widehat{M}$ yields raw component-space predictions $c_{raw}$ that are increasingly consistent with the stoichiometric invariants. The projection $c_{aff} = P_{adm}\,c_{raw} + P_{inv}\,c_{in}$ therefore needs to correct a progressively smaller deviation, reflected in the decreasing $\|c^* - c_{raw}\|_2$.
+
+Equally important, the standard deviation of the correction magnitude decreases from 7.55 at 400 samples to 0.23 at 8{,}000 samples---a 97\% reduction in variability. This stabilization indicates that ICSOR's raw predictions become highly consistent at large data sizes, requiring a nearly constant correction. This is a desirable operational property: the model's behavior becomes predictable, and the stoichiometric projection acts as a stable, deterministic post-processing layer rather than a stochastic rescue mechanism.
+
+\subsubsection{Constraint Satisfaction Residuals}
+
+Figure~\ref{fig:icsor_diagnostics}b shows the L2 norm of the constraint residual $\|Ac^* - Ac_{in}\|_2$ for ICSOR across training sizes. This residual quantifies how closely the final projected prediction satisfies the stoichiometric invariant $Ac = Ac_{in}$ derived in Section~2.2. The residual is on the order of $5 \times 10^{-11}$ across all training sizes, ranging from $6.3 \times 10^{-11}$ at 400 samples to $4.9 \times 10^{-11}$ at 8{,}000 samples. This is essentially machine-precision satisfaction, confirming that the OSQP solver reliably enforces the conservation law $Ac^* = Ac_{in}$ to numerical precision regardless of the quality of the raw prediction $c_{raw}$ or the training-set size. The invariants of the ASM2d-TSN reaction network are therefore preserved in every ICSOR prediction by construction, a guarantee that no classical regressor can provide.
+
+\subsection{Interpretability of the ICSOR Affine Core}
+
+Unlike the classical benchmark models, ICSOR exposes an interpretable measured-space affine core through the identifiable block matrix
+\begin{equation*}
+M = \begin{bmatrix} b_y & W_{u,y} & W_{in,y} & \Theta_{uu,y} & \Theta_{cc,y} & \Theta_{uc,y} \end{bmatrix},
+\end{equation*}
+introduced in Section~2.5. Because $M$ is identified directly from measured data whereas the latent representative $B$ is not (Section~2.6), the coefficient plots are the most defensible engineering summary of how the surrogate organizes operating effects, influent carry-through, and second-order interactions. These plots must be interpreted carefully: they describe the affine core $y_{aff} = M\phi(u,c_{in}) + Hc_{in}$ before the sample-specific positivity correction $\delta_+$ is applied. They therefore encode signed structural tendencies of the learned surrogate rather than global partial derivatives of the fully corrected deployed prediction $y^*$.
+
+The saved artifact paths retain the repository-internal identifier `cobre`, but the figures shown here correspond to ICSOR in the terminology of this manuscript.
+
+Table~\ref{tab:icsor_density} turns the qualitative sparsity visible in the coefficient plots into a quantitative regularization diagnostic. A coefficient is counted as retained when its absolute value exceeds 1\% of the maximum absolute coefficient in its own identifiable block. This block-adaptive rule is preferable to a single global cutoff because the bias, first-order, and second-order blocks live on materially different numerical scales. Even with that blockwise normalization, only 303 of the 3{,}066 coefficients in the identifiable affine core are retained, confirming that ICSOR does not distribute weight uniformly across the full quadratic basis. The strongest compression occurs in $\Theta_{cc,y}$, where only 109 of 2{,}646 influent-influent interaction coefficients remain above threshold. This is the pattern expected from an implicitly regularized model: the second-order feature map is available in full, but the fitted surrogate concentrates mass in a small subset of physically relevant directions.
+
+\begin{table}[htbp]
+\centering
+\caption{ICSOR coefficient density analysis for the identifiable affine core $M$. A coefficient is counted as retained when $|\beta| \ge 0.01 \max |\beta|$ within its own block, so the threshold adapts to the native scale of each coefficient family.}
+\label{tab:icsor_density}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Block} & \textbf{Candidates} & \textbf{Retained} & \textbf{Retention (\%)} & \textbf{Threshold} \\
+\midrule
+$b_y$ & 6 & 5 & 83.3 & 0.5358 \\
+$W_{u,y}$ & 12 & 5 & 41.7 & 0.4812 \\
+$W_{in,y}$ & 126 & 64 & 50.8 & 0.1124 \\
+$\Theta_{uu,y}$ & 24 & 9 & 37.5 & 0.1562 \\
+$\Theta_{uc,y}$ & 252 & 111 & 44.0 & 0.0074 \\
+$\Theta_{cc,y}$ & 2646 & 109 & 4.1 & 0.0327 \\
+\midrule
+Total & 3066 & 303 & 9.9 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+% Placeholder: ICSOR operational coefficient heatmap
+% Path: results/plot_results/training/cobre/coefficients/w_u_heatmap_20260406_183310.png
+\includegraphics[width=\textwidth]{revision_plots/w_u_heatmap_20260406_183310.png}
+\caption{$W_{u,y}$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+% Placeholder: ICSOR influent coefficient heatmap
+% Path: results/plot_results/training/cobre/coefficients/w_in_heatmap_20260406_183310.png
+\includegraphics[width=\textwidth]{revision_plots/w_in_heatmap_20260406_183310.png}
+\caption{$W_{in,y} + H$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+% Placeholder: ICSOR bias bar chart
+% Path: results/plot_results/training/cobre/coefficients/bias_bar_chart_20260406_183310.png
+\includegraphics[width=\textwidth]{revision_plots/bias_bar_chart_20260406_183310.png}
+\caption{$b_y$}
+\end{subfigure}
+\caption{First-order coefficient plots of the identifiable ICSOR affine core in measured space. The file paths retain the repository-internal `cobre` identifier, but the displayed quantities correspond to the ICSOR blocks defined in Section~2.5.}
+\label{fig:icsor_coeff_first_order}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+% Placeholder: ICSOR operational interaction tensor heatmaps
+% Path: results/plot_results/training/cobre/coefficients/theta_uu_heatmaps_20260406_183310.png
+\includegraphics[width=\textwidth]{revision_plots/theta_uu_heatmaps_20260406_183310.png}
+\caption{$\Theta_{uu,y}$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+% Placeholder: ICSOR operational-influent interaction tensor heatmaps
+% Path: results/plot_results/training/cobre/coefficients/theta_uc_heatmaps_20260406_183310.png
+\includegraphics[width=\textwidth]{revision_plots/theta_uc_heatmaps_20260406_183310.png}
+\caption{$\Theta_{uc,y}$}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+\centering
+% Placeholder: ICSOR influent interaction tensor heatmaps
+% Path: results/plot_results/training/cobre/coefficients/theta_cc_heatmaps_20260406_183310.png
+\includegraphics[width=\textwidth]{revision_plots/theta_cc_heatmaps_20260406_183310.png}
+\caption{$\Theta_{cc,y}$}
+\end{subfigure}
+\caption{Second-order coefficient plots of the identifiable ICSOR affine core in measured space. These plots separate pure operating curvature, mixed operating-influent interactions, and pure influent interactions, enabling a direct engineering reading of the model structure developed in Section~2.}
+\label{fig:icsor_coeff_second_order}
+\end{figure}
+
+Figure~\ref{fig:icsor_coeff_first_order} shows that the intercept and the first-order blocks already recover an interpretable engineering story. The bias vector $b_y$ is dominated by COD, with smaller positive baseline contributions for VSS, TSS, and TN, a negative offset for TKN, and an approximately zero offset for TP. This means that, in the affine core alone, the model is anchored primarily by organic-load and solids-related baseline structure, whereas phosphorus is explained much less by a free intercept and much more by influent-dependent and invariant-driven terms.
+
+The operating block $W_{u,y}$ reveals that aeration is the dominant first-order operational lever in measured space. HRT coefficients are weak for nearly every measured output except COD, whereas the aeration column carries the strongest signed structure: a pronounced negative association with COD, a smaller negative association with VSS, modest positive contributions to TKN and TSS, and near-zero first-order influence on TP. This matches the process interpretation of the reactor: changes in oxygen supply directly redistribute oxidation and biomass-related responses, whereas HRT enters more weakly at first order and appears mainly through interaction structure.
+
+The combined influent block $W_{in,y} + H$ is structured and sparse rather than diffuse. COD and the solids outputs draw from a broader set of influent channels, while the TP row is concentrated on a smaller phosphorus-relevant subset. The most prominent columns are associated with dissolved oxygen and nutrient-bearing fractions, confirming that the invariant carry-through term $Hc_{in}$ and the learned linear correction $W_{in,y}c_{in}$ work together to preserve a physically organized dependence on influent composition rather than spreading weight indiscriminately across all 21 ASM2d-TSN influent states.
+
+Figure~\ref{fig:icsor_coeff_second_order} further clarifies where ICSOR locates nonlinearity. In $\Theta_{uu,y}$, the dominant curvature is concentrated almost entirely in the aeration-aeration entry. The HRT-HRT and HRT$\times$Aeration terms are nearly negligible across all outputs, whereas the aeration-squared term is strongly positive for COD and TKN, strongly negative for TSS and VSS, and close to zero for TP. Thus, the principal nonlinear operating behavior learned by ICSOR is not generic curvature in all process levers, but a specific curvature in the oxygen-supply direction.
+
+The mixed block $\Theta_{uc,y}$ shows that aeration does not act independently of the incoming material inventory. Across COD, TN, TKN, TSS, and VSS, the aeration row contains the dominant interaction pattern, while the HRT row remains comparatively flat. COD exhibits the richest mixed structure, with alternating positive and negative hotspots across soluble and particulate influent fractions, indicating that the effectiveness of aeration depends strongly on the entering ASM2d-TSN composition. By contrast, the TP panel is nearly blank, reinforcing the earlier conclusion from Table~\ref{tab:per_target}: phosphorus prediction in ICSOR is governed primarily by invariant-preserving low-order structure rather than by diffuse operating-influent interactions.
+
+Finally, the influent-influent block $\Theta_{cc,y}$ is highly sparse. Most of its entries are near zero, with only a small number of localized hotspots centered on dissolved oxygen and selected nitrogen- and phosphorus-bearing channels. This sparsity is itself an interpretability result. Although ICSOR permits the full second-order term $c_{in} \otimes c_{in}$, the identified affine core does not distribute weight densely across all 441 possible pairs. Instead, it isolates a limited set of nonlinear state couplings that materially influence each measured output. This makes the model auditable: a process engineer can inspect a small subset of coefficient hotspots and trace how operating variables and influent fractions combine to shape predicted effluent quality.
+
+These coefficient plots clarify why ICSOR remains valuable even when the MLP architectures achieve lower aggregate error. The MLP models deliver better predictive accuracy, but they do not expose an analogous decomposition into baseline, operating, influent, and interaction effects. ICSOR therefore occupies a distinct point on the accuracy-interpretability frontier: it sacrifices some predictive performance relative to the best black-box models in exchange for a coefficient structure that is transparent, physically organized, and directly aligned with the notation of Section~2.
+
+\subsection{Synthesis and Discussion}
+
+The results presented in Sections~4.1--4.7 establish a comprehensive picture of how ICSOR and eleven classical regressors compare on the ASM2d-TSN steady-state prediction task. The key findings, organized around the evaluation criteria documented in Section~3, are synthesized below.
+
+\subsubsection{Predictive Accuracy}
+
+The three MLP architectures form a decisively superior performance tier. MLP Medium achieves the lowest aggregate RMSE (4.928), the best NAULC (6.350), and the best overall average rank (1.99). Its dominance is consistent across all five metrics and most targets, indicating genuine predictive superiority rather than a metric-specific artifact. Among non-MLP models, ICSOR ranks 6th at the largest training size but rises to 4th in the average rank across all training sizes, demonstrating that its physics-informed structure provides consistent competitiveness that pure point-estimate rankings understate.
+
+The 31\% RMSE improvement of MLP Medium over SVR (the best non-MLP model at the largest training size) is attributable to the universal function approximation capacity of the two-hidden-layer $(96, 48)$ architecture with ReLU activation, which permits the model to capture the multiplicative Monod-type kinetics that define the ASM2d-TSN process without explicit feature engineering. In contrast, ICSOR's second-order feature map $\phi(u, c_{in})$ (Eq.~3) captures all pairwise interactions ($u \otimes c_{in}$, $c_{in} \otimes c_{in}$) but cannot represent higher-order products, limiting its approximation capacity for strongly nonlinear targets like COD and TSS. This structural difference motivates a clear practical delimiter: ICSOR is the model of choice when interpretability, constraint enforcement, and moderate accuracy are required; the MLP models are preferred when raw predictive performance is the sole criterion.
+
+\subsubsection{Stability and Generalization}
+
+ICSOR's generalization gap of 4.9\% is the smallest among all models with competitive absolute accuracy ($\mathrm{RMSE} < 10$). This translates to a practical advantage: ICSOR's deployment performance can be reliably predicted from its validation performance, with minimal risk of degradation under modest distribution shifts. In contrast, MLP Medium and MLP Deep exhibit gaps of 58\% and 77\%, respectively, indicating substantial memorization of training patterns. While this memorization has not yet degraded their generalization to the point where simpler models win, it represents a latent risk for real-world deployment, particularly in wastewater treatment systems where influent characteristics are inherently non-stationary.
+
+The average rank stability of ICSOR (Table~\ref{tab:avg_rank}: spread of 0.23 across metrics) further confirms that the stoichiometric projection acts as an effective regularizer. The physical constraint manifold $\mathcal{S}_+(c_{in})$ restricts the hypothesis space, yielding predictions that are not only physically consistent but also statistically stable. This regularization mechanism is fundamentally different from the parameter-space penalties (L2 regularization) applied to the MLP models: it operates in the output space and enforces a hard physical constraint rather than a soft statistical preference.
+
+\subsubsection{Sample Efficiency and Target Robustness}
+
+The NAULC analysis (Table~\ref{tab:naulc}) and the per-target leaderboard (Table~\ref{tab:per_target}) together reveal that ICSOR's relative standing improves when sample efficiency and target-specific performance are considered. ICSOR achieves NAULC rank~4 globally and rank~1 specifically on TP. The TP result is not coincidental: in the ASM2d-TSN stoichiometric matrix $\nu$, the phosphorus-related components ($X_{PAO}$, $X_{PP}$, $S_{PO4}$, $X_{MeP}$) participate in multiple reactions with tight conservation laws, and the invariant projection directly enforces the phosphorus mass balance $Ac^* = Ac_{in}$ that constrains these components. The observed 6.3\% RMSE improvement of ICSOR over the best MLP model on TP quantifies the benefit of incorporating this physical structure.
+
+Conversely, for targets driven by empirical aggregate dynamics (COD: rank~4, TSS: rank~7, VSS: rank~7), ICSOR's constrained quadratic framework is at a structural disadvantage. The relationship between operational variables and organic removal or solids partitioning involves higher-order Monod kinetics and biomass growth dynamics that exceed the representational capacity of the partitioned second-order feature map. This target-dependent behavior aligns precisely with the epistemological boundaries discussed in Section~2.6: the identifiable affine core $M = GB$ captures all second-order interactions, but the physical correction $\delta_+$ cannot compensate for missing higher-order terms.
+
+\subsubsection{Physical Plausibility}
+
+ICSOR is the only model that provides hard guarantees on both stoichiometric invariance and prediction non-negativity. The constraint residual $\|Ac^* - Ac_{in}\|_2 \approx 5 \times 10^{-11}$ (Fig.~\ref{fig:icsor_diagnostics}b) confirms machine-precision enforcement of the conservation law across all training sizes. The monotonically decreasing raw-to-projected adjustment (Fig.~\ref{fig:icsor_diagnostics}a) demonstrates that the unconstrained surrogate $c_{raw} = \widehat{B}_{ls}\,\phi(u, c_{in})$ progressively aligns with the physical constraints as more training data become available, indicating that the model \textit{learns} the physics rather than relying entirely on the post-hoc correction.
+
+In contrast, PLS is the only classical model to produce physically impossible negative predictions (0.5\% of TKN predictions at 8{,}000 samples). While the remaining classical models produce no negatives in these experiments, this observation is empirical and data-dependent rather than structurally guaranteed. Under more extreme input conditions or smaller training sets, any unconstrained regressor could in principle yield negative effluent concentrations, a failure mode that ICSOR prevents by construction through the non-negativity constraint $c^* \ge 0$ in the QP formulation (Eq.~6) and the entrywise non-negative structure of $I_{comp}$.
+
+For practical deployment in regulated wastewater treatment, this structural guarantee has implications beyond numerical accuracy. Negative predicted concentrations can corrupt downstream process optimization, trigger spurious control actions, and undermine regulatory compliance assessments. The explicit physical plausibility provided by ICSOR represents an engineering safeguard that purely data-driven models cannot replicate without ad-hoc output clipping, which is known to introduce its own biases.
+
+\subsubsection{Interpretability and Engineering Transparency}
+
+The coefficient plots in Section~4.7 demonstrate that ICSOR's interpretability is not a vague qualitative claim but a concrete property of the identifiable affine core $M$. The first-order operating block $W_{u,y}$ shows that aeration is the dominant direct operating lever, while HRT is comparatively weak at first order. The second-order operating block $\Theta_{uu,y}$ shows that the principal curvature of the learned surrogate is also concentrated in aeration, especially for COD, TKN, TSS, and VSS. The mixed block $\Theta_{uc,y}$ further reveals that aeration sensitivity depends on the incoming ASM2d-TSN composition rather than acting as a uniform shift across all influent states. Finally, the sparsity of $\Theta_{cc,y}$ means that the model's nonlinear influent couplings remain localized and auditable rather than diffuse and opaque.
+
+This interpretability is directly relevant to the comparative results. It helps explain why ICSOR is especially competitive on TP: the coefficient structure for phosphorus is dominated by low-order, invariant-consistent terms and exhibits very weak higher-order interaction clutter. It also helps explain why ICSOR is weaker on COD and the solids outputs: those panels contain richer mixed and nonlinear structure, signaling that the problem geometry in those channels is more complex than a constrained quadratic representation can fully capture. None of the black-box baselines offers an analogous explanatory decomposition. ICSOR therefore contributes not only a physically admissible prediction, but also an explicit map of how operating conditions, influent composition, and their interactions enter the surrogate, which is a substantive engineering advantage for diagnosis, sensitivity analysis, and process interpretation.
 
 \end{document}
