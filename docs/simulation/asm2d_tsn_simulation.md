@@ -66,8 +66,8 @@ For each sampled operating point, the repository solves $r(x) = 0$ with a bounde
 
 Inputs to the simulation are configuration-driven:
 
-- hydraulic retention time and aeration sampled from configured operational ranges
-- influent state variables sampled from configured state ranges
+- hydraulic retention time and aeration sampled from configured operational ranges using Latin Hypercube Sampling (LHS)
+- influent state variables sampled from configured state ranges using Latin Hypercube Sampling (LHS)
 - the ordered process list
 - the ordered state-variable list
 - the ordered composite-variable list
@@ -99,7 +99,7 @@ The repository currently implements:
 4. generating the stoichiometric matrix sheet with direct and continuity-derived formulas
 5. generating the composition matrix sheet with parameter-linked formulas
 6. building numeric Petersen and composition matrices from the configured workbook contract
-7. sampling operational conditions and influent states
+7. sampling operational conditions and influent states from configured ranges using seeded Latin Hypercube Sampling for well-stratified coverage
 8. solving mechanistic steady-state effluent states and persisting both component-fraction and composite views
 9. writing the canonical `.xlsx` file under `data/asm2d-tsn`
 10. persisting simulation artifacts under `data/asm2d-tsn/simulation`
@@ -112,7 +112,7 @@ Runtime architecture:
 
 1. `parameter_table` is written first as the source table for model constants
 2. the numeric Petersen and composition matrices are built from the same configured coefficient definitions
-3. operational conditions and influent states are sampled from configured ranges
+3. operational conditions and influent states are jointly sampled from configured ranges using seeded Latin Hypercube Sampling (LHS) via `scipy.stats.qmc`; for dataset generation a pooled LHS design of `chunk_size × max_sample_attempts` points is pre-generated per chunk so that each retry consumes the next LHS point rather than an independent draw
 4. a bounded nonlinear steady-state solve updates the internal state, with multistart and dynamic-relaxation fallback when the first pass is not acceptable
 5. the composition matrix maps the internal state to the composite output space
 6. only converged operating points are admitted into the generated dataset

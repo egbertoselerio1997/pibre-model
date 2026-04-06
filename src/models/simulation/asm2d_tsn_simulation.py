@@ -357,6 +357,7 @@ def build_asm2d_tsn_metadata(
         "simulation_name": MODEL_NAME,
         "n_samples": sample_count,
         "random_seed": random_seed,
+        "sampling_method": "latin_hypercube",
         "dependent_columns": dependent_columns,
         "independent_columns": operational_columns + influent_fraction_columns,
         "identifier_columns": [],
@@ -590,7 +591,13 @@ def sweep_asm2d_tsn_operating_space(
     operational_columns = list(runtime["operational_columns"])
     state_index = dict(matrix_bundle["state_index"])
     parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
-    rng = np.random.default_rng(seed)
+
+    # Pre-generate a joint LHS design for all sweep points.
+    all_columns = state_columns + operational_columns
+    all_ranges = {**runtime["influent_state_ranges"], **runtime["operational_ranges"]}
+    candidate_pool = _generate_lhs_candidate_pool(seed, n_samples, all_columns, all_ranges)
+    n_state = len(state_columns)
+
     influent_samples = np.zeros((n_samples, len(state_columns)), dtype=float)
     operational_samples = np.zeros((n_samples, len(operational_columns)), dtype=float)
     effluent_samples = np.zeros((n_samples, len(state_columns)), dtype=float)
@@ -604,9 +611,9 @@ def sweep_asm2d_tsn_operating_space(
     )
     try:
         for sample_index in range(n_samples):
-            sampled_state = _sample_named_ranges(rng, 1, state_columns, runtime["influent_state_ranges"])[0]
+            sampled_state = candidate_pool[sample_index, :n_state]
             influent_state = _build_influent_state_sample(sampled_state, state_index, parameter_values)
-            operating_point = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
+            operating_point = candidate_pool[sample_index, n_state:]
             effluent_state, diagnostics = simulate_asm2d_tsn_steady_state(
                 influent_state=influent_state,
                 hrt_hours=float(operating_point[0]),
@@ -840,18 +847,43 @@ def _build_state_index(state_columns: list[str]) -> dict[str, int]:
     return {name: position for position, name in enumerate(state_columns)}
 
 
-def _sample_named_ranges(
-    rng: np.random.Generator,
-    sample_count: int,
+def _generate_lhs_candidate_pool(
+    seed: int,
+    n_points: int,
     ordered_names: list[str],
     ranges: Mapping[str, Any],
 ) -> np.ndarray:
-    sampled = np.zeros((sample_count, len(ordered_names)), dtype=float)
-    for column_index, column_name in enumerate(ordered_names):
-        lower_bound, upper_bound = ranges[column_name]
-        sampled[:, column_index] = rng.uniform(float(lower_bound), float(upper_bound), sample_count)
+    """Generate n_points Latin Hypercube samples scaled to the configured parameter ranges.
 
-    return sampled
+    For degenerate ranges where lower == upper the returned column is the constant
+    lower-bound value.  An empty array is returned when n_points or the number of
+    dimensions is zero.
+    """
+    from scipy.stats.qmc import LatinHypercube, scale as qmc_scale
+
+    n_dims = len(ordered_names)
+    if n_points == 0 or n_dims == 0:
+        return np.zeros((n_points, n_dims), dtype=float)
+
+    lower_bounds = np.array([float(ranges[name][0]) for name in ordered_names], dtype=float)
+    upper_bounds = np.array([float(ranges[name][1]) for name in ordered_names], dtype=float)
+
+    degenerate_mask = lower_bounds == upper_bounds
+    active_indices = np.where(~degenerate_mask)[0]
+
+    result = np.empty((n_points, n_dims), dtype=float)
+    # Fill constant values for degenerate dimensions
+    for idx in np.where(degenerate_mask)[0]:
+        result[:, idx] = lower_bounds[idx]
+
+    if len(active_indices) == 0:
+        return result
+
+    sampler = LatinHypercube(d=len(active_indices), seed=seed)
+    unit_samples = sampler.random(n=n_points)
+    scaled = qmc_scale(unit_samples, lower_bounds[active_indices], upper_bounds[active_indices])
+    result[:, active_indices] = scaled
+    return result
 
 
 def _monod(numerator: float, half_saturation: float) -> float:
@@ -1323,7 +1355,16 @@ def _generate_asm2d_tsn_dataset_chunk(
     measured_output_columns = list(runtime["measured_output_columns"])
     state_index = dict(matrix_bundle["state_index"])
     parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
-    rng = np.random.default_rng(chunk_seed)
+
+    # Pre-generate a joint LHS candidate pool covering all retry slots.
+    # Influent-state and operational columns are combined into a single LHS design
+    # so their stratification is jointly controlled.  Sequential consumption means
+    # each retry draws the next LHS point rather than an independent uniform draw.
+    total_candidates = chunk_size * max_sample_attempts
+    all_columns = state_columns + operational_columns
+    all_ranges = {**runtime["influent_state_ranges"], **runtime["operational_ranges"]}
+    candidate_pool = _generate_lhs_candidate_pool(chunk_seed, total_candidates, all_columns, all_ranges)
+    n_state = len(state_columns)
 
     influent_states = np.zeros((chunk_size, len(state_columns)), dtype=float)
     operational = np.zeros((chunk_size, len(operational_columns)), dtype=float)
@@ -1335,9 +1376,10 @@ def _generate_asm2d_tsn_dataset_chunk(
     for local_index in range(chunk_size):
         last_error: RuntimeError | None = None
         for attempt_index in range(max_sample_attempts):
-            sampled_state = _sample_named_ranges(rng, 1, state_columns, runtime["influent_state_ranges"])[0]
+            candidate_index = local_index * max_sample_attempts + attempt_index
+            sampled_state = candidate_pool[candidate_index, :n_state]
             candidate_influent = _build_influent_state_sample(sampled_state, state_index, parameter_values)
-            candidate_operational = _sample_named_ranges(rng, 1, operational_columns, runtime["operational_ranges"])[0]
+            candidate_operational = candidate_pool[candidate_index, n_state:]
 
             try:
                 effluent_state, diagnostics = simulate_asm2d_tsn_steady_state(

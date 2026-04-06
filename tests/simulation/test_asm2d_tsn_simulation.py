@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from src.models.simulation.asm2d_tsn_simulation import (
     _build_influent_state_sample,
     _build_parameter_value_map,
+    _generate_lhs_candidate_pool,
     generate_asm2d_tsn_dataset,
     get_asm2d_tsn_matrices,
     create_asm2d_tsn_workbook,
@@ -308,6 +309,155 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         self.assertGreaterEqual(sweep_result["summary"]["accepted_count"], 1)
         self.assertIn("residual_max_quantiles", sweep_result["summary"])
         self.assertIn("selected_strategy_counts", sweep_result["summary"])
+
+
+class Asm2dTsnLhsSamplingTests(unittest.TestCase):
+    def test_generate_lhs_candidate_pool_returns_correct_shape(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        state_columns = list(params["workbook"]["state_columns"])
+        n_points = 20
+        pool = _generate_lhs_candidate_pool(
+            seed=0, n_points=n_points, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+
+        self.assertEqual(pool.shape, (n_points, len(state_columns)))
+
+    def test_generate_lhs_candidate_pool_is_within_configured_bounds(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        state_columns = list(params["workbook"]["state_columns"])
+        pool = _generate_lhs_candidate_pool(
+            seed=42, n_points=50, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+
+        for col_idx, name in enumerate(state_columns):
+            lo, hi = params["influent_state_ranges"][name]
+            self.assertTrue(
+                np.all(pool[:, col_idx] >= float(lo) - 1e-9),
+                msg=f"{name} samples below lower bound",
+            )
+            self.assertTrue(
+                np.all(pool[:, col_idx] <= float(hi) + 1e-9),
+                msg=f"{name} samples above upper bound",
+            )
+
+    def test_generate_lhs_candidate_pool_is_deterministic_with_same_seed(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        state_columns = list(params["workbook"]["state_columns"])
+        pool_a = _generate_lhs_candidate_pool(
+            seed=7, n_points=10, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+        pool_b = _generate_lhs_candidate_pool(
+            seed=7, n_points=10, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+
+        np.testing.assert_array_equal(pool_a, pool_b)
+
+    def test_generate_lhs_candidate_pool_differs_across_seeds(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        state_columns = list(params["workbook"]["state_columns"])
+        pool_a = _generate_lhs_candidate_pool(
+            seed=1, n_points=10, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+        pool_b = _generate_lhs_candidate_pool(
+            seed=2, n_points=10, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+
+        self.assertFalse(np.array_equal(pool_a, pool_b))
+
+    def test_generate_lhs_candidate_pool_handles_degenerate_bounds(self) -> None:
+        degenerate_ranges = {"x": [3.5, 3.5]}
+        pool = _generate_lhs_candidate_pool(
+            seed=0, n_points=5, ordered_names=["x"], ranges=degenerate_ranges
+        )
+
+        self.assertEqual(pool.shape, (5, 1))
+        np.testing.assert_allclose(pool[:, 0], 3.5)
+
+    def test_generate_lhs_candidate_pool_returns_empty_for_zero_points(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        state_columns = list(params["workbook"]["state_columns"])
+        pool = _generate_lhs_candidate_pool(
+            seed=0, n_points=0, ordered_names=state_columns, ranges=params["influent_state_ranges"]
+        )
+
+        self.assertEqual(pool.shape, (0, len(state_columns)))
+
+    def test_generate_dataset_metadata_reports_latin_hypercube_sampling(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        _, metadata, _ = generate_asm2d_tsn_dataset(
+            model_params=params, n_samples=4, random_seed=7, parallel_workers=1
+        )
+
+        self.assertEqual(metadata["sampling_method"], "latin_hypercube")
+
+    def test_generate_dataset_is_reproducible_with_same_seed(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        dataset_a, _, _ = generate_asm2d_tsn_dataset(
+            model_params=params, n_samples=8, random_seed=11, parallel_workers=1
+        )
+        dataset_b, _, _ = generate_asm2d_tsn_dataset(
+            model_params=params, n_samples=8, random_seed=11, parallel_workers=1
+        )
+
+        pd = __import__("pandas")
+        pd.testing.assert_frame_equal(dataset_a, dataset_b)
+
+    def test_generate_dataset_samples_within_configured_ranges(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        dataset, metadata, _ = generate_asm2d_tsn_dataset(
+            model_params=params, n_samples=10, random_seed=13, parallel_workers=1
+        )
+        influent_fraction_columns = metadata["influent_fraction_columns"]
+        state_columns = list(params["workbook"]["state_columns"])
+        operational_columns = list(params["operational_columns"])
+
+        # X_TSS is derived from continuity and is not directly LHS-sampled
+        derived_states = {"X_TSS"}
+        for state_name, col_name in zip(state_columns, influent_fraction_columns):
+            if state_name in derived_states:
+                continue
+            lo, hi = params["influent_state_ranges"][state_name]
+            col = dataset[col_name].to_numpy()
+            self.assertTrue(np.all(col >= float(lo) - 1e-9), msg=f"{col_name} below lower bound")
+            self.assertTrue(np.all(col <= float(hi) + 1e-9), msg=f"{col_name} above upper bound")
+
+        for op_name in operational_columns:
+            lo, hi = params["operational_ranges"][op_name]
+            col = dataset[op_name].to_numpy()
+            self.assertTrue(np.all(col >= float(lo) - 1e-9), msg=f"{op_name} below lower bound")
+            self.assertTrue(np.all(col <= float(hi) + 1e-9), msg=f"{op_name} above upper bound")
+
+    def test_sweep_is_reproducible_with_same_seed(self) -> None:
+        sweep_a = sweep_asm2d_tsn_operating_space(n_samples=8, random_seed=5, show_progress=False)
+        sweep_b = sweep_asm2d_tsn_operating_space(n_samples=8, random_seed=5, show_progress=False)
+
+        pd = __import__("pandas")
+        pd.testing.assert_frame_equal(sweep_a["influent_states"], sweep_b["influent_states"])
+        pd.testing.assert_frame_equal(sweep_a["operating_conditions"], sweep_b["operating_conditions"])
+
+    def test_sweep_samples_within_configured_ranges(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+        sweep_result = sweep_asm2d_tsn_operating_space(
+            model_params=params, n_samples=16, random_seed=7, show_progress=False
+        )
+        state_columns = list(params["workbook"]["state_columns"])
+        operational_columns = list(params["operational_columns"])
+        influent_arr = sweep_result["influent_states"].to_numpy()
+        operating_arr = sweep_result["operating_conditions"].to_numpy()
+
+        # X_TSS is derived from continuity and is not directly LHS-sampled
+        derived_states = {"X_TSS"}
+        for col_idx, state_name in enumerate(state_columns):
+            if state_name in derived_states:
+                continue
+            lo, hi = params["influent_state_ranges"][state_name]
+            self.assertTrue(np.all(influent_arr[:, col_idx] >= float(lo) - 1e-9), msg=f"{state_name} below lower bound")
+            self.assertTrue(np.all(influent_arr[:, col_idx] <= float(hi) + 1e-9), msg=f"{state_name} above upper bound")
+
+        for col_idx, op_name in enumerate(operational_columns):
+            lo, hi = params["operational_ranges"][op_name]
+            self.assertTrue(np.all(operating_arr[:, col_idx] >= float(lo) - 1e-9), msg=f"{op_name} below lower bound")
+            self.assertTrue(np.all(operating_arr[:, col_idx] <= float(hi) + 1e-9), msg=f"{op_name} above upper bound")
 
 
 if __name__ == "__main__":
