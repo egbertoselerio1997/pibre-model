@@ -816,6 +816,7 @@ def plot_metric_summary_lines(
 		raise ValueError("legend_location must be 'bottom' or 'right' when legend_outside is True.")
 
 	tokens = apply_pibre_plot_theme()
+	created_axes = ax is None
 	if ax is None:
 		figure, ax = plt.subplots(
 			figsize=figure_size,
@@ -884,7 +885,7 @@ def plot_metric_summary_lines(
 	if line_artists:
 		legend_labels = [line_artist.get_label() for line_artist in line_artists]
 		if legend_outside:
-			if ax is None:
+			if created_axes:
 				if legend_location == "bottom":
 					figure.subplots_adjust(bottom=0.28)
 				else:
