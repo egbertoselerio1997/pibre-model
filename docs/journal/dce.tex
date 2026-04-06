@@ -174,11 +174,15 @@ This blockwise expression is the cornerstone of the model's interpretability. A 
 
 \subsection{Estimation and Epistemological Boundaries}
 
-This affine relation dictates the epistemology of the framework. For a dataset of $N$ steady-state samples, let $\Phi \in \mathbb{R}^{N \times D}$ be the feature matrix, $Y \in \mathbb{R}^{N \times K}$ the measured output matrix, and $C_{in} \in \mathbb{R}^{N \times F}$ the influent state matrix. Defining the transformed target $\widetilde{Y} = Y - C_{in} H^T$, the dataset-level estimation equation is:
+That same affine-core relation dictates the epistemology of the framework. Stacking the single-sample expression $y_{aff} = M \phi(u, c_{in}) + H c_{in}$ over a dataset of $N$ steady-state samples yields:
 \begin{equation}
-\widetilde{Y} = \Phi M^T + E
+Y = \Phi M^T + C_{in} H^T + E
 \end{equation}
-Measured composite data uniquely identify the affine core $M$ via the least-squares pseudoinverse estimator $\widehat{M}^T = \Phi^+ \widetilde{Y}$. However, they do \textit{not} uniquely identify the latent component-space matrix $B$. If $N_B \in \mathbb{R}^{F \times D}$ satisfies $G N_B = 0$, then $G(B + N_B) = M$. 
+where $\Phi \in \mathbb{R}^{N \times D}$ is the feature matrix, $Y \in \mathbb{R}^{N \times K}$ the measured output matrix, $C_{in} \in \mathbb{R}^{N \times F}$ the influent state matrix, and $E \in \mathbb{R}^{N \times K}$ the residual matrix. Measured composite data therefore uniquely identify the affine core $M$ via the least-squares pseudoinverse estimator
+\begin{equation}
+\widehat{M}^T = \Phi^+\left(Y - C_{in} H^T\right)
+\end{equation}
+However, they do \textit{not} uniquely identify the latent component-space matrix $B$. If $N_B \in \mathbb{R}^{F \times D}$ satisfies $G N_B = 0$, then $G(B + N_B) = M$. 
 
 Consequently, the final deployed predictor is decomposed as:
 \begin{equation}
@@ -330,7 +334,7 @@ The ICSOR model was constructed exactly as described in Section~2. The input was
 \begin{equation*}
 \phi(u, c_{in}) = \begin{bmatrix} 1, & u^T, & c_{in}^T, & (u \otimes u)^T, & (c_{in} \otimes c_{in})^T, & (u \otimes c_{in})^T \end{bmatrix}^T \in \mathbb{R}^D
 \end{equation*}
-yielding a total feature dimension of $D = 1 + 2 + 21 + 4 + 441 + 42 = 511$, comprising 1 bias term, 2 linear operational terms, 21 linear influent terms, 4 operational self-product terms, 441 influent self-product terms, and 42 operation-influent interaction terms. The identifiable affine core $\widehat{M} \in \mathbb{R}^{K \times D}$ was estimated by the multivariate least-squares pseudoinverse $\widehat{M}^T = \Phi^+ \widetilde{Y}$ as described in Section~2.6. A minimum-Frobenius-norm representative $\widehat{B}_{ls} = G^+ \widehat{M}$ was then fixed to enable latent-component-space prediction.
+yielding a total feature dimension of $D = 1 + 2 + 21 + 4 + 441 + 42 = 511$, comprising 1 bias term, 2 linear operational terms, 21 linear influent terms, 4 operational self-product terms, 441 influent self-product terms, and 42 operation-influent interaction terms. The identifiable affine core $\widehat{M} \in \mathbb{R}^{K \times D}$ was estimated by the multivariate least-squares pseudoinverse $\widehat{M}^T = \Phi^+\left(Y - C_{in} H^T\right)$ as described in Section~2.6. A minimum-Frobenius-norm representative $\widehat{B}_{ls} = G^+ \widehat{M}$ was then fixed to enable latent-component-space prediction.
 
 Raw component-space predictions $c_{raw} = \widehat{B}_{ls}\, \phi(u, c_{in})$ were corrected in two stages following the hierarchical procedure of Section~2.4: first, the orthogonal affine projection $c_{aff} = P_{adm}\, c_{raw} + P_{inv}\, c_{in}$ enforced the invariant relation $Ac = Ac_{in}$; second, when $c_{aff}$ contained negative components, the reduced-dimension quadratic program (Eq.~8) was solved using the Operator Splitting Quadratic Program (OSQP) solver with absolute and relative tolerances of $10^{-8}$, a maximum of 10,000 iterations, and enabled polishing and warm starts. The corrected component state $c^*$ was then collapsed to the measured output via $y^* = I_{comp}\, c^*$.
 
@@ -761,7 +765,7 @@ Figure~\ref{fig:icsor_diagnostics}a shows the raw-to-projected correction magnit
 \label{fig:icsor_diagnostics}
 \end{figure}
 
-The correction magnitude begins at approximately 80.0 at 400 training samples and decreases monotonically to 69.9 at 8{,}000 samples, a 12.6\% reduction. This trend has a clear interpretation within the ICSOR framework developed in Section~2. As the training set grows, the least-squares estimate $\widehat{M}^T = \Phi^+ \widetilde{Y}$ (Section~2.6) becomes more accurate, and the induced latent representative $\widehat{B}_{ls} = G^+\widehat{M}$ yields raw component-space predictions $c_{raw}$ that are increasingly consistent with the stoichiometric invariants. The projection $c_{aff} = P_{adm}\,c_{raw} + P_{inv}\,c_{in}$ therefore needs to correct a progressively smaller deviation, reflected in the decreasing $\|c^* - c_{raw}\|_2$.
+The correction magnitude begins at approximately 80.0 at 400 training samples and decreases monotonically to 69.9 at 8{,}000 samples, a 12.6\% reduction. This trend has a clear interpretation within the ICSOR framework developed in Section~2. As the training set grows, the least-squares estimate of the affine core, $\widehat{M}^T = \Phi^+\left(Y - C_{in} H^T\right)$ (Section~2.6), becomes more accurate, and the induced latent representative $\widehat{B}_{ls} = G^+\widehat{M}$ yields raw component-space predictions $c_{raw}$ that are increasingly consistent with the stoichiometric invariants. The projection $c_{aff} = P_{adm}\,c_{raw} + P_{inv}\,c_{in}$ therefore needs to correct a progressively smaller deviation, reflected in the decreasing $\|c^* - c_{raw}\|_2$.
 
 Equally important, the standard deviation of the correction magnitude decreases from 7.55 at 400 samples to 0.23 at 8{,}000 samples---a 97\% reduction in variability. This stabilization indicates that ICSOR's raw predictions become highly consistent at large data sizes, requiring a nearly constant correction. This is a desirable operational property: the model's behavior becomes predictable, and the stoichiometric projection acts as a stable, deterministic post-processing layer rather than a stochastic rescue mechanism.
 
