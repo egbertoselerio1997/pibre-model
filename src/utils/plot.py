@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Sequence
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -25,13 +25,33 @@ PIBRE_THEME_TOKENS: dict[str, Any] = {
 	"minor_grid": "#EEF2F5",
 	"qualitative_cycle": [
 		"#0072B2",
-		"#E69F00",
-		"#009E73",
 		"#D55E00",
+		"#009E73",
+		"#7F3C8D",
+		"#E69F00",
 		"#CC79A7",
 		"#56B4E9",
+		"#A73030",
 		"#F0E442",
 		"#4D4D4D",
+		"#11A579",
+		"#3969AC",
+		"#C97B00",
+	],
+	"line_marker_cycle": ["o", "s", "^", "D", "P", "X", "v", "<", ">", "h", "p", "8"],
+	"line_style_cycle": [
+		"-",
+		"--",
+		"-.",
+		":",
+		(0, (5, 1)),
+		(0, (3, 1, 1, 1)),
+		(0, (7, 2)),
+		(0, (1, 1)),
+		(0, (5, 1, 1, 1)),
+		(0, (3, 2, 1, 2)),
+		(0, (9, 2, 1, 2)),
+		(0, (2, 1)),
 	],
 	"missing_color": "#B0B7BF",
 }
@@ -763,6 +783,13 @@ def plot_metric_summary_lines(
 	ax: Any | None = None,
 	figure_size: tuple[float, float] = (12.0, 6.5),
 	marker: str = "o",
+	marker_cycle: Sequence[str] | None = None,
+	linestyle_cycle: Sequence[Any] | None = None,
+	color_cycle: Sequence[str] | None = None,
+	legend_outside: bool = False,
+	legend_location: str = "best",
+	legend_bbox_to_anchor: tuple[float, float] | None = None,
+	legend_columns: int = 2,
 ) -> tuple[Any, Any]:
 	"""Plot one comparison line per group with optional uncertainty bands."""
 
@@ -776,14 +803,29 @@ def plot_metric_summary_lines(
 	if missing_columns:
 		missing_display = ", ".join(missing_columns)
 		raise KeyError(f"summary_frame is missing required columns: {missing_display}")
+	if marker_cycle is not None and len(marker_cycle) == 0:
+		raise ValueError("marker_cycle must contain at least one marker when provided.")
+	if linestyle_cycle is not None and len(linestyle_cycle) == 0:
+		raise ValueError("linestyle_cycle must contain at least one line style when provided.")
+	if color_cycle is not None and len(color_cycle) == 0:
+		raise ValueError("color_cycle must contain at least one color when provided.")
+	if legend_outside and legend_location not in {"bottom", "right"}:
+		raise ValueError("legend_location must be 'bottom' or 'right' when legend_outside is True.")
 
 	tokens = apply_pibre_plot_theme()
 	if ax is None:
-		figure, ax = plt.subplots(figsize=figure_size, dpi=140, constrained_layout=True)
+		figure, ax = plt.subplots(
+			figsize=figure_size,
+			dpi=140,
+			constrained_layout=not legend_outside,
+		)
 	else:
 		figure = ax.figure
 
 	resolved_group_order = list(dict.fromkeys(summary_frame[str(group_column)].astype(str).tolist()))
+	resolved_color_cycle = list(color_cycle) if color_cycle is not None else list(tokens["qualitative_cycle"])
+	resolved_marker_cycle = list(marker_cycle) if marker_cycle is not None else [marker]
+	resolved_linestyle_cycle = list(linestyle_cycle) if linestyle_cycle is not None else ["-"]
 	line_artists: list[Any] = []
 	band_artists: list[Any] = []
 
@@ -795,15 +837,22 @@ def plot_metric_summary_lines(
 		if group_frame.empty:
 			continue
 
-		color = tokens["qualitative_cycle"][group_index % len(tokens["qualitative_cycle"])]
+		color = resolved_color_cycle[group_index % len(resolved_color_cycle)]
+		marker_value = resolved_marker_cycle[group_index % len(resolved_marker_cycle)]
+		linestyle_value = resolved_linestyle_cycle[group_index % len(resolved_linestyle_cycle)]
 		x_values = group_frame[str(x_column)].to_numpy(dtype=float)
 		y_values = group_frame[str(y_column)].to_numpy(dtype=float)
 		line_artist = ax.plot(
 			x_values,
 			y_values,
 			color=color,
-			marker=marker,
-			markersize=5.5,
+			linestyle=linestyle_value,
+			marker=marker_value,
+			markersize=6.2,
+			markerfacecolor=color,
+			markeredgecolor=tokens["primary_text"],
+			markeredgewidth=0.7,
+			linewidth=2.25,
 			label=group_name,
 		)[0]
 		line_artists.append(line_artist)
@@ -816,7 +865,7 @@ def plot_metric_summary_lines(
 				lower_values,
 				upper_values,
 				color=color,
-				alpha=0.14,
+				alpha=0.1,
 				linewidth=0.0,
 			)
 			band_artists.append(band_artist)
@@ -828,7 +877,42 @@ def plot_metric_summary_lines(
 	ax.grid(which="major", color=tokens["major_grid"], alpha=0.45)
 	ax.grid(which="minor", color=tokens["minor_grid"], alpha=0.3)
 	ax.minorticks_on()
-	ax.legend(title=legend_title, loc="best", ncol=2)
+	legend = None
+	if line_artists:
+		legend_labels = [line_artist.get_label() for line_artist in line_artists]
+		if legend_outside:
+			if ax is None:
+				if legend_location == "bottom":
+					figure.subplots_adjust(bottom=0.28)
+				else:
+					figure.subplots_adjust(right=0.78)
+			if legend_location == "bottom":
+				legend = figure.legend(
+					line_artists,
+					legend_labels,
+					title=legend_title,
+					loc="lower center",
+					bbox_to_anchor=legend_bbox_to_anchor or (0.5, 0.02),
+					ncol=max(1, int(legend_columns)),
+					borderaxespad=0.0,
+				)
+			else:
+				legend = figure.legend(
+					line_artists,
+					legend_labels,
+					title=legend_title,
+					loc="center left",
+					bbox_to_anchor=legend_bbox_to_anchor or (0.8, 0.5),
+					ncol=max(1, int(legend_columns)),
+					borderaxespad=0.0,
+				)
+		else:
+			legend = ax.legend(
+				title=legend_title,
+				loc=legend_location,
+				bbox_to_anchor=legend_bbox_to_anchor,
+				ncol=max(1, int(legend_columns)),
+			)
 	setattr(
 		ax,
 		"_pibre_metric_summary_lines",
@@ -836,6 +920,7 @@ def plot_metric_summary_lines(
 			"lines": line_artists,
 			"bands": band_artists,
 			"group_order": resolved_group_order,
+			"legend": legend,
 		},
 	)
 

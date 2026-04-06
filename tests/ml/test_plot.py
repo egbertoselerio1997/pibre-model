@@ -191,6 +191,38 @@ class PlotHelperTests(unittest.TestCase):
 		self.assertEqual(axis.get_xlabel(), "Training samples")
 		self.assertEqual(axis.get_ylabel(), "Effective RMSE")
 
+	def test_plot_metric_summary_lines_supports_external_legend_and_style_cycles(self) -> None:
+		summary_frame = _build_metric_summary_frame()
+
+		figure, axis = plot_metric_summary_lines(
+			summary_frame,
+			x_column="train_size",
+			y_column="metric_mean",
+			group_column="model_label",
+			lower_column="metric_q25",
+			upper_column="metric_q75",
+			title="Effective RMSE learning curves",
+			x_label="Training samples",
+			y_label="Effective RMSE",
+			marker_cycle=["o", "s"],
+			linestyle_cycle=["-", "--"],
+			legend_outside=True,
+			legend_location="bottom",
+			legend_columns=1,
+		)
+
+		artist_bundle = getattr(axis, "_pibre_metric_summary_lines")
+		legend_text = [text.get_text() for text in figure.legends[0].texts]
+		self.assertIs(figure, axis.figure)
+		self.assertIsNone(axis.get_legend())
+		self.assertEqual(len(figure.legends), 1)
+		self.assertIs(artist_bundle["legend"], figure.legends[0])
+		self.assertEqual(legend_text, ["Model A", "Model B"])
+		self.assertEqual(artist_bundle["lines"][0].get_marker(), "o")
+		self.assertEqual(artist_bundle["lines"][1].get_marker(), "s")
+		self.assertEqual(artist_bundle["lines"][0].get_linestyle(), "-")
+		self.assertEqual(artist_bundle["lines"][1].get_linestyle(), "--")
+
 	def test_plot_metric_heatmap_returns_annotations_and_colorbar(self) -> None:
 		heatmap_frame = pd.DataFrame(
 			[[1.0, 2.0, 3.0], [4.0, np.nan, 6.0]],
