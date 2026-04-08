@@ -4,7 +4,7 @@
 
 This article presents a non-negative formulation of invariant-constrained second-order regression (ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and enforcing non-negativity of the predicted effluent ASM component state. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. An affine invariant projection resolves only part of that mismatch because it restores stoichiometric consistency but can still produce negative component predictions. The non-negative ICSOR formulation therefore uses a two-stage correction in component space. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, a convex projection maps that raw prediction onto the intersection of the invariant-consistent affine set and the nonnegative orthant. The corrected component state is then collapsed into measured output space through a linear composition map.
 
-The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a strictly convex quadratic program, and the role of the earlier orthogonal affine projector is retained explicitly as a reference solution and inactive-constraint special case. In deployment, that quadratic program is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved. Accordingly, the affine core is identifiable from measured composite data, whereas the final inequality-constrained deployed predictor is fully specified only after a latent component-space representative has been fixed or additional component-space information has been supplied. The limits of exact closed-form uncertainty analysis for that deployed predictor are stated explicitly. The result is a precise formulation of what non-negative ICSOR guarantees, what is stabilized by ridge estimation of the affine core, how that shrinkage changes uncertainty quantification, and what must instead be handled through convex post-estimation correction.
+The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a strictly convex quadratic program, and the role of the earlier orthogonal affine projector is retained explicitly as a reference solution and inactive-constraint special case. In deployment, that quadratic program is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved. Accordingly, the affine core is identifiable from measured composite data, whereas the final inequality-constrained deployed predictor is fully specified only after a latent component-space representative has been fixed or additional component-space information has been supplied. The limits of exact closed-form uncertainty analysis for that deployed predictor are stated explicitly. The result is a precise formulation of what non-negative ICSOR guarantees, what remains estimated by least squares, and what must instead be handled through convex post-estimation correction.
 
 ## 1. Introduction and Modeling Objective
 
@@ -23,7 +23,7 @@ The model is constructed to answer one precise question:
 
 > Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state must satisfy the conserved quantities implied by the adopted stoichiometric model and must remain non-negative componentwise?
 
-The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by ridge regression. That last point requires care: measured composite data identify the affine core, ridge stabilization improves the conditioning of the high-dimensional second-order design at the price of shrinkage bias, and any component-space inequality correction in deployment requires either a chosen latent representative or additional component-space information. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and quadratic-program correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to convex non-negative projection, to collapse into measured space, and finally to estimation and uncertainty with explicit attention to the ridge-induced implications for uncertainty quantification.
+The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. That last point requires care: measured composite data identify the affine core, whereas any component-space inequality correction in deployment requires either a chosen latent representative or additional component-space information. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and quadratic-program correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to convex non-negative projection, to collapse into measured space, and finally to estimation and uncertainty.
 
 ## 2. Physical Scope, State Spaces, and Notation
 
@@ -73,14 +73,10 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $N_A$ | $\mathbb{R}^{F \times (F-q)}$ | Matrix whose columns form an orthonormal basis of $\operatorname{null}(A)$ |
 | $\phi(u, c_{in})$ | $\mathbb{R}^{D}$ | Engineered second-order feature map |
 | $D$ | scalar | Feature dimension, $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$ |
-| $\lambda$ | scalar | Ridge penalty parameter used in affine-core estimation |
-| $\Gamma$ | $\mathbb{R}^{D \times D}$ | Symmetric positive-semidefinite ridge penalty matrix, commonly diagonal with the intercept left unpenalized |
 | $B$ | $\mathbb{R}^{F \times D}$ | Raw component-space coefficient matrix |
 | $G$ | $\mathbb{R}^{K \times F}$ | Measured-space affine constrained operator, $G = I_{comp} P_{adm}$ |
 | $H$ | $\mathbb{R}^{K \times F}$ | Measured-space invariant carry-through operator, $H = I_{comp} P_{inv}$ |
 | $M$ | $\mathbb{R}^{K \times D}$ | Effective identifiable affine measured-space coefficient matrix, $M = G B$ |
-
-Throughout the estimation and uncertainty sections, $\lambda$ and $\Gamma$ are treated as fixed unless data-driven penalty selection is being discussed explicitly.
 
 The measured effluent variables are defined by the linear map
 
@@ -104,7 +100,7 @@ The framework rests on the following assumptions. These are not optional prefere
 8. **Constraint scope.** The final projection enforces the stoichiometric invariants implied by the chosen basis and system boundary together with componentwise non-negativity. It does not enforce upper bounds, kinetic feasibility, or thermodynamic admissibility beyond those conditions.
 9. **Influent feasibility.** The influent reference state is assumed non-negative in component space. Under that assumption the non-negative feasible set is non-empty because the influent state itself satisfies the invariant equalities.
 10. **Composite-sign scope.** Non-negative component predictions imply non-negative measured composites only when the relevant rows of $I_{comp}$ are entrywise non-negative. If the measurement convention uses negative coefficients, extra output-space sign constraints would be required for a composite non-negativity guarantee.
-11. **Statistical scope.** Ridge-based uncertainty statements are interpreted conditional on a fixed penalty parameter $\lambda$ and penalty matrix $\Gamma$ under independent-sample Gaussian multivariate linear-model assumptions. Closed-form bias and covariance expressions are available for the affine core, but classical unbiased OLS $t$-based intervals do not apply unchanged, and the final inequality-constrained deployed predictor generally requires resampling that repeats any data-driven tuning of $\lambda$.
+11. **Statistical scope.** Classical least-squares coefficient and affine-core prediction intervals are interpreted under independent-sample Gaussian multivariate linear-model assumptions. Exact finite-sample $t$-based intervals require a full-rank affine-core design and do not generally extend to the final inequality-constrained deployed predictor.
 
 These assumptions matter because each one narrows the scientific claim. A prediction that satisfies the invariant relations and componentwise non-negativity is physically better disciplined than the affine-only formulation, but it is still not automatically guaranteed to be fully process-realizable in every operating regime.
 
@@ -278,7 +274,7 @@ $$
 D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F
 $$
 
-Retaining the full vectorized quadratic blocks avoids hidden indexing conventions and makes the later estimation problem unambiguous. This second-order polynomial basis is a modeling choice rather than a theorem. It is used here because it retains linear terms, self-quadratic curvature, and operation-loading interactions in one explicit design matrix. The cost is rapid growth of $D$; when the sample count is not large relative to $D$, the later estimation problem can become ill-conditioned and motivates ridge regularization, as discussed in Section 8.4.
+Retaining the full vectorized quadratic blocks avoids hidden indexing conventions and makes the later estimation problem unambiguous. This second-order polynomial basis is a modeling choice rather than a theorem. It is used here because it retains linear terms, self-quadratic curvature, and operation-loading interactions in one explicit design matrix. The cost is rapid growth of $D$; when the sample count is not large relative to $D$, the later coefficient interpretation becomes fragile, as discussed in Section 8.4.
 
 ### 5.3 Raw effluent-state surrogate
 
@@ -725,7 +721,7 @@ This blockwise expression remains useful for interpretation, but it must now be 
 
 ## 8. Estimation and Identifiability from Measured Composite Data
 
-At the estimation stage, three objects must be kept distinct: the latent component-space coefficient matrix $B$, the affine measured-space core, and the final deployed predictor $y^*$. Measured composite data identify an affine-core fit in measured space directly, and in the present formulation that fit is estimated by ridge regression to stabilize the high-dimensional second-order design. They do not identify $B$ uniquely without additional component-space structure, and a further representability step may be needed before that measured-space fit can be used in a component-space deployment map of the form $M = G B$.
+At the estimation stage, three objects must be kept distinct: the latent component-space coefficient matrix $B$, the affine measured-space core, and the final deployed predictor $y^*$. Measured composite data identify an affine-core fit in measured space directly. They do not identify $B$ uniquely without additional component-space structure, and a further representability step may be needed before that measured-space fit can be used in a component-space deployment map of the form $M = G B$.
 
 ### 8.1 Dataset-level affine-core model
 
@@ -778,7 +774,7 @@ $$
 \widetilde Y = \Phi M^T + E
 $$
 
-This is the correct regression equation for ridge estimation from measured composite data when $A$, $I_{comp}$, $\lambda$, and $\Gamma$ are treated as known. It identifies the affine-core operator that would generate the deployed prediction whenever the non-negativity constraints are inactive.
+This is the correct regression equation for least-squares estimation from measured composite data when $A$ and $I_{comp}$ are treated as known. It identifies the affine-core operator that would generate the deployed prediction whenever the non-negativity constraints are inactive.
 
 ### 8.2 What the data identify
 
@@ -801,37 +797,45 @@ Thus, infinitely many different component-space matrices can generate the same a
 
 Failing to separate those two objects leads to overinterpretation of non-identifiable latent coefficients.
 
-### 8.3 Ridge estimator of the affine-core coefficients
+### 8.3 Least-squares estimator of the affine-core coefficients
 
-The affine-core estimator used here is the multivariate ridge solution
-
-$$
-\widehat M_\lambda^T = \arg\min_{Q \in \mathbb{R}^{D \times K}} \left\{ \lVert \widetilde Y - \Phi Q \rVert_F^2 + \lambda \lVert \Gamma^{1/2} Q \rVert_F^2 \right\}
-$$
-
-where $\lambda \ge 0$ controls the amount of shrinkage and $\Gamma \succeq 0$ defines which coefficient directions are penalized. A common choice is
+The natural estimator of $M$ is the least-squares solution of
 
 $$
-\Gamma = \operatorname{diag}(0, 1, \ldots, 1),
+\widehat M^T = \arg\min_{Q \in \mathbb{R}^{D \times K}} \lVert \widetilde Y - \Phi Q \rVert_F^2
 $$
 
-which leaves the intercept unpenalized and shrinks the remaining feature directions. Because ridge shrinkage is scale dependent, the non-intercept columns of $\Phi$ should either be centered and scaled before tuning $\lambda$ or the intended scaling should be encoded explicitly in $\Gamma$.
-
-When the penalized normal matrix is invertible, the solution is
+The Moore-Penrose solution is
 
 $$
-\widehat M_\lambda^T = (\Phi^T \Phi + \lambda \Gamma)^{-1} \Phi^T \widetilde Y,
+\widehat M^T = \Phi^+ \widetilde Y
 $$
 
-with the Moore-Penrose pseudoinverse used in place of the inverse if the penalized normal matrix is singular. The OLS estimator is recovered as the special case $\lambda = 0$ when the unpenalized normal equations are well posed.
+or equivalently
 
-This ridge stage is still a linear estimation step in measured space and is unchanged by the later introduction of non-negativity at deployment. The non-negative ICSOR formulation therefore does not replace coefficient estimation with a nonlinear estimator. It replaces the earlier OLS affine-core fit with a ridge-stabilized affine-core fit and applies the non-negative correction after that stage. If one intends to reconstruct a component-space surrogate, Section 8.5 shows that a representability step may still be required before deployment.
+$$
+\widehat M = \widetilde Y^T (\Phi^+)^T
+$$
 
-### 8.4 Ridge regularization, conditioning, and interpretability
+If $\Phi$ has full column rank, then
 
-Second-order feature maps can be high dimensional, and real wastewater datasets may not excite all directions of that design space. If $N < D$, full column rank is impossible from the outset; even when $N \ge D$, the design may still be rank deficient because some feature directions are weakly or redundantly excited. Ridge regularization is introduced precisely because those conditions make unpenalized estimation unstable or non-unique. With $\lambda > 0$ and a suitable penalty matrix $\Gamma$, the penalized affine-core fit remains well defined and numerically stable even when $\Phi$ is ill conditioned.
+$$
+\Phi^+ = (\Phi^T \Phi)^{-1} \Phi^T
+$$
 
-That numerical stability does not restore unique identification of the unpenalized coefficient vector. Instead, $\widehat M_\lambda$ is a penalty-dependent shrinkage estimate of the structurally identifiable affine core $M$. As $\lambda$ increases, coefficient magnitudes contract toward the null directions favored by $\Gamma$, and the fit trades variance for bias. Interpretation should therefore focus on fitted affine-core predictions, on coefficient patterns that remain stable across a reasonable range of penalties, or on grouped engineering effects rather than on one penalized coefficient in isolation. In practical terms, the modeler then has three defensible levers: reduce the feature basis, retune $\lambda$ and feature scaling, or shift the inferential emphasis from coefficients to predicted outputs and their uncertainty.
+and therefore
+
+$$
+\widehat M^T = (\Phi^T \Phi)^{-1} \Phi^T \widetilde Y
+$$
+
+The pseudoinverse expression is the general statement. The explicit inverse is only a full-rank special case.
+
+This least-squares stage is unchanged by the introduction of non-negativity. The non-negative ICSOR article does not replace coefficient estimation with a nonlinear estimator. It keeps least-squares estimation for the affine core and applies the non-negative correction after that stage. If one intends to reconstruct a component-space surrogate, Section 8.5 shows that a representability step may still be required before deployment.
+
+### 8.4 Rank deficiency and interpretability
+
+Second-order feature maps can be high dimensional, and real wastewater datasets may not excite all directions of that design space. If $N < D$, full column rank is impossible from the outset; even when $N \ge D$, the design may still be rank deficient because some feature directions are weakly or redundantly excited. In those cases, the fitted affine-core values remain well defined through the pseudoinverse, but the individual coefficients of $M$ are not uniquely identified. The minimum-norm pseudoinverse then returns one representative coefficient matrix, not a unique physical truth. Under rank deficiency, interpretation should focus on fitted affine-core predictions or on estimable linear functionals rather than on individual coefficients. In practical terms, the modeler then has three defensible options: reduce the feature basis, regularize the estimation problem, or shift the inferential emphasis from coefficients to predicted outputs and their uncertainty.
 
 ### 8.5 Reconstructing one admissible component-space coefficient matrix
 
@@ -855,51 +859,57 @@ $$
 
 for arbitrary $Z \in \mathbb{R}^{F \times D}$. The free matrix $Z$ is the algebraic statement of non-identifiability.
 
-After estimation, however, the available object is the penalized matrix $\widehat M_\lambda$ rather than an exact population matrix $M$. Define
+After estimation, however, the available object is $\widehat M$ rather than an exact population matrix $M$. The matrix
 
 $$
-\widehat B_\lambda = G^+ \widehat M_\lambda
+\widehat B_{ls} = G^+ \widehat M
 $$
 
-and the induced representable affine-core operator
+is always defined and gives the minimum-Frobenius-norm least-squares representative because
 
 $$
-\widehat M_{\lambda,G} = G \widehat B_\lambda = G G^+ \widehat M_\lambda.
+G \widehat B_{ls} = G G^+ \widehat M,
 $$
 
-The matrix $\widehat M_{\lambda,G}$ is the orthogonal projection of $\widehat M_\lambda$ onto $\operatorname{range}(G)$, so it equals $\widehat M_\lambda$ only when $\widehat M_\lambda$ already lies in $\operatorname{range}(G)$. Therefore $\widehat B_\lambda$ should be interpreted as a chosen latent representative for deployment, not as an identified physical coefficient matrix, and $\widehat M_{\lambda,G}$ is the corresponding representable affine core. Any other representative obtained by adding $(I_F - G^+ G) Z$ leaves that representable affine core unchanged but can alter the component-space raw state used by the later inequality correction.
+which is the orthogonal projection of $\widehat M$ onto $\operatorname{range}(G)$. Define the compatible affine-core operator
+
+$$
+\widehat M_G = G \widehat B_{ls} = G G^+ \widehat M.
+$$
+
+It satisfies $\widehat M_G = \widehat M$ only when $\widehat M$ already lies in $\operatorname{range}(G)$. Therefore $\widehat B_{ls}$ should be interpreted as a chosen latent representative for deployment, not as an identified physical coefficient matrix, and $\widehat M_G$ is the corresponding representable affine core. Any other representative obtained by adding $(I_F - G^+ G) Z$ leaves that representable affine core unchanged but can alter the component-space raw state used by the later inequality correction.
 
 ### 8.6 Final deployed predictor after estimation
 
-Once a component-space representative $\widehat B_\lambda$ has been fixed, the estimated raw component prediction for a new sample is
+Once a component-space representative $\widehat B$ has been fixed, the estimated raw component prediction for a new sample is
 
 $$
-\widehat c_{raw,\lambda} = \widehat B_\lambda \phi(u, c_{in})
+\widehat c_{raw} = \widehat B \phi(u, c_{in})
 $$
 
-The final deployed non-negative component prediction is then obtained by the same staged component-space logic introduced in Section 6: keep $\widehat c_{raw,\lambda}$ if it is already feasible, otherwise apply the affine projector, and solve the quadratic program only when the affine projector still violates non-negativity. In compact notation,
+The final deployed non-negative component prediction is then obtained by the same staged component-space logic introduced in Section 6: keep $\widehat c_{raw}$ if it is already feasible, otherwise apply the affine projector, and solve the quadratic program only when the affine projector still violates non-negativity. In compact notation,
 
 $$
-\widehat c_\lambda^* = \operatorname{Proj}_{\mathcal{S}_+(c_{in})}(\widehat c_{raw,\lambda})
+\widehat c^* = \operatorname{Proj}_{\mathcal{S}_+(c_{in})}(\widehat c_{raw})
 $$
 
 and the final deployed measured prediction is
 
 $$
-\widehat y_\lambda^* = I_{comp} \widehat c_\lambda^*.
+\widehat y^* = I_{comp} \widehat c^*
 $$
 
-This last map is deterministic conditional on the chosen representative $\widehat B_\lambda$, but it is not globally affine in $\phi(u, c_{in})$. If the non-negativity constraints are inactive, then the deployed prediction collapses to the representable affine core
+This last map is deterministic conditional on the chosen representative $\widehat B$, but it is not globally affine in $\phi(u, c_{in})$. If the non-negativity constraints are inactive, then the deployed prediction collapses to the representable affine core
 
 $$
-\widehat y_{\lambda,aff,G} = \widehat M_{\lambda,G} \phi(u, c_{in}) + H c_{in},
+\widehat y_{aff,G} = \widehat M_G \phi(u, c_{in}) + H c_{in},
 $$
 
-which equals the unconstrained ridge affine-core fit only when $\widehat M_\lambda$ already lies in $\operatorname{range}(G)$ or representability was enforced during estimation. If one or more inequalities activate, different admissible representatives can generate different $\widehat c_{raw,\lambda}$ and therefore different projected outputs. The ridge coefficients therefore characterize the penalized measured-space affine-core fit, while the final deployed predictor becomes a fully specified ICSOR model only after one of two additional steps is taken: select a representative such as $\widehat B_\lambda = G^+ \widehat M_\lambda$, together with its compatible affine core $\widehat M_{\lambda,G} = G G^+ \widehat M_\lambda$, or impose extra component-space structure or data that identify $B$ more tightly.
+which equals the unconstrained least-squares affine-core fit only when $\widehat M$ already lies in $\operatorname{range}(G)$ or representability was enforced during estimation. If one or more inequalities activate, different admissible representatives can generate different $\widehat c_{raw}$ and therefore different projected outputs. The least-squares coefficients therefore characterize the measured-space affine-core fit, while the final deployed predictor becomes a fully specified ICSOR model only after one of two additional steps is taken: select a representative such as $\widehat B_{ls} = G^+ \widehat M$, together with its compatible affine core $\widehat M_G = G G^+ \widehat M$, or impose extra component-space structure or data that identify $B$ more tightly.
 
 ## 9. Statistical Inference and Predictive Uncertainty
 
-### 9.1 Error model and conditioning on the ridge penalty
+### 9.1 Error model for the affine core
 
 For statistical inference, suppose the row errors of $E$ are independent across samples and satisfy
 
@@ -915,163 +925,104 @@ $$
 
 where $\Omega \in \mathbb{R}^{K \times K}$ is the within-sample covariance across measured outputs. This allows, for example, COD and total nitrogen errors to be correlated within the same sample.
 
-Throughout this section, the ridge penalty parameter $\lambda$ and penalty matrix $\Gamma$ are treated as fixed. If $\lambda$ is selected by cross-validation, generalized cross-validation, or another data-adaptive rule, the formulas below are conditional on the selected penalty and therefore omit tuning uncertainty unless that selection step is repeated inside resampling.
-
-Define
+Whenever finite-sample interval formulas are invoked below, the intended regime is the usual full-rank Gaussian multivariate linear model. In particular, $N > D$ and $\Phi$ has full column rank $D$. Define the fitted residual matrix
 
 $$
-A_\lambda = (\Phi^T \Phi + \lambda \Gamma)^{-1} \Phi^T
+\widehat E = \widetilde Y - \Phi \widehat M^T
 $$
 
-so that
+and the usual covariance estimator
 
 $$
-\widehat M_\lambda^T = A_\lambda \widetilde Y.
+\widehat \Omega = \frac{1}{N-D} \widehat E^T \widehat E.
 $$
 
-Also define the ridge fitted-value matrix
+### 9.2 Full-rank affine-core coefficient covariance
+
+Under those full-rank conditions,
 
 $$
-W_\lambda = \Phi A_\lambda = \Phi (\Phi^T \Phi + \lambda \Gamma)^{-1} \Phi^T
+\widehat M^T = (\Phi^T \Phi)^{-1} \Phi^T \widetilde Y
 $$
 
-and the fitted residual matrix
+and the coefficient covariance is
 
 $$
-\widehat E_\lambda = \widetilde Y - \Phi \widehat M_\lambda^T = (I_N - W_\lambda) \widetilde Y.
+\operatorname{Var}(\operatorname{vec}(\widehat M^T) \mid \Phi) = \Omega \otimes (\Phi^T \Phi)^{-1}
 $$
 
-A common plug-in estimator of the within-sample output covariance is
+Therefore, for the coefficient $\widehat M_{k,j}$,
 
 $$
-\widehat \Omega_\lambda = \frac{1}{N - \operatorname{df}_\lambda} \widehat E_\lambda^T \widehat E_\lambda,
-\qquad
-\operatorname{df}_\lambda = \operatorname{tr}(W_\lambda),
+SE(\widehat M_{k,j}) = \sqrt{\Omega_{kk} \left[(\Phi^T \Phi)^{-1}\right]_{jj}}
 $$
 
-where $\operatorname{df}_\lambda$ is the effective degrees of freedom of the ridge fit. Unlike the OLS covariance estimator, this is best interpreted as a working plug-in estimate rather than an exact unbiased finite-sample formula because ridge estimation is biased.
+This formula shows two sources of uncertainty: intrinsic output noise through $\Omega_{kk}$ and poor excitation of feature direction $j$ through the design-conditioning term.
 
-### 9.2 Ridge coefficient bias and covariance
-
-Define the coefficient-space shrinkage matrix
-
-$$
-S_\lambda = A_\lambda \Phi = (\Phi^T \Phi + \lambda \Gamma)^{-1} \Phi^T \Phi.
-$$
-
-Then
-
-$$
-\mathbb{E}[\widehat M_\lambda^T \mid \Phi] = S_\lambda M^T
-$$
-
-and the conditional bias is
-
-$$
-\operatorname{Bias}(\widehat M_\lambda^T \mid \Phi) = (S_\lambda - I_D) M^T = -\lambda (\Phi^T \Phi + \lambda \Gamma)^{-1} \Gamma M^T.
-$$
-
-The conditional covariance is
-
-$$
-\operatorname{Var}(\operatorname{vec}(\widehat M_\lambda^T) \mid \Phi) = \Omega \otimes (A_\lambda A_\lambda^T),
-$$
-
-or, equivalently,
-
-$$
-\operatorname{Var}(\operatorname{vec}(\widehat M_\lambda^T) \mid \Phi) = \Omega \otimes \left[(\Phi^T \Phi + \lambda \Gamma)^{-1} \Phi^T \Phi (\Phi^T \Phi + \lambda \Gamma)^{-1}\right]
-$$
-
-when $\Gamma$ is symmetric. Therefore, for the coefficient $\widehat M_{\lambda,kj}$,
-
-$$
-\operatorname{Var}(\widehat M_{\lambda,kj} \mid \Phi) = \Omega_{kk} [A_\lambda A_\lambda^T]_{jj}.
-$$
-
-Unlike OLS, the conditional covariance does not fully characterize ridge coefficient uncertainty because the estimator is biased. A more honest coefficientwise summary is the conditional mean-squared error
-
-$$
-\operatorname{MSE}(\widehat M_{\lambda,kj} \mid \Phi) = \Omega_{kk} [A_\lambda A_\lambda^T]_{jj} + \left[\operatorname{Bias}(\widehat M_{\lambda,kj} \mid \Phi)\right]^2.
-$$
-
-If $\lambda \to 0$ and $\Phi$ has full column rank, these expressions reduce to the familiar OLS covariance formulas.
-
-### 9.3 Ridge affine-core mean-prediction uncertainty
+### 9.3 Affine-core mean-prediction uncertainty
 
 For a new operating point with feature vector $\phi_* = \phi(u_*, c_{in,*})$, the fitted affine-core mean output is
 
 $$
-\widehat y_{\lambda,aff,*} = \widehat M_\lambda \phi_* + H c_{in,*}.
+\widehat y_{aff,*} = \widehat M \phi_* + H c_{in,*}
 $$
 
-Define the ridge leverage analogue
+If $\Phi$ has full column rank, define the leverage factor
 
 $$
-s_{\lambda,*} = \phi_*^T A_\lambda A_\lambda^T \phi_*
-$$
-
-and the conditional bias vector
-
-$$
-b_{\lambda,*} = M (S_\lambda^T - I_D) \phi_*.
+s_* = \phi_*^T (\Phi^T \Phi)^{-1} \phi_*
 $$
 
 Then
 
 $$
-\operatorname{Var}(\widehat y_{\lambda,aff,*} \mid \phi_*, c_{in,*}, \Phi) = s_{\lambda,*} \Omega
+\operatorname{Var}(\widehat y_{aff,*} \mid \phi_*, c_{in,*}, \Phi) = s_* \Omega
 $$
 
-and the conditional mean-squared-error matrix of the fitted affine-core mean is
+and the standard error of the fitted affine-core mean for output $k$ is
 
 $$
-\operatorname{MSE}(\widehat y_{\lambda,aff,*} \mid \phi_*, c_{in,*}, \Phi) = s_{\lambda,*} \Omega + b_{\lambda,*} b_{\lambda,*}^T.
+SE_{mean,k}^{aff}(\phi_*) = \sqrt{s_* \, \Omega_{kk}}
 $$
 
-For a future affine-core observation at the same operating point, the corresponding prediction mean-squared-error matrix is
+Under Gaussian errors, the corresponding affine-core confidence interval is
 
 $$
-\operatorname{MSE}_{pred}(\phi_*) = (1 + s_{\lambda,*}) \Omega + b_{\lambda,*} b_{\lambda,*}^T.
+\widehat y_{aff,*,k} \pm t_{1-\alpha/2,\, N-D} \sqrt{s_* \, [\widehat \Omega]_{kk}}
 $$
 
-The variance term plays the role of a ridge analogue of the OLS leverage formula, but the bias term has no OLS counterpart. Because $b_{\lambda,*}$ depends on the unknown population matrix $M$, fully closed-form finite-sample intervals require either a plug-in bias estimate, an asymptotic approximation, or resampling. There is therefore no exact Student-$t$ analogue for the ridge affine core.
+Likewise, the standard prediction error for a future affine-core observation is
+
+$$
+SE_{pred,k}^{aff}(\phi_*) = \sqrt{(1 + s_*) \, \Omega_{kk}}
+$$
+
+with prediction interval
+
+$$
+\widehat y_{aff,*,k} \pm t_{1-\alpha/2,\, N-D} \sqrt{(1 + s_*) \, [\widehat \Omega]_{kk}}
+$$
 
 ### 9.4 Why these formulas do not globally extend to the final non-negative predictor
 
 The final deployed prediction is
 
 $$
-\widehat y_{\lambda,*}^* = I_{comp} \, \operatorname{Proj}_{\mathcal{S}_+(c_{in,*})}(\widehat c_{raw,\lambda,*})
+\widehat y_*^* = I_{comp} \, \operatorname{Proj}_{\mathcal{S}_+(c_{in,*})}(\widehat c_{raw,*})
 $$
 
-with
-
-$$
-\widehat c_{raw,\lambda,*} = \widehat B_\lambda \phi_*.
-$$
-
-This map is generally piecewise affine rather than globally affine because the active set of non-negativity constraints can change from sample to sample. At points where the active set changes, the deployed mapping is not described by one global coefficient matrix. Even away from those transitions, the upstream affine-core fit is ridge biased and conditional on the chosen penalty and latent representative. Consequently, the bias and covariance formulas above are informative local descriptors, not global exact finite-sample interval formulas, for the final deployed predictor.
+This map is generally piecewise affine rather than globally affine because the active set of non-negativity constraints can change from sample to sample. At points where the active set changes, the mapping is not described by one global coefficient matrix. Consequently, the closed-form affine-core variance formulas above are not exact finite-sample formulas for the final deployed predictor in general.
 
 Two special cases are simpler.
 
-1. If the non-negativity constraints are inactive at the prediction point, then $\widehat y_{\lambda,*}^* = \widehat y_{\lambda,aff,*}$ and the ridge affine-core bias and covariance expressions from Section 9.3 apply.
-2. If the active set is locally stable, the final predictor is locally affine in the raw component state and delta-method or local linearization arguments can sometimes be built around that fixed active set.
+1. If the non-negativity constraints are inactive at the prediction point, then $\widehat y_*^* = \widehat y_{aff,*}$ and the affine-core formulas apply exactly.
+2. If the active set is locally stable, the final predictor is locally affine and the affine-core formulas can sometimes be adapted as a local approximation.
 
-Neither of those special cases yields a global exact interval formula for the final non-negative predictor, and neither removes tuning uncertainty when $\lambda$ is selected from the data.
+Neither of those special cases justifies a global exact interval formula for the final non-negative predictor.
 
 ### 9.5 Recommended uncertainty treatment for the final predictor
 
-For the final deployed non-negative predictor, the most defensible default approach is resampling-based uncertainty quantification that repeats the full estimation and deployment pipeline. A bootstrap or residual-bootstrap replicate should
-
-1. resample the data or fitted residuals,
-2. rebuild $\Phi$ and $\widetilde Y$ for that replicate,
-3. reselect $\lambda$ if the penalty was tuned from the data,
-4. refit $\widehat M_\lambda$,
-5. reconstruct the chosen component-space representative $\widehat B_\lambda$, and
-6. rerun the affine and, when needed, quadratic-program projection before recording the resulting prediction.
-
-This procedure propagates the two main uncertainty mechanisms that matter after the ridge revision: shrinkage-dependent affine-core estimation and sample-specific convex correction. In applications where only a fast approximation is needed, a conditional-on-$\lambda$ Gaussian approximation based on the Section 9.3 covariance formulas may still be reported for the affine core, preferably with an explicit note that it ignores penalty-selection uncertainty and is not an exact interval for the final constrained predictor.
+For the final deployed non-negative predictor, the most defensible default approach is resampling-based uncertainty quantification, such as bootstrap refitting or residual bootstrap, because it propagates uncertainty through both stages of the model: least-squares coefficient estimation and the sample-specific convex correction. In applications where only a fast approximation is needed, the affine-core intervals may still be reported as intervals for the linear core, provided they are labeled accordingly and not misrepresented as exact intervals for the final constrained predictor.
 
 ## 10. Implications of the Main Modeling Choices
 
@@ -1081,7 +1032,7 @@ The surrogate is parameterized on the effluent component state rather than on th
 
 ### 10.2 Partitioned second-order feature structure
 
-The partitioned feature map separates operating effects, influent-composition effects, and operation-loading interactions in a way that is interpretable to process engineers. The price of that interpretability is rapid feature growth, which can create multicollinearity, unstable unpenalized coefficients, and weakly identified directions if the dataset does not adequately excite the design space. Since $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$, even moderate values of $M_{op}$ and $F$ can produce a feature basis that is large relative to the sample count. Ridge regression is therefore not a cosmetic estimation choice here. It is the device that stabilizes the affine-core fit in the presence of that collinearity. The tradeoff is that the reported coefficients now depend on feature scaling and on the chosen penalty pair $(\lambda, \Gamma)$, so raw coefficient magnitudes should not be interpreted independently of the regularization convention.
+The partitioned feature map separates operating effects, influent-composition effects, and operation-loading interactions in a way that is interpretable to process engineers. The price of that interpretability is rapid feature growth, which can create multicollinearity, unstable coefficients, and weakly identified directions if the dataset does not adequately excite the design space. Since $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$, even moderate values of $M_{op}$ and $F$ can produce a feature basis that is large relative to the sample count. The resulting affine core can still interpolate training data through the pseudoinverse while leaving individual coefficients poorly determined.
 
 ### 10.3 Euclidean convex projection metric
 
@@ -1095,7 +1046,7 @@ Enforcing the invariant relations and non-negativity before collapsing to measur
 
 ### 10.5 Affine-core coefficients versus the final deployed predictor
 
-The affine-core coefficients $M$ remain the structurally identifiable objects for direct engineering interpretation because they act directly on observed outputs. The reported estimates $\widehat M_\lambda$ are ridge-shrunken versions of that identifiable operator, so interpretation of fitted coefficients should always be conditioned on the chosen penalty and feature scaling. The latent component-space coefficients $B$ remain generally non-unique unless extra structure is imposed. The final deployed predictor $y^*$ adds one more layer: even when $M$ is well estimated, the final sample-specific output depends on which non-negativity constraints are active and, when those constraints do activate, on the chosen latent representative used to form $c_{raw}$. That means coefficient interpretation is clearest for the affine core after stating the ridge convention, whereas the final prediction should be read as penalized affine signal plus a representative-dependent convex feasibility correction.
+The affine-core coefficients $M$ are the correct objects for direct engineering interpretation because they act directly on observed outputs through the identifiable least-squares stage. The latent component-space coefficients $B$ remain generally non-unique unless extra structure is imposed. The final deployed predictor $y^*$ adds one more layer: even when $M$ is well estimated, the final sample-specific output depends on which non-negativity constraints are active and, when those constraints do activate, on the chosen latent representative used to form $c_{raw}$. That means coefficient interpretation is clearest for the affine core, whereas the final prediction should be read as affine signal plus a representative-dependent convex feasibility correction.
 
 ## 11. Limitations
 
@@ -1108,10 +1059,10 @@ Non-negative ICSOR is deliberately narrower than a full mechanistic reactor mode
 5. The correction depends on the chosen metric and is therefore sensitive to component scaling.
 6. The final deployed predictor is not globally representable by one affine measured-space coefficient matrix once non-negativity constraints become active.
 7. When positivity constraints activate, the final deployed predictor is not identified from measured composite data alone unless a component-space representative is chosen or extra component-space information is supplied.
-8. For the ridge affine core, closed-form conditional bias and covariance expressions are available only when the penalty is treated as fixed, but exact finite-sample $t$-based prediction intervals are not available in general, and the final non-negative deployed predictor still requires resampling-based uncertainty quantification.
-9. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear; ridge regularization mitigates that fragility but does not remove dependence on feature scaling or penalty choice.
+8. Exact closed-form prediction intervals are available for the affine core under the usual linear-model assumptions, but not in general for the final non-negative deployed predictor.
+9. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear.
 10. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct projection onto the wrong physical constraint set.
-11. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the affine-core uncertainty formulas derived here.
+11. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the affine-core output-noise covariance formulas derived here.
 
 These limitations should be stated explicitly in any application. Doing so does not weaken the model. It defines the scope of its claims correctly.
 
@@ -1119,7 +1070,7 @@ These limitations should be stated explicitly in any application. Doing so does 
 
 Non-negative ICSOR combines a partitioned second-order surrogate with a convex projection derived from stoichiometric invariants and componentwise non-negativity. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies. In deployment, the correction should be evaluated hierarchically so that the quadratic program is reserved for the subset of samples not already repaired by the closed-form affine projector.
 
-The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by ridge regression, the final prediction is obtained by projecting a chosen raw component-space state onto the invariant-consistent non-negative set. When inequalities are inactive, that deployed prediction collapses exactly to the identifiable affine core up to the chosen representability convention. When inequalities are active, deployment additionally requires a chosen component-space representative or extra component-space information, because measured composite data alone do not identify the corrected component-space map uniquely. The corresponding uncertainty analysis is likewise conditional and shrinkage aware at the affine-core stage, with resampling preferred for the final constrained predictor, especially when $\lambda$ is tuned from the data. Under that reading, non-negative ICSOR is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
+The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by least squares, the final prediction is obtained by projecting a chosen raw component-space state onto the invariant-consistent non-negative set. When inequalities are inactive, that deployed prediction collapses exactly to the identifiable affine core. When inequalities are active, deployment additionally requires a chosen component-space representative or extra component-space information, because measured composite data alone do not identify the corrected component-space map uniquely. Under that reading, non-negative ICSOR is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
 
 ## References
 
@@ -1129,5 +1080,3 @@ The central theoretical point remains that measured composite data identify the 
 4. Seber, G. A. F., and Lee, A. J. Linear Regression Analysis. 2nd ed. Wiley, 2003.
 5. Rao, C. R., and Mitra, S. Generalized Inverse of Matrices and Its Applications. Wiley, 1971.
 6. Boyd, S., and Vandenberghe, L. Convex Optimization. Cambridge University Press, 2004.
-7. Hoerl, A. E., and Kennard, R. W. Ridge Regression: Biased Estimation for Nonorthogonal Problems. Technometrics 12(1), 55-67, 1970.
-8. Hastie, T., Tibshirani, R., and Friedman, J. The Elements of Statistical Learning. 2nd ed. Springer, 2009.
