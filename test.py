@@ -6,7 +6,7 @@ if __name__ == "__main__":
     # 1. Biological Ground Truth (from your image)
     fraction_names = [
         "In_S_S", "In_S_I", "In_S_NH4_N", "In_S_NO3_N", 
-        "In_S_PO4_P", "In_S_O2", "In_S_Alkalinity", "In_X_I", "In_X_S"
+        "In_S_PO4_P", "In_S_O", "In_S_Alkalinity", "In_X_I", "In_X_S"
     ]
     x_true = np.array([
         219.3121, 50.7215, 49.7681, 2.0921, 

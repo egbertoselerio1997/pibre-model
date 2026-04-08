@@ -43,8 +43,8 @@ STOICHIOMETRIC_COEFFICIENTS: list[dict[str, dict[str, str]]] = [
     {"coefficients": {"S_F": "1-{f_SI}", "S_I": "{f_SI}", "X_S": "-1"}},
     {"coefficients": {"S_F": "1-{f_SI}", "S_I": "{f_SI}", "X_S": "-1"}},
     {"coefficients": {"S_F": "1-{f_SI}", "S_I": "{f_SI}", "X_S": "-1"}},
-    {"coefficients": {"S_F": "-1/{Y_H}", "S_O2": "1-1/{Y_H}", "X_H": "1"}},
-    {"coefficients": {"S_A": "-1/{Y_H}", "S_O2": "1-1/{Y_H}", "X_H": "1"}},
+    {"coefficients": {"S_F": "-1/{Y_H}", "S_O": "1-1/{Y_H}", "X_H": "1"}},
+    {"coefficients": {"S_A": "-1/{Y_H}", "S_O": "1-1/{Y_H}", "X_H": "1"}},
     {
         "coefficients": {
             "S_F": "-1/{Y_H}",
@@ -78,9 +78,9 @@ STOICHIOMETRIC_COEFFICIENTS: list[dict[str, dict[str, str]]] = [
         }
     },
     {"coefficients": {"S_A": "1", "S_F": "-1"}},
-    {"coefficients": {"X_I": "{f_XIBM}", "X_S": "1-{f_XIBM}", "X_H": "-1"}},
-    {"coefficients": {"S_A": "-1", "X_PAO": "-{Y_PAO}", "X_PHA": "1"}},
-    {"coefficients": {"S_O2": "-{Y_PHA}", "X_PP": "1", "X_PHA": "-{Y_PHA}"}},
+    {"coefficients": {"X_I": "{f_XI}", "X_S": "1-{f_XI}", "X_H": "-1"}},
+    {"coefficients": {"S_A": "-1", "X_PP": "-{Y_PO4}", "X_PHA": "1"}},
+    {"coefficients": {"S_O": "-{Y_PHA}", "X_PP": "1", "X_PHA": "-{Y_PHA}"}},
     {
         "coefficients": {
             "S_NO2": "{Y_PHA}/(8/7)",
@@ -97,7 +97,7 @@ STOICHIOMETRIC_COEFFICIENTS: list[dict[str, dict[str, str]]] = [
             "X_PHA": "-{Y_PHA}",
         }
     },
-    {"coefficients": {"S_O2": "1-1/{Y_PAO}", "X_PAO": "1", "X_PHA": "-1/{Y_PAO}"}},
+    {"coefficients": {"S_O": "1-1/{Y_PAO}", "X_PAO": "1", "X_PHA": "-1/{Y_PAO}"}},
     {
         "coefficients": {
             "S_NO2": "(1-{Y_PAO})/((8/7)*{Y_PAO})",
@@ -114,13 +114,13 @@ STOICHIOMETRIC_COEFFICIENTS: list[dict[str, dict[str, str]]] = [
             "X_PHA": "-1/{Y_PAO}",
         }
     },
-    {"coefficients": {"X_I": "{f_XIBM}", "X_S": "1-{f_XIBM}", "X_PAO": "-1"}},
+    {"coefficients": {"X_I": "{f_XI}", "X_S": "1-{f_XI}", "X_PAO": "-1"}},
     {"coefficients": {"X_PP": "-1"}},
     {"coefficients": {"S_A": "1", "X_PHA": "-1"}},
-    {"coefficients": {"S_NO2": "1/{Y_AOB}", "S_O2": "-((3.43-{Y_AOB})/{Y_AOB})", "X_AOB": "1"}},
-    {"coefficients": {"S_NO2": "-1/{Y_NOB}", "S_NO3": "1/{Y_NOB}", "S_O2": "-((1.14-{Y_NOB})/{Y_NOB})", "X_NOB": "1"}},
-    {"coefficients": {"X_I": "{f_XIBM}", "X_S": "1-{f_XIBM}", "X_AOB": "-1"}},
-    {"coefficients": {"X_I": "{f_XIBM}", "X_S": "1-{f_XIBM}", "X_NOB": "-1"}},
+    {"coefficients": {"S_NO2": "1/{Y_AOB}", "S_O": "-((3.43-{Y_AOB})/{Y_AOB})", "X_AOB": "1"}},
+    {"coefficients": {"S_NO2": "-1/{Y_NOB}", "S_NO3": "1/{Y_NOB}", "S_O": "-((1.14-{Y_NOB})/{Y_NOB})", "X_NOB": "1"}},
+    {"coefficients": {"X_I": "{f_XI}", "X_S": "1-{f_XI}", "X_AOB": "-1"}},
+    {"coefficients": {"X_I": "{f_XI}", "X_S": "1-{f_XI}", "X_NOB": "-1"}},
     {"coefficients": {"S_PO4": "-1", "X_TSS": "1.42", "X_MeOH": "-3.45", "X_MeP": "4.87"}},
     {"coefficients": {"S_PO4": "1", "X_TSS": "-1.42", "X_MeOH": "3.45", "X_MeP": "-4.87"}},
 ]
@@ -133,14 +133,14 @@ COMPOSITION_FORMULAS: dict[str, dict[str, str]] = {
     "S_NO2": {"TN": "1"},
     "S_NO3": {"TN": "1"},
     "S_PO4": {"TP": "1"},
-    "X_I": {"COD": "1", "TN": "{i_NXI}", "TKN": "{i_NXI}", "TP": "{i_PXI}", "VSS": "{i_VSS_XI}"},
-    "X_S": {"COD": "1", "TN": "{i_NXS}", "TKN": "{i_NXS}", "TP": "{i_PXS}", "VSS": "{i_VSS_XS}"},
-    "X_H": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "VSS": "{i_VSS_BM}"},
-    "X_PAO": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "VSS": "{i_VSS_BM}"},
+    "X_I": {"COD": "1", "TN": "{i_NXI}", "TKN": "{i_NXI}", "TP": "{i_PXI}"},
+    "X_S": {"COD": "1", "TN": "{i_NXS}", "TKN": "{i_NXS}", "TP": "{i_PXS}"},
+    "X_H": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
+    "X_PAO": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
     "X_PP": {"TP": "1"},
-    "X_PHA": {"COD": "1", "VSS": "{i_VSS_PHA}"},
-    "X_AOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "VSS": "{i_VSS_BM}"},
-    "X_NOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "VSS": "{i_VSS_BM}"},
+    "X_PHA": {"COD": "1"},
+    "X_AOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
+    "X_NOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
     "X_TSS": {"TSS": "1"},
     "X_MeP": {"TP": "{i_PMeP}"},
 }
@@ -173,14 +173,14 @@ PHOSPHORUS_CONTINUITY_TERMS = {
 }
 
 TSS_CONTINUITY_TERMS = {
-    "X_I": "{i_TSS_i}",
-    "X_S": "{i_TSS_i}",
-    "X_H": "{i_TSS_i}",
-    "X_PAO": "{i_TSS_i}",
+    "X_I": "{i_TSS_XI}",
+    "X_S": "{i_TSS_XS}",
+    "X_H": "{i_TSS_BM}",
+    "X_PAO": "{i_TSS_BM}",
     "X_PP": "{i_TSS_PP}",
     "X_PHA": "{i_TSS_PHA}",
-    "X_AOB": "{i_TSS_i}",
-    "X_NOB": "{i_TSS_i}",
+    "X_AOB": "{i_TSS_BM}",
+    "X_NOB": "{i_TSS_BM}",
     "X_MeOH": "1",
     "X_MeP": "1",
 }
@@ -967,8 +967,8 @@ def _build_initial_guess(
     dilution_rate = 24.0 / max(float(hrt_hours), 1e-6)
     kla = float(aeration_model["kla_base"]) + float(aeration_model["kla_per_aeration"]) * max(float(aeration), 0.0)
     do_saturation = float(aeration_model["do_saturation"])
-    guess[state_index["S_O2"]] = np.clip(
-        (dilution_rate * guess[state_index["S_O2"]] + kla * do_saturation) / max(dilution_rate + kla, 1e-9),
+    guess[state_index["S_O"]] = np.clip(
+        (dilution_rate * guess[state_index["S_O"]] + kla * do_saturation) / max(dilution_rate + kla, 1e-9),
         lower_floor,
         do_saturation,
     )
@@ -1021,8 +1021,9 @@ def _compute_process_rates(
     s_no2 = state[state_index["S_NO2"]]
     s_no3 = state[state_index["S_NO3"]]
     s_po4 = state[state_index["S_PO4"]]
+    s_nox = s_no2 + s_no3
     s_alk = state[state_index["S_ALK"]]
-    s_o2 = state[state_index["S_O2"]]
+    s_o = state[state_index["S_O"]]
     x_s = state[state_index["X_S"]]
     x_h = state[state_index["X_H"]]
     x_pao = state[state_index["X_PAO"]]
@@ -1034,155 +1035,193 @@ def _compute_process_rates(
     x_mep = state[state_index["X_MeP"]]
 
     xs_to_xh = _ratio(x_s, x_h)
-    hydrolysis_availability = xs_to_xh / max(parameter_values["K_X"] + xs_to_xh, 1e-9)
-    oxygen_acceptor = _monod(s_o2, parameter_values["K_O2"])
-    oxygen_limitation = parameter_values["K_O2"] / max(parameter_values["K_O2"] + s_o2, 1e-9)
-    nox_total = s_no3 + s_no2
+    hydrolysis_availability = _monod(xs_to_xh, parameter_values["K_X"])
     nitrate_share = _share(s_no3, s_no3, s_no2)
     nitrite_share = _share(s_no2, s_no3, s_no2)
-    alk_term = _monod(s_alk, parameter_values["K_ALK"])
-    ammonium_term = _monod(s_nh4, parameter_values["K_NH4"])
-    phosphate_term = _monod(s_po4, parameter_values["K_PO4"])
+
+    oxygen_hyd = _monod(s_o, parameter_values["K_O_hyd"])
+    oxygen_hyd_limitation = parameter_values["K_O_hyd"] / max(parameter_values["K_O_hyd"] + s_o, 1e-9)
+    oxygen_h = _monod(s_o, parameter_values["K_O_H"])
+    oxygen_h_limitation = parameter_values["K_O_H"] / max(parameter_values["K_O_H"] + s_o, 1e-9)
+    oxygen_pao = _monod(s_o, parameter_values["K_O_PAO"])
+    oxygen_pao_limitation = parameter_values["K_O_PAO"] / max(parameter_values["K_O_PAO"] + s_o, 1e-9)
+
+    alk_h = _monod(s_alk, parameter_values["K_ALK_H"])
+    alk_pao = _monod(s_alk, parameter_values["K_ALK_PAO"])
+    alk_nit = _monod(s_alk, parameter_values["K_ALK_nit"])
+    alk_chem = _monod(s_alk, parameter_values["K_ALK_chem"])
+
+    ammonium_h = _monod(s_nh4, parameter_values["K_NH4_H"])
+    phosphate_h = _monod(s_po4, parameter_values["K_PO4_H"])
+    ammonium_pao = _monod(s_nh4, parameter_values["K_NH4_PAO"])
+    phosphate_pao = _monod(s_po4, parameter_values["K_PO4_PAO"])
+    phosphate_storage = _monod(s_po4, parameter_values["K_PS"])
+    phosphate_nit = _monod(s_po4, parameter_values["K_PO4_nit"])
+
+    substrate_f = _monod(s_f, parameter_values["K_F"])
+    substrate_fe = _monod(s_f, parameter_values["K_fe"])
+    substrate_a = _monod(s_a, parameter_values["K_A"])
+
     pao_ratio_pp = _ratio(x_pp, x_pao)
     pao_ratio_pha = _ratio(x_pha, x_pao)
-    pp_capacity = max(parameter_values["K_max"] - pao_ratio_pp, 0.0)
-
-    rho5 = (
-        parameter_values["mu_H"]
-        * oxygen_acceptor
-        * _monod(s_f, parameter_values["K_F"])
-        * ammonium_term
-        * phosphate_term
-        * alk_term
-        * x_h
-    )
-    rho6 = (
-        parameter_values["mu_H"]
-        * oxygen_acceptor
-        * _monod(s_a, parameter_values["K_A"])
-        * ammonium_term
-        * phosphate_term
-        * alk_term
-        * x_h
-    )
-    rho14 = (
-        parameter_values["q_PP"]
-        * oxygen_acceptor
-        * phosphate_term
-        * alk_term
-        * (_ratio(x_pha, x_pao) / max(parameter_values["K_PHA"] + _ratio(x_pha, x_pao), 1e-9))
-        * (pp_capacity / max(parameter_values["K_IPP"] + pp_capacity, 1e-9))
-        * x_pao
-    )
-    rho17 = (
-        parameter_values["mu_PAO"]
-        * oxygen_acceptor
-        * ammonium_term
-        * phosphate_term
-        * alk_term
-        * (_ratio(x_pha, x_pao) / max(parameter_values["K_PHA"] + _ratio(x_pha, x_pao), 1e-9))
-        * x_pao
-    )
+    pp_capacity = max(parameter_values["K_MAX"] - pao_ratio_pp, 0.0)
+    r_pp = _monod(pao_ratio_pp, parameter_values["K_PP"])
+    r_pha = _monod(pao_ratio_pha, parameter_values["K_PHA"])
+    c_pp = pp_capacity / max(parameter_values["K_IPP"] + pp_capacity, 1e-9)
 
     process_rates = np.array(
         [
-            parameter_values["K_h"] * oxygen_acceptor * hydrolysis_availability * x_h,
-            parameter_values["K_h"]
-            * parameter_values["eta_NO2"]
-            * oxygen_limitation
-            * _monod(s_no2, parameter_values["K_NO2"])
+            parameter_values["K_H"] * oxygen_hyd * hydrolysis_availability * x_h,
+            parameter_values["eta_hyd_NO2"]
+            * parameter_values["K_H"]
+            * oxygen_hyd_limitation
+            * _monod(s_no2, parameter_values["K_NO2_hyd"])
             * nitrite_share
             * hydrolysis_availability
             * x_h,
-            parameter_values["K_h"]
-            * parameter_values["eta_NO3"]
-            * oxygen_limitation
-            * _monod(s_no3, parameter_values["K_NO3"])
+            parameter_values["eta_hyd_NO3"]
+            * parameter_values["K_H"]
+            * oxygen_hyd_limitation
+            * _monod(s_no3, parameter_values["K_NO3_hyd"])
             * nitrate_share
             * hydrolysis_availability
             * x_h,
-            parameter_values["K_h"]
-            * parameter_values["eta_fe"]
-            * oxygen_limitation
-            * (parameter_values["K_NOX"] / max(parameter_values["K_NOX"] + nox_total, 1e-9))
+            parameter_values["eta_hyd_fe"]
+            * parameter_values["K_H"]
+            * oxygen_hyd_limitation
+            * (parameter_values["K_NOX_hyd"] / max(parameter_values["K_NOX_hyd"] + s_nox, 1e-9))
             * hydrolysis_availability
             * x_h,
-            rho5,
-            rho6,
-            rho5
-            * parameter_values["eta_NO3"]
-            * oxygen_limitation
-            * _monod(s_no3, parameter_values["K_NO3"])
-            * nitrate_share,
-            rho5
-            * parameter_values["eta_NO2"]
-            * oxygen_limitation
-            * _monod(s_no2, parameter_values["K_NO2"])
-            * nitrite_share,
-            rho6
-            * parameter_values["eta_NO3"]
-            * oxygen_limitation
-            * _monod(s_no3, parameter_values["K_NO3"])
-            * nitrate_share,
-            rho6
-            * parameter_values["eta_NO2"]
-            * oxygen_limitation
-            * _monod(s_no2, parameter_values["K_NO2"])
-            * nitrite_share,
-            parameter_values["q_fe"]
+            parameter_values["mu_H"]
+            * oxygen_h
+            * substrate_f
+            * _share(s_f, s_a, s_f)
+            * ammonium_h
+            * phosphate_h
+            * alk_h
+            * x_h,
+            parameter_values["mu_H"]
+            * oxygen_h
+            * substrate_a
+            * _share(s_a, s_a, s_f)
+            * ammonium_h
+            * phosphate_h
+            * alk_h
+            * x_h,
+            parameter_values["mu_H"]
+            * oxygen_h_limitation
+            * substrate_f
+            * _share(s_f, s_a, s_f)
+            * ammonium_h
+            * phosphate_h
+            * alk_h
+            * parameter_values["eta_H_NO3"]
+            * _monod(s_no3, parameter_values["K_NO3_H"])
+            * nitrate_share
+            * x_h,
+            parameter_values["mu_H"]
+            * oxygen_h_limitation
+            * substrate_f
+            * _share(s_f, s_a, s_f)
+            * ammonium_h
+            * phosphate_h
+            * alk_h
+            * parameter_values["eta_H_NO2"]
+            * _monod(s_no2, parameter_values["K_NO2_H"])
+            * nitrite_share
+            * x_h,
+            parameter_values["mu_H"]
+            * oxygen_h_limitation
+            * substrate_a
+            * _share(s_a, s_a, s_f)
+            * ammonium_h
+            * phosphate_h
+            * alk_h
+            * parameter_values["eta_H_NO3"]
+            * _monod(s_no3, parameter_values["K_NO3_H"])
+            * nitrate_share
+            * x_h,
+            parameter_values["mu_H"]
+            * oxygen_h_limitation
+            * substrate_a
+            * _share(s_a, s_a, s_f)
+            * ammonium_h
+            * phosphate_h
+            * alk_h
+            * parameter_values["eta_H_NO2"]
+            * _monod(s_no2, parameter_values["K_NO2_H"])
+            * nitrite_share
+            * x_h,
+            parameter_values["q_Fe"]
             * parameter_values["mu_H"]
-            * oxygen_limitation
-            * (parameter_values["K_NOX"] / max(parameter_values["K_NOX"] + nox_total, 1e-9))
-            * _monod(s_f, parameter_values["K_fe"])
-            * alk_term
+            * oxygen_h_limitation
+            * (parameter_values["K_NOX_H"] / max(parameter_values["K_NOX_H"] + s_nox, 1e-9))
+            * substrate_fe
+            * alk_h
             * x_h,
             parameter_values["b_H"] * x_h,
-            parameter_values["q_PHA"]
-            * _monod(s_a, parameter_values["K_A"])
-            * alk_term
-            * (pao_ratio_pp / max(parameter_values["K_PP"] + pao_ratio_pp, 1e-9))
+            parameter_values["q_PHA"] * substrate_a * alk_pao * r_pp * x_pao,
+            parameter_values["q_PP"] * oxygen_pao * phosphate_storage * alk_pao * r_pha * c_pp * x_pao,
+            parameter_values["q_PP"]
+            * oxygen_pao_limitation
+            * phosphate_storage
+            * alk_pao
+            * r_pha
+            * c_pp
+            * parameter_values["eta_PAO_NO3"]
+            * _monod(s_no3, parameter_values["K_NO3_PAO"])
+            * nitrate_share
             * x_pao,
-            rho14,
-            rho14
-            * parameter_values["eta_NO3"]
-            * oxygen_limitation
-            * _monod(s_no3, parameter_values["K_NO3"])
-            * nitrate_share,
-            rho14
-            * parameter_values["eta_NO2"]
-            * oxygen_limitation
-            * _monod(s_no2, parameter_values["K_NO2"])
-            * nitrite_share,
-            rho17,
-            rho17
-            * parameter_values["eta_NO3"]
-            * oxygen_limitation
-            * _monod(s_no3, parameter_values["K_NO3"])
-            * nitrate_share,
-            rho17
-            * parameter_values["eta_NO2"]
-            * oxygen_limitation
-            * _monod(s_no2, parameter_values["K_NO2"])
-            * nitrite_share,
-            parameter_values["b_PAO"] * x_pao * alk_term,
-            parameter_values["b_PP"] * x_pp * alk_term,
-            parameter_values["b_PHA"] * x_pha * alk_term,
+            parameter_values["q_PP"]
+            * oxygen_pao_limitation
+            * phosphate_storage
+            * alk_pao
+            * r_pha
+            * c_pp
+            * parameter_values["eta_PAO_NO2"]
+            * _monod(s_no2, parameter_values["K_NO2_PAO"])
+            * nitrite_share
+            * x_pao,
+            parameter_values["mu_PAO"] * oxygen_pao * ammonium_pao * phosphate_pao * r_pha * alk_pao * x_pao,
+            parameter_values["mu_PAO"]
+            * oxygen_pao_limitation
+            * ammonium_pao
+            * phosphate_pao
+            * r_pha
+            * alk_pao
+            * parameter_values["eta_PAO_NO3"]
+            * _monod(s_no3, parameter_values["K_NO3_PAO"])
+            * nitrate_share
+            * x_pao,
+            parameter_values["mu_PAO"]
+            * oxygen_pao_limitation
+            * ammonium_pao
+            * phosphate_pao
+            * r_pha
+            * alk_pao
+            * parameter_values["eta_PAO_NO2"]
+            * _monod(s_no2, parameter_values["K_NO2_PAO"])
+            * nitrite_share
+            * x_pao,
+            parameter_values["b_PAO"] * x_pao * alk_pao,
+            parameter_values["b_PP"] * x_pp * alk_pao,
+            parameter_values["b_PHA"] * x_pha * alk_pao,
             parameter_values["mu_AOB"]
-            * _monod(s_o2, parameter_values["K_O2_AOB"])
+            * _monod(s_o, parameter_values["K_O_AOB"])
             * _monod(s_nh4, parameter_values["K_NH4_AOB"])
-            * phosphate_term
-            * alk_term
+            * phosphate_nit
+            * alk_nit
             * x_aob,
             parameter_values["mu_NOB"]
-            * _monod(s_o2, parameter_values["K_O2_NOB"])
+            * _monod(s_o, parameter_values["K_O_NOB"])
             * _monod(s_no2, parameter_values["K_NO2_NOB"])
-            * phosphate_term
-            * alk_term
+            * phosphate_nit
+            * alk_nit
             * x_nob,
             parameter_values["b_AOB"] * x_aob,
             parameter_values["b_NOB"] * x_nob,
             parameter_values["k_PRE"] * s_po4 * x_meoh,
-            parameter_values["k_RED"] * x_mep * alk_term,
+            parameter_values["k_RED"] * x_mep * alk_chem,
         ],
         dtype=float,
     )
@@ -1193,7 +1232,7 @@ def _compute_aeration_flux(state: np.ndarray, aeration: float, state_index: Mapp
     aeration_model = model_params["aeration_model"]
     kla = float(aeration_model["kla_base"]) + float(aeration_model["kla_per_aeration"]) * max(float(aeration), 0.0)
     do_saturation = float(aeration_model["do_saturation"])
-    return kla * (do_saturation - state[state_index["S_O2"]])
+    return kla * (do_saturation - state[state_index["S_O"]])
 
 
 def _steady_state_residuals(
@@ -1210,7 +1249,7 @@ def _steady_state_residuals(
     residual = dilution_rate * (influent_state - state)
     process_rates = _compute_process_rates(state, model_params, state_index, parameter_values)
     residual += process_rates @ np.asarray(matrix_bundle["petersen_matrix"], dtype=float)
-    residual[state_index["S_O2"]] += _compute_aeration_flux(state, aeration, state_index, model_params)
+    residual[state_index["S_O"]] += _compute_aeration_flux(state, aeration, state_index, model_params)
     return residual
 
 

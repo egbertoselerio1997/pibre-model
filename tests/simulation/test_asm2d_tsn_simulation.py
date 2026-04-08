@@ -73,7 +73,7 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
         )
         self.assertEqual(len(workbook_config["processes"]), 28)
         self.assertEqual(len(workbook_config["state_columns"]), 21)
-        self.assertEqual(len(workbook_config["composite_variables"]), 6)
+        self.assertEqual(len(workbook_config["composite_variables"]), 5)
 
     def test_create_workbook_writes_required_sheets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -133,7 +133,7 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         matrix_bundle = get_asm2d_tsn_matrices(params)
 
         self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 21))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (6, 21))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 21))
         self.assertEqual(matrix_bundle["measured_output_columns"], params["measured_output_columns"])
 
     def test_generate_dataset_reports_fraction_and_composite_columns(self) -> None:
@@ -165,7 +165,7 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         self.assertTrue(all(column_name in dataset.columns for column_name in expected_effluent_fraction))
         self.assertFalse(any(column_name.startswith("Out_S_") or column_name.startswith("Out_X_") for column_name in expected_dependent))
         self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 21))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (6, 21))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 21))
 
     def test_single_operating_point_solves_to_small_residual(self) -> None:
         params = load_asm2d_tsn_simulation_params()
@@ -206,7 +206,7 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
             matrix_bundle=matrix_bundle,
         )
 
-        self.assertGreater(high_aeration_state[state_index["S_O2"]], low_aeration_state[state_index["S_O2"]])
+        self.assertGreater(high_aeration_state[state_index["S_O"]], low_aeration_state[state_index["S_O"]])
         self.assertLess(high_aeration_state[state_index["S_NH4"]], low_aeration_state[state_index["S_NH4"]])
 
         low_hrt_state, _ = simulate_asm2d_tsn_steady_state(
@@ -271,7 +271,7 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         self.assertIn("artifact_paths", result)
         self.assertEqual(result["artifact_paths"]["dataset_csv"], None)
         self.assertEqual(result["artifact_paths"]["metadata_json"], None)
-        self.assertEqual(result["metadata"]["measured_output_columns"], ["COD", "TN", "TKN", "TP", "TSS", "VSS"])
+        self.assertEqual(result["metadata"]["measured_output_columns"], ["COD", "TN", "TKN", "TP", "TSS"])
 
     def test_run_simulation_can_return_in_memory_debug_payloads(self) -> None:
         params = load_asm2d_tsn_simulation_params()
