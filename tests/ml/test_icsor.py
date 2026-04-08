@@ -175,7 +175,7 @@ class icsorModelTests(unittest.TestCase):
             -1e-10,
         )
 
-    def test_rank_deficient_training_uses_bootstrap_uncertainty_in_auto_mode(self) -> None:
+    def test_rank_deficient_training_uses_analytic_uncertainty_in_auto_mode(self) -> None:
         params = self._tiny_params()
         dataset_splits = make_train_test_split(
             self.icsor_dataset,
@@ -194,14 +194,19 @@ class icsorModelTests(unittest.TestCase):
         )
 
         coefficient_inference = result["model_bundle"]["coefficient_inference"]
-        self.assertEqual(coefficient_inference["method"], "bootstrap")
+        self.assertEqual(coefficient_inference["method"], "analytic")
+        self.assertEqual(coefficient_inference["requested_method"], "auto")
         self.assertTrue(bool(coefficient_inference["rank_deficient"]))
+        self.assertRegex(
+            str(coefficient_inference["note"]).lower(),
+            r"(rank|non-full-column-rank|not uniquely identifiable)",
+        )
         self.assertIn("affine_core_prediction_standard_errors", result["test_report"])
         self.assertIn("prediction_uncertainty_summary", result["test_report"])
-        self.assertEqual(
-            result["test_report"]["uncertainty_metadata"].iloc[0]["prediction_target"],
-            "affine_core_measured_prediction",
-        )
+        prediction_metadata = result["test_report"]["uncertainty_metadata"].iloc[0].to_dict()
+        self.assertEqual(prediction_metadata["method"], "analytic")
+        self.assertEqual(prediction_metadata["note"], coefficient_inference["note"])
+        self.assertEqual(prediction_metadata["prediction_target"], "affine_core_measured_prediction")
 
         effective_uncertainty = result["model_bundle"]["effective_coefficient_uncertainty"]
         self.assertIn("W_u", effective_uncertainty)
@@ -244,7 +249,7 @@ class icsorModelTests(unittest.TestCase):
 
     def test_full_rank_training_uses_analytic_uncertainty(self) -> None:
         synthetic_train, synthetic_test, a_matrix, composition_matrix = self._make_full_rank_synthetic_splits()
-        params = self._tiny_params(bootstrap_samples=16)
+        params = self._tiny_params()
 
         result = run_icsor_pipeline(
             synthetic_train,
@@ -273,6 +278,25 @@ class icsorModelTests(unittest.TestCase):
         upper_values = ci_upper.rename(columns=lambda value: str(value).removeprefix("AffineCoreCI95Upper_"))
         self.assertTrue((lower_values.to_numpy(dtype=float) <= projected_values.to_numpy(dtype=float)).all())
         self.assertTrue((projected_values.to_numpy(dtype=float) <= upper_values.to_numpy(dtype=float)).all())
+
+    def test_bootstrap_uncertainty_method_is_rejected(self) -> None:
+        params = self._tiny_params(uncertainty_method="bootstrap")
+        dataset_splits = make_train_test_split(
+            self.icsor_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        with self.assertRaisesRegex(ValueError, r"analytic, auto, none"):
+            run_icsor_pipeline(
+                dataset_splits.train,
+                dataset_splits.test,
+                self.a_matrix,
+                composition_matrix=self.composition_matrix,
+                model_params=params,
+                show_progress=False,
+                persist_artifacts=False,
+            )
 
     def test_nonnegative_projection_uses_osqp_when_affine_prediction_is_negative(self) -> None:
         a_matrix = np.asarray([[1.0, 1.0]], dtype=float)
@@ -382,6 +406,111 @@ class icsorModelTests(unittest.TestCase):
             rtol=1e-8,
         )
 
+    def test_ridge_training_uses_analytic_uncertainty_even_when_full_rank(self) -> None:
+        synthetic_train, synthetic_test, a_matrix, composition_matrix = self._make_full_rank_synthetic_splits()
+        params = self._tiny_params(
+            affine_estimator="ridge",
+            ridge_alpha=0.5,
+            uncertainty_method="auto",
+        )
+
+        result = run_icsor_pipeline(
+            synthetic_train,
+            synthetic_test,
+            a_matrix,
+            composition_matrix=composition_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        coefficient_inference = result["model_bundle"]["coefficient_inference"]
+        self.assertEqual(coefficient_inference["method"], "analytic")
+        self.assertEqual(coefficient_inference["analytic_distribution"], "gaussian")
+        self.assertEqual(coefficient_inference["requested_method"], "auto")
+        self.assertEqual(coefficient_inference["affine_estimator"], "ridge")
+        self.assertAlmostEqual(float(coefficient_inference["ridge_alpha"]), 0.5)
+        self.assertGreater(float(coefficient_inference["degrees_of_freedom"]), 0.0)
+        self.assertRegex(
+            str(coefficient_inference["note"]).lower(),
+            r"(gaussian|fixed-penalty|shrinkage)",
+        )
+
+        prediction_metadata = result["test_report"]["uncertainty_metadata"].iloc[0].to_dict()
+        self.assertEqual(prediction_metadata["method"], "analytic")
+        self.assertEqual(prediction_metadata["note"], coefficient_inference["note"])
+        self.assertEqual(prediction_metadata["affine_estimator"], "ridge")
+        self.assertAlmostEqual(float(prediction_metadata["ridge_alpha"]), 0.5)
+
+    def test_ridge_shrinks_identifiable_parameter_norm_relative_to_ols(self) -> None:
+        synthetic_train, synthetic_test, a_matrix, composition_matrix = self._make_full_rank_synthetic_splits()
+        ols_params = self._tiny_params(affine_estimator="ols", uncertainty_method="analytic")
+        ridge_params = self._tiny_params(
+            affine_estimator="ridge",
+            ridge_alpha=5.0,
+            uncertainty_method="auto",
+        )
+
+        ols_result = run_icsor_pipeline(
+            synthetic_train,
+            synthetic_test,
+            a_matrix,
+            composition_matrix=composition_matrix,
+            model_params=ols_params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+        ridge_result = run_icsor_pipeline(
+            synthetic_train,
+            synthetic_test,
+            a_matrix,
+            composition_matrix=composition_matrix,
+            model_params=ridge_params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        ols_norm = float(np.linalg.norm(np.asarray(ols_result["model_bundle"]["identifiable_parameter_matrix"], dtype=float)))
+        ridge_norm = float(np.linalg.norm(np.asarray(ridge_result["model_bundle"]["identifiable_parameter_matrix"], dtype=float)))
+        self.assertLess(ridge_norm, ols_norm)
+        self.assertEqual(ridge_result["best_hyperparameters"]["affine_estimator"], "ridge")
+
+    @patch("src.models.ml.icsor.persist_training_artifacts")
+    def test_pipeline_forwards_optuna_summary_when_present(self, persist_artifacts_mock: MagicMock) -> None:
+        persist_artifacts_mock.return_value = {
+            "model_bundle": Path("results/icsor/model.pkl"),
+            "metrics": Path("results/icsor/metrics.json"),
+            "optuna": Path("results/icsor/optuna.json"),
+        }
+        params = self._tiny_params()
+        dataset_splits = make_train_test_split(
+            self.icsor_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        optuna_summary = {
+            "best_value": 0.123,
+            "best_trial_number": 0,
+            "n_trials": 1,
+            "best_params": {"ridge_alpha": 0.05},
+            "trial_state_counts": {"complete": 1},
+        }
+
+        result = run_icsor_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            model_params=params,
+            optuna_summary=optuna_summary,
+            show_progress=False,
+            persist_artifacts=True,
+        )
+
+        self.assertTrue(persist_artifacts_mock.called)
+        self.assertEqual(persist_artifacts_mock.call_args.kwargs["optuna_summary"], optuna_summary)
+        self.assertEqual(result["artifact_paths"]["optuna"], Path("results/icsor/optuna.json"))
+
     @patch("src.models.ml.icsor.create_progress_bar")
     def test_train_enables_progress_by_default(self, progress_factory: MagicMock) -> None:
         progress_factory.return_value = MagicMock()
@@ -432,8 +561,9 @@ class icsorModelTests(unittest.TestCase):
     def _tiny_params(
         self,
         *,
+        affine_estimator: str = "ols",
         ols_backend: str = "numpy_lstsq",
-        bootstrap_samples: int = 32,
+        ridge_alpha: float = 0.001,
         uncertainty_method: str = "auto",
     ) -> dict[str, Any]:
         return copy.deepcopy(
@@ -444,9 +574,11 @@ class icsorModelTests(unittest.TestCase):
                     "scale_targets": False,
                 },
                 "training_defaults": {
-                    "objective": "projected_ols",
+                    "objective": "projected_ridge" if affine_estimator == "ridge" else "projected_ols",
                     "solver": "multivariate_lstsq",
+                    "affine_estimator": affine_estimator,
                     "ols_backend": ols_backend,
+                    "ridge_alpha": ridge_alpha,
                     "include_bias_term": True,
                     "lstsq_rcond": None,
                     "projection_solver": "osqp",
@@ -460,8 +592,6 @@ class icsorModelTests(unittest.TestCase):
                     "osqp_warm_start": True,
                     "uncertainty_method": uncertainty_method,
                     "confidence_level": 0.95,
-                    "bootstrap_samples": bootstrap_samples,
-                    "bootstrap_random_seed": 11,
                 },
                 "artifact_options": {
                     "persist_model": True,

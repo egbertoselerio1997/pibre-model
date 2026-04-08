@@ -341,6 +341,72 @@ def tune_tabular_regressor_hyperparameters(
     return best_hyperparameters, make_study_summary(study)
 
 
+def tune_icsor_hyperparameters(
+    tuning_train_split: DatasetSplit,
+    tuning_test_split: DatasetSplit,
+    *,
+    A_matrix: np.ndarray,
+    composition_matrix: np.ndarray,
+    model_params: Mapping[str, Any],
+    model_hyperparameters: Mapping[str, Any] | None = None,
+    n_trials: int,
+    timeout: int | None = None,
+    show_progress_bar: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Tune the ICSOR ridge regularization strength with notebook-managed splits."""
+
+    from src.models.ml.icsor import run_icsor_pipeline
+
+    base_hyperparameters = resolve_model_hyperparameters(model_params, model_hyperparameters)
+    if str(base_hyperparameters.get("affine_estimator", "ols")).strip().lower() != "ridge":
+        raise ValueError(
+            "tune_icsor_hyperparameters requires affine_estimator='ridge'; Optuna does not choose the ICSOR solver family."
+        )
+
+    if not model_params.get("search_space"):
+        raise ValueError("icsor search_space must be defined in config/params.json to tune ridge_alpha.")
+
+    base_hyperparameters = dict(base_hyperparameters)
+    base_hyperparameters["objective"] = "projected_ridge"
+    seed = int(model_params["hyperparameters"]["random_seed"])
+    study = create_optuna_study(
+        "icsor",
+        seed=seed,
+        pruner_config=model_params.get("pruner"),
+    )
+
+    def objective(trial: Any) -> float:
+        hyperparameters = dict(base_hyperparameters)
+        hyperparameters.update(suggest_parameters(trial, model_params["search_space"]))
+        hyperparameters["uncertainty_method"] = "none"
+        tuning_result = run_icsor_pipeline(
+            tuning_train_split,
+            tuning_test_split,
+            np.asarray(A_matrix, dtype=float),
+            composition_matrix=np.asarray(composition_matrix, dtype=float),
+            model_params=model_params,
+            model_hyperparameters=hyperparameters,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+        aggregate_metrics = tuning_result["test_report"]["aggregate_metrics"]
+        projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
+        return float(projected_row["MSE"])
+
+    optimize_study(
+        study,
+        objective,
+        n_trials=int(n_trials),
+        timeout=timeout,
+        show_progress_bar=show_progress_bar,
+        objective_name="validation_mse",
+    )
+
+    best_hyperparameters = dict(base_hyperparameters)
+    best_hyperparameters.update(study.best_trial.params)
+    return best_hyperparameters, make_study_summary(study)
+
+
 def build_tabular_model_bundle(
     model_name: str,
     fitted_model: Any,
@@ -598,5 +664,6 @@ __all__ = [
     "serialize_report_frames",
     "train_tabular_regressor",
     "transform_feature_frame",
+    "tune_icsor_hyperparameters",
     "tune_tabular_regressor_hyperparameters",
 ]

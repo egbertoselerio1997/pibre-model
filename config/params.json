@@ -1067,9 +1067,11 @@
       "scale_targets": false
     },
     "training_defaults": {
-      "objective": "projected_ols",
+      "objective": "projected_ridge",
       "solver": "multivariate_lstsq",
+      "affine_estimator": "ridge",
       "ols_backend": "numpy_lstsq",
+      "ridge_alpha": 0.01,
       "include_bias_term": true,
       "lstsq_rcond": null,
       "projection_solver": "osqp",
@@ -1082,13 +1084,20 @@
       "osqp_verbose": false,
       "osqp_warm_start": true,
       "uncertainty_method": "analytic",
-      "confidence_level": 0.95,
-      "bootstrap_samples": 20,
-      "bootstrap_random_seed": 42
+      "confidence_level": 0.95
+    },
+    "search_space": {
+      "ridge_alpha": {
+        "type": "float",
+        "low": 1e-8,
+        "high": 10.0,
+        "log": true
+      }
     },
     "artifact_options": {
       "persist_model": true,
-      "persist_metrics": true
+      "persist_metrics": true,
+      "persist_optuna": true
     }
   },
   "xgboost_regressor": {

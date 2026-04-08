@@ -84,7 +84,12 @@ $$
 \widetilde{Y} = \Phi M^T
 $$
 
-The repository solves this affine-core least-squares problem analytically. One admissible raw component-space coefficient matrix is then reconstructed as a minimum-norm solution consistent with the collapsed affine objective. The non-negative correction is not part of coefficient fitting; it is a post-estimation deployment step.
+The repository supports two manual affine-core estimators for this measured-space fit.
+
+- `ols` uses the original closed-form least-squares solution for the identifiable affine core.
+- `ridge` applies L2 shrinkage to the same identifiable affine core, with the bias block left unpenalized.
+
+In both cases, one admissible raw component-space coefficient matrix is then reconstructed as a minimum-norm solution consistent with the collapsed affine objective. The non-negative correction is not part of coefficient fitting; it is a post-estimation deployment step. When notebook-managed Optuna tuning is enabled for ICSOR, the notebook keeps the estimator fixed to ridge and tunes only the regularization strength `ridge_alpha`.
 
 ## 6. Returned artifacts and persisted bundle fields
 
@@ -103,8 +108,9 @@ The persisted model bundle stores the data needed to reproduce predictions:
 - the raw component-space parameter matrix
 - the identifiable affine measured-space parameter matrix
 - the affine-core coefficient blocks exposed through the legacy `effective_*` fields
+- estimator metadata, including the selected affine-core estimator and ridge strength when applicable
 - OSQP projection settings loaded from `config/params.json`
-- coefficient-inference metadata and, when available, bootstrap parameter samples
+- coefficient-inference metadata for the affine measured-space core
 
 ## 7. Coefficient uncertainty
 
@@ -120,11 +126,11 @@ Prediction-time uncertainty is reported with `affine_core_prediction_*` outputs.
 
 The implementation chooses the inference method as follows:
 
-- `auto` uses analytic Gaussian inference when the affine-core design is full rank and falls back to bootstrap percentile inference when the design is rank deficient
-- `analytic` forces the analytic covariance path even for rank-deficient designs
-- `bootstrap` forces resampling-based coefficient inference
+- `auto` resolves to analytic affine-core inference. For OLS runs it uses the familiar covariance formulas, with a pseudoinverse-based warning when the design is rank deficient. For ridge runs it uses the conditional-on-fixed-penalty Gaussian approximation described in the article.
+- `analytic` is the explicit version of the same analytic affine-core path
+- `none` is used internally by the Optuna tuning helper to skip uncertainty calculation during trial scoring
 
-The default confidence level, bootstrap count, and OSQP settings are all loaded from `config/params.json`.
+The default confidence level and OSQP settings are loaded from `config/params.json`.
 
 ## 8. Prediction workflow and staged deployment
 
@@ -172,6 +178,7 @@ Important limitations remain:
 - the raw component-space parameter matrix is not uniquely identifiable from measured-space supervision alone
 - the unsymmetrized second-order basis can become rank deficient, especially when quadratic terms introduce duplicate interaction columns
 - the final deployed predictor is piecewise affine rather than one global affine measured-space map
+- ridge intervals are conditional Gaussian approximations for the affine core and are not exact finite-sample $t$-intervals
 - closed-form uncertainty formulas apply to the affine core, not in general to the final OSQP-corrected predictor
 - extrapolation outside the simulated operating envelope remains risky even when the prediction surface looks smooth
 

@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
-from scipy.stats import t as student_t_distribution
+from scipy.stats import norm as normal_distribution, t as student_t_distribution
 
 from src.utils.optuna import create_progress_bar
 from src.utils.process import (
@@ -37,10 +37,10 @@ from src.utils.train import (
 
 
 MODEL_NAME = "icsor"
+VALID_AFFINE_ESTIMATORS = {"ols", "ridge"}
 VALID_OLS_BACKENDS = {"numpy_lstsq"}
 DEFAULT_CONFIDENCE_LEVEL = 0.95
 DEFAULT_UNCERTAINTY_METHOD = "auto"
-DEFAULT_BOOTSTRAP_SAMPLES = 200
 DEFAULT_PROJECTION_SOLVER = "osqp"
 DEFAULT_CONSTRAINT_TOLERANCE = 1e-8
 DEFAULT_NONNEGATIVITY_TOLERANCE = 1e-10
@@ -55,6 +55,12 @@ RANK_DEFICIENT_ANALYTIC_NOTE = (
     "Analytic coefficient intervals were computed with a non-full-column-rank design matrix; "
     "the original design-basis coefficients are not uniquely identifiable coefficientwise, "
     "so interpret these intervals with caution."
+)
+RIDGE_ANALYTIC_INFERENCE_NOTE = (
+    "Ridge uncertainty uses a conditional-on-fixed-penalty Gaussian approximation for the affine "
+    "core. It uses the analytic ridge covariance formulas with a plug-in output covariance estimate "
+    "and does not account for shrinkage bias, penalty-selection uncertainty, or the final "
+    "nonnegative deployment correction."
 )
 AFFINE_CORE_PREDICTION_UNCERTAINTY_NOTE = (
     "Prediction uncertainty describes the affine measured-space core only and is not an exact "
@@ -80,6 +86,19 @@ def _resolve_training_options(
     return options
 
 
+def _resolve_affine_estimator(model_hyperparameters: Mapping[str, Any]) -> str:
+    estimator_name = model_hyperparameters.get("affine_estimator")
+    if estimator_name is None:
+        legacy_backend = str(model_hyperparameters.get("ols_backend", "numpy_lstsq")).strip().lower()
+        estimator_name = "ridge" if legacy_backend == "ridge" else "ols"
+
+    resolved_name = str(estimator_name).strip().lower()
+    if resolved_name not in VALID_AFFINE_ESTIMATORS:
+        valid_values = ", ".join(sorted(VALID_AFFINE_ESTIMATORS))
+        raise ValueError(f"icsor requires affine_estimator to be one of: {valid_values}.")
+    return resolved_name
+
+
 def _resolve_ols_backend(model_hyperparameters: Mapping[str, Any]) -> str:
     backend_name = str(model_hyperparameters.get("ols_backend", "numpy_lstsq")).strip().lower()
     if backend_name not in VALID_OLS_BACKENDS:
@@ -88,11 +107,33 @@ def _resolve_ols_backend(model_hyperparameters: Mapping[str, Any]) -> str:
     return backend_name
 
 
+def _resolve_ridge_alpha(model_hyperparameters: Mapping[str, Any]) -> float:
+    ridge_alpha = float(model_hyperparameters.get("ridge_alpha", 0.0))
+    if ridge_alpha < 0.0:
+        raise ValueError("icsor ridge_alpha must be nonnegative.")
+    return ridge_alpha
+
+
+def _resolve_icsor_objective_label(model_hyperparameters: Mapping[str, Any]) -> str:
+    estimator_name = _resolve_affine_estimator(model_hyperparameters)
+    default_label = f"projected_{estimator_name}"
+    explicit_label = model_hyperparameters.get("objective")
+    if explicit_label is None:
+        return default_label
+
+    resolved_label = str(explicit_label)
+    if resolved_label in {"projected_ols", "projected_ridge"}:
+        return default_label
+    return resolved_label
+
+
 def _validate_scaling_configuration(hyperparameters: Mapping[str, Any]) -> None:
     if bool(hyperparameters.get("scale_features", False)):
         raise ValueError("icsor requires scale_features=False so fractional influent states remain physical.")
     if bool(hyperparameters.get("scale_targets", False)):
-        raise ValueError("icsor requires scale_targets=False because the collapsed OLS target lives in measured-output space.")
+        raise ValueError(
+            "icsor requires scale_targets=False because the collapsed affine-core target lives in measured-output space."
+        )
 
 
 def _validate_composition_shape(
@@ -119,20 +160,9 @@ def _resolve_confidence_level(model_hyperparameters: Mapping[str, Any]) -> float
 
 def _resolve_uncertainty_method(model_hyperparameters: Mapping[str, Any]) -> str:
     method_name = str(model_hyperparameters.get("uncertainty_method", DEFAULT_UNCERTAINTY_METHOD)).strip().lower()
-    if method_name not in {"auto", "analytic", "bootstrap"}:
-        raise ValueError("icsor uncertainty_method must be one of: analytic, auto, bootstrap.")
+    if method_name not in {"auto", "analytic", "none"}:
+        raise ValueError("icsor uncertainty_method must be one of: analytic, auto, none.")
     return method_name
-
-
-def _resolve_bootstrap_samples(model_hyperparameters: Mapping[str, Any]) -> int:
-    bootstrap_samples = int(model_hyperparameters.get("bootstrap_samples", DEFAULT_BOOTSTRAP_SAMPLES))
-    if bootstrap_samples < 2:
-        raise ValueError("icsor bootstrap_samples must be at least 2.")
-    return bootstrap_samples
-
-
-def _resolve_bootstrap_random_seed(model_hyperparameters: Mapping[str, Any]) -> int:
-    return int(model_hyperparameters.get("bootstrap_random_seed", model_hyperparameters.get("random_seed", 42)))
 
 
 def _resolve_projection_settings(model_hyperparameters: Mapping[str, Any]) -> dict[str, Any]:
@@ -165,19 +195,6 @@ def _resolve_projection_settings(model_hyperparameters: Mapping[str, Any]) -> di
     if settings["osqp_max_iter"] < 1:
         raise ValueError("icsor osqp_max_iter must be at least 1.")
     return settings
-
-
-def _should_use_bootstrap_inference(
-    *,
-    uncertainty_method: str,
-    design_rank: int,
-    design_dimension: int,
-) -> bool:
-    if uncertainty_method == "bootstrap":
-        return True
-    if uncertainty_method == "analytic":
-        return False
-    return bool(design_rank < design_dimension)
 
 
 def _compute_projection_matrices(A_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -449,7 +466,7 @@ def _predict_with_parameter_matrix(
 def _estimate_output_covariance(
     fit_residual_matrix: np.ndarray,
     *,
-    degrees_of_freedom: int,
+    degrees_of_freedom: float,
 ) -> np.ndarray:
     residual_array = np.asarray(fit_residual_matrix, dtype=float)
     if degrees_of_freedom <= 0:
@@ -502,28 +519,50 @@ def _compute_analytic_parameter_inference(
     identifiable_parameter_matrix: np.ndarray,
     *,
     design_matrix: np.ndarray,
+    design_schema: Mapping[str, Any],
     fit_residual_matrix: np.ndarray,
     design_rank: int,
     confidence_level: float,
+    model_hyperparameters: Mapping[str, Any],
 ) -> dict[str, Any]:
     design_array = np.asarray(design_matrix, dtype=float)
-    design_dimension = int(design_array.shape[1])
-    degrees_of_freedom = int(design_array.shape[0] - design_rank)
-    effective_degrees_of_freedom = max(degrees_of_freedom, 1)
-    gram_inverse = np.linalg.pinv(design_array.T @ design_array)
+    affine_estimator = _resolve_affine_estimator(model_hyperparameters)
+    sample_count = int(design_array.shape[0])
+
+    if affine_estimator == "ridge":
+        ridge_operators = _build_ridge_linear_operators(
+            design_array,
+            design_schema=design_schema,
+            ridge_alpha=_resolve_ridge_alpha(model_hyperparameters),
+        )
+        effective_model_degrees_of_freedom = float(ridge_operators["effective_degrees_of_freedom"])
+        degrees_of_freedom = float(sample_count - effective_model_degrees_of_freedom)
+        working_degrees_of_freedom = max(degrees_of_freedom, 1.0)
+        coefficient_covariance_factor = np.asarray(ridge_operators["coefficient_covariance_factor"], dtype=float)
+        design_gram_inverse = None
+        critical_value = float(normal_distribution.ppf(0.5 * (1.0 + confidence_level)))
+        analytic_distribution = "gaussian"
+    else:
+        degrees_of_freedom = int(sample_count - design_rank)
+        working_degrees_of_freedom = max(degrees_of_freedom, 1)
+        effective_model_degrees_of_freedom = int(design_rank)
+        coefficient_covariance_factor = np.linalg.pinv(design_array.T @ design_array)
+        design_gram_inverse = coefficient_covariance_factor
+        critical_value = float(
+            student_t_distribution.ppf(
+                0.5 * (1.0 + confidence_level),
+                df=working_degrees_of_freedom,
+            )
+        )
+        analytic_distribution = "student_t"
+
     output_covariance = _estimate_output_covariance(
         fit_residual_matrix,
-        degrees_of_freedom=effective_degrees_of_freedom,
+        degrees_of_freedom=working_degrees_of_freedom,
     )
-    design_direction_variances = np.clip(np.diag(gram_inverse), a_min=0.0, a_max=None)
+    design_direction_variances = np.clip(np.diag(coefficient_covariance_factor), a_min=0.0, a_max=None)
     output_variances = np.clip(np.diag(output_covariance), a_min=0.0, a_max=None)
     standard_error_matrix = np.sqrt(np.outer(design_direction_variances, output_variances))
-    critical_value = float(
-        student_t_distribution.ppf(
-            0.5 * (1.0 + confidence_level),
-            df=effective_degrees_of_freedom,
-        )
-    )
     ci_lower, ci_upper = _compute_interval_bounds(
         identifiable_parameter_matrix,
         standard_error_matrix,
@@ -532,58 +571,12 @@ def _compute_analytic_parameter_inference(
     return {
         "method": "analytic",
         "degrees_of_freedom": degrees_of_freedom,
+        "effective_model_degrees_of_freedom": effective_model_degrees_of_freedom,
         "critical_value": critical_value,
-        "design_gram_inverse": gram_inverse,
+        "analytic_distribution": analytic_distribution,
+        "design_gram_inverse": design_gram_inverse,
+        "coefficient_covariance_factor": coefficient_covariance_factor,
         "output_covariance": output_covariance,
-        "standard_error_matrix": standard_error_matrix,
-        "confidence_interval_lower": ci_lower,
-        "confidence_interval_upper": ci_upper,
-    }
-
-
-def _compute_bootstrap_parameter_inference(
-    identifiable_parameter_matrix: np.ndarray,
-    *,
-    design_matrix: np.ndarray,
-    transformed_target_matrix: np.ndarray,
-    fit_residual_matrix: np.ndarray,
-    confidence_level: float,
-    bootstrap_samples: int,
-    bootstrap_random_seed: int,
-    model_hyperparameters: Mapping[str, Any],
-) -> dict[str, Any]:
-    design_array = np.asarray(design_matrix, dtype=float)
-    transformed_target_array = np.asarray(transformed_target_matrix, dtype=float)
-    sample_count = int(design_array.shape[0])
-    rng = np.random.default_rng(int(bootstrap_random_seed))
-    parameter_samples: list[np.ndarray] = []
-    rcond_value = model_hyperparameters.get("lstsq_rcond")
-
-    for _ in range(int(bootstrap_samples)):
-        sampled_indices = rng.integers(0, sample_count, size=sample_count)
-        bootstrap_result = _solve_with_numpy_lstsq(
-            design_array[sampled_indices, :],
-            transformed_target_array[sampled_indices, :],
-            rcond_value=rcond_value,
-        )
-        parameter_samples.append(np.asarray(bootstrap_result["solution_matrix"], dtype=float))
-
-    parameter_sample_array = np.stack(parameter_samples, axis=0)
-    lower_quantile = 0.5 * (1.0 - confidence_level)
-    upper_quantile = 1.0 - lower_quantile
-    standard_error_matrix = np.std(parameter_sample_array, axis=0, ddof=1)
-    ci_lower = np.quantile(parameter_sample_array, lower_quantile, axis=0)
-    ci_upper = np.quantile(parameter_sample_array, upper_quantile, axis=0)
-    output_covariance = np.cov(np.asarray(fit_residual_matrix, dtype=float), rowvar=False, ddof=1)
-    if np.ndim(output_covariance) == 0:
-        output_covariance = np.asarray([[float(output_covariance)]], dtype=float)
-    return {
-        "method": "bootstrap",
-        "degrees_of_freedom": None,
-        "critical_value": None,
-        "design_gram_inverse": None,
-        "output_covariance": np.asarray(output_covariance, dtype=float),
-        "bootstrap_parameter_samples": parameter_sample_array,
         "standard_error_matrix": standard_error_matrix,
         "confidence_interval_lower": ci_lower,
         "confidence_interval_upper": ci_upper,
@@ -594,55 +587,46 @@ def _compute_parameter_inference(
     identifiable_parameter_matrix: np.ndarray,
     *,
     design_matrix: np.ndarray,
-    transformed_target_matrix: np.ndarray,
+    design_schema: Mapping[str, Any],
     fit_residual_matrix: np.ndarray,
     design_rank: int,
     confidence_level: float,
     model_hyperparameters: Mapping[str, Any],
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     uncertainty_method = _resolve_uncertainty_method(model_hyperparameters)
+    if uncertainty_method == "none":
+        return None
+
+    affine_estimator = _resolve_affine_estimator(model_hyperparameters)
     design_dimension = int(np.asarray(design_matrix, dtype=float).shape[1])
     rank_deficient = bool(int(design_rank) < design_dimension)
-    if _should_use_bootstrap_inference(
-        uncertainty_method=uncertainty_method,
+    inference_result = _compute_analytic_parameter_inference(
+        identifiable_parameter_matrix,
+        design_matrix=design_matrix,
+        design_schema=design_schema,
+        fit_residual_matrix=fit_residual_matrix,
         design_rank=int(design_rank),
-        design_dimension=design_dimension,
-    ):
-        inference_result = _compute_bootstrap_parameter_inference(
-            identifiable_parameter_matrix,
-            design_matrix=design_matrix,
-            transformed_target_matrix=transformed_target_matrix,
-            fit_residual_matrix=fit_residual_matrix,
-            confidence_level=confidence_level,
-            bootstrap_samples=_resolve_bootstrap_samples(model_hyperparameters),
-            bootstrap_random_seed=_resolve_bootstrap_random_seed(model_hyperparameters),
-            model_hyperparameters=model_hyperparameters,
-        )
-    else:
-        inference_result = _compute_analytic_parameter_inference(
-            identifiable_parameter_matrix,
-            design_matrix=design_matrix,
-            fit_residual_matrix=fit_residual_matrix,
-            design_rank=int(design_rank),
-            confidence_level=confidence_level,
-        )
+        confidence_level=confidence_level,
+        model_hyperparameters=model_hyperparameters,
+    )
 
     inference_result["confidence_level"] = float(confidence_level)
     inference_result["design_dimension"] = design_dimension
     inference_result["design_rank"] = int(design_rank)
     inference_result["coefficient_target"] = "identifiable_measured_space_operator"
     inference_result["rank_deficient"] = rank_deficient
-    inference_result["note"] = (
-        RANK_DEFICIENT_ANALYTIC_NOTE
-        if inference_result["method"] == "analytic" and rank_deficient
-        else None
-    )
-    inference_result["bootstrap_random_seed"] = _resolve_bootstrap_random_seed(model_hyperparameters)
-    inference_result["bootstrap_samples"] = (
-        int(_resolve_bootstrap_samples(model_hyperparameters))
-        if inference_result["method"] == "bootstrap"
-        else None
-    )
+    inference_result["requested_method"] = uncertainty_method
+    inference_result["affine_estimator"] = affine_estimator
+    inference_result["ridge_alpha"] = _resolve_ridge_alpha(model_hyperparameters) if affine_estimator == "ridge" else None
+
+    notes: list[str] = []
+    if affine_estimator == "ridge":
+        notes.append(RIDGE_ANALYTIC_INFERENCE_NOTE)
+    if affine_estimator == "ols" and rank_deficient:
+        notes.append(RANK_DEFICIENT_ANALYTIC_NOTE)
+    inference_result["note"] = " ".join(notes) if notes else None
+    inference_result["bootstrap_random_seed"] = None
+    inference_result["bootstrap_samples"] = None
     return inference_result
 
 
@@ -665,10 +649,13 @@ def _compute_prediction_uncertainty_from_bundle(
     method_name = str(coefficient_inference["method"])
 
     if method_name == "analytic":
-        gram_inverse = np.asarray(coefficient_inference["design_gram_inverse"], dtype=float)
+        covariance_factor = coefficient_inference.get("coefficient_covariance_factor")
+        if covariance_factor is None:
+            covariance_factor = coefficient_inference["design_gram_inverse"]
+        coefficient_covariance_factor = np.asarray(covariance_factor, dtype=float)
         output_covariance = np.asarray(coefficient_inference["output_covariance"], dtype=float)
         critical_value = float(coefficient_inference["critical_value"])
-        leverage = np.einsum("nd,df,nf->n", design_matrix, gram_inverse, design_matrix)
+        leverage = np.einsum("nd,df,nf->n", design_matrix, coefficient_covariance_factor, design_matrix)
         leverage = np.clip(leverage, a_min=0.0, a_max=None)
         output_variances = np.clip(np.diag(output_covariance), a_min=0.0, a_max=None)
         mean_standard_errors = np.sqrt(np.outer(leverage, output_variances))
@@ -707,9 +694,12 @@ def _compute_prediction_uncertainty_from_bundle(
     return {
         "metadata": {
             "method": method_name,
+            "requested_method": coefficient_inference.get("requested_method", method_name),
             "confidence_level": confidence_level,
             "coefficient_target": str(coefficient_inference["coefficient_target"]),
             "prediction_target": "affine_core_measured_prediction",
+            "affine_estimator": coefficient_inference.get("affine_estimator", "ols"),
+            "ridge_alpha": coefficient_inference.get("ridge_alpha"),
             "rank_deficient": bool(coefficient_inference["rank_deficient"]),
             "design_rank": int(coefficient_inference["design_rank"]),
             "design_dimension": int(coefficient_inference["design_dimension"]),
@@ -756,23 +746,110 @@ def _solve_with_numpy_lstsq(
     }
 
 
-def _solve_projected_ols(
+def _build_ridge_penalty_matrix(design_schema: Mapping[str, Any], design_dimension: int) -> np.ndarray:
+    penalty_matrix = np.eye(int(design_dimension), dtype=float)
+    bias_slice = _get_block_slice(design_schema, "bias")
+    if bias_slice.stop > bias_slice.start:
+        penalty_matrix[bias_slice, bias_slice] = 0.0
+    return penalty_matrix
+
+
+def _build_ridge_linear_operators(
+    design_matrix: np.ndarray,
+    *,
+    design_schema: Mapping[str, Any],
+    ridge_alpha: float,
+) -> dict[str, np.ndarray | float]:
+    design_array = np.asarray(design_matrix, dtype=float)
+    design_dimension = int(design_array.shape[1])
+    penalty_matrix = _build_ridge_penalty_matrix(design_schema, design_dimension)
+    normal_matrix = design_array.T @ design_array + float(ridge_alpha) * penalty_matrix
+    normal_inverse = np.linalg.pinv(normal_matrix)
+    operator_matrix = normal_inverse @ design_array.T
+    hat_matrix = design_array @ operator_matrix
+    return {
+        "penalty_matrix": penalty_matrix,
+        "normal_matrix": normal_matrix,
+        "normal_inverse": normal_inverse,
+        "operator_matrix": operator_matrix,
+        "hat_matrix": hat_matrix,
+        "coefficient_covariance_factor": operator_matrix @ operator_matrix.T,
+        "effective_degrees_of_freedom": float(np.trace(hat_matrix)),
+    }
+
+
+def _solve_with_numpy_ridge(
+    left_matrix: np.ndarray,
+    right_matrix: np.ndarray,
+    *,
+    design_schema: Mapping[str, Any],
+    ridge_alpha: float,
+) -> dict[str, Any]:
+    left_array = np.asarray(left_matrix, dtype=float)
+    right_array = np.asarray(right_matrix, dtype=float)
+    ridge_operators = _build_ridge_linear_operators(
+        left_array,
+        design_schema=design_schema,
+        ridge_alpha=ridge_alpha,
+    )
+    solution_matrix = np.asarray(ridge_operators["operator_matrix"], dtype=float) @ right_array
+    fitted_values = left_array @ solution_matrix
+    singular_values = np.linalg.svd(left_array, compute_uv=False)
+    return {
+        "solution_matrix": np.asarray(solution_matrix, dtype=float),
+        "residuals": np.asarray(right_array - fitted_values, dtype=float),
+        "rank": int(np.linalg.matrix_rank(left_array)),
+        "singular_values": np.asarray(singular_values, dtype=float),
+        "backend_used": "numpy_ridge_closed_form",
+        "device_label": "cpu",
+        "ridge_alpha": float(ridge_alpha),
+        "ridge_penalty_matrix": np.asarray(ridge_operators["penalty_matrix"], dtype=float),
+        "effective_degrees_of_freedom": float(ridge_operators["effective_degrees_of_freedom"]),
+    }
+
+
+def _solve_identifiable_affine_parameters(
     design_matrix: np.ndarray,
     transformed_target_matrix: np.ndarray,
+    *,
+    design_schema: Mapping[str, Any],
+    model_hyperparameters: Mapping[str, Any],
+) -> dict[str, Any]:
+    affine_estimator = _resolve_affine_estimator(model_hyperparameters)
+    if affine_estimator == "ridge":
+        return _solve_with_numpy_ridge(
+            design_matrix,
+            transformed_target_matrix,
+            design_schema=design_schema,
+            ridge_alpha=_resolve_ridge_alpha(model_hyperparameters),
+        )
+
+    return _solve_with_numpy_lstsq(
+        design_matrix,
+        transformed_target_matrix,
+        rcond_value=model_hyperparameters.get("lstsq_rcond"),
+    )
+
+
+def _solve_projected_affine_core(
+    design_matrix: np.ndarray,
+    transformed_target_matrix: np.ndarray,
+    design_schema: Mapping[str, Any],
     collapse_operator: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
 ) -> dict[str, Any]:
-    requested_backend = _resolve_ols_backend(model_hyperparameters)
-    rcond_value = model_hyperparameters.get("lstsq_rcond")
-    transformed_parameter_result = _solve_with_numpy_lstsq(
+    affine_estimator = _resolve_affine_estimator(model_hyperparameters)
+    requested_backend = _resolve_ols_backend(model_hyperparameters) if affine_estimator == "ols" else "numpy_ridge_closed_form"
+    transformed_parameter_result = _solve_identifiable_affine_parameters(
         design_matrix,
         transformed_target_matrix,
-        rcond_value=rcond_value,
+        design_schema=design_schema,
+        model_hyperparameters=model_hyperparameters,
     )
     raw_parameter_result = _solve_with_numpy_lstsq(
         collapse_operator,
         transformed_parameter_result["solution_matrix"].T,
-        rcond_value=rcond_value,
+        rcond_value=model_hyperparameters.get("lstsq_rcond"),
     )
     raw_parameter_matrix = np.asarray(raw_parameter_result["solution_matrix"], dtype=float).T
     fit_residual_matrix = transformed_target_matrix - design_matrix @ raw_parameter_matrix @ collapse_operator.T
@@ -787,10 +864,14 @@ def _solve_projected_ols(
         "collapse_residuals": np.asarray(raw_parameter_result["residuals"], dtype=float),
         "collapse_rank": int(raw_parameter_result["rank"]),
         "collapse_singular_values": np.asarray(raw_parameter_result["singular_values"], dtype=float),
-        "ols_metadata": {
+        "estimation_metadata": {
+            "affine_estimator": affine_estimator,
             "requested_backend": requested_backend,
-            "backend_used": str(raw_parameter_result["backend_used"]),
+            "backend_used": str(transformed_parameter_result["backend_used"]),
+            "collapse_backend_used": str(raw_parameter_result["backend_used"]),
             "device_label": "cpu",
+            "ridge_alpha": transformed_parameter_result.get("ridge_alpha"),
+            "ridge_effective_degrees_of_freedom": transformed_parameter_result.get("effective_degrees_of_freedom"),
             "fallback_reason": None,
         },
     }
@@ -809,7 +890,7 @@ def _build_model_bundle(
     training_options: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
-        "model_bundle_schema_version": 3,
+        "model_bundle_schema_version": 4,
         "model_name": MODEL_NAME,
         "feature_columns": feature_columns,
         "target_columns": target_columns,
@@ -831,12 +912,21 @@ def _build_model_bundle(
         "identifiable_coefficients": dict(training_result["identifiable_coefficients"]),
         "effective_coefficients": dict(training_result["effective_coefficients"]),
         "affine_core_coefficients": dict(training_result["effective_coefficients"]),
-        "coefficient_inference": dict(training_result["coefficient_inference"]),
-        "identifiable_coefficient_uncertainty": dict(training_result["identifiable_coefficient_uncertainty"]),
-        "effective_coefficient_uncertainty": dict(training_result["effective_coefficient_uncertainty"]),
-        "affine_core_coefficient_uncertainty": dict(training_result["effective_coefficient_uncertainty"]),
+        "coefficient_inference": None
+        if training_result["coefficient_inference"] is None
+        else dict(training_result["coefficient_inference"]),
+        "identifiable_coefficient_uncertainty": None
+        if training_result["identifiable_coefficient_uncertainty"] is None
+        else dict(training_result["identifiable_coefficient_uncertainty"]),
+        "effective_coefficient_uncertainty": None
+        if training_result["effective_coefficient_uncertainty"] is None
+        else dict(training_result["effective_coefficient_uncertainty"]),
+        "affine_core_coefficient_uncertainty": None
+        if training_result["effective_coefficient_uncertainty"] is None
+        else dict(training_result["effective_coefficient_uncertainty"]),
         "fit_residuals": np.asarray(training_result["fit_residuals"], dtype=float),
-        "ols_metadata": dict(training_result["ols_metadata"]),
+        "estimation_metadata": dict(training_result["estimation_metadata"]),
+        "ols_metadata": dict(training_result["estimation_metadata"]),
         "scaling_bundle": scaling_bundle,
         "model_hyperparameters": dict(model_hyperparameters),
         "training_options": dict(training_options),
@@ -916,6 +1006,7 @@ def train_icsor_model(
     _validate_scaling_configuration(model_hyperparameters)
     confidence_level = _resolve_confidence_level(model_hyperparameters)
     projection_settings = _resolve_projection_settings(model_hyperparameters)
+    objective_label = _resolve_icsor_objective_label(model_hyperparameters)
 
     feature_frame = pd.DataFrame(training_dataset["features"])
     target_frame = pd.DataFrame(training_dataset["targets"])
@@ -926,7 +1017,6 @@ def train_icsor_model(
         constraint_columns=list(constraint_frame.columns),
     )
 
-    objective_label = resolve_training_objective_label(model_hyperparameters, default="projected_ols")
     options = _resolve_training_options(training_options, objective_name=objective_label)
     projection_matrix, projection_complement = _compute_projection_matrices(np.asarray(A_matrix, dtype=float))
     collapse_operator = composition_array @ projection_complement
@@ -951,9 +1041,10 @@ def train_icsor_model(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="solve", objective=str(options["objective_name"]))
-        solve_result = _solve_projected_ols(
+        solve_result = _solve_projected_affine_core(
             design_matrix,
             transformed_target_values,
+            design_schema,
             collapse_operator,
             model_hyperparameters,
         )
@@ -976,38 +1067,42 @@ def train_icsor_model(
         coefficient_inference = _compute_parameter_inference(
             identifiable_parameter_matrix,
             design_matrix=design_matrix,
-            transformed_target_matrix=transformed_target_values,
+            design_schema=design_schema,
             fit_residual_matrix=fit_residual_matrix,
             design_rank=int(solve_result["design_rank"]),
             confidence_level=confidence_level,
             model_hyperparameters=model_hyperparameters,
         )
-        identifiable_coefficient_uncertainty = _build_block_uncertainty_payload(
-            design_schema,
-            standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
-            confidence_interval_lower=np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
-            confidence_interval_upper=np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
-        )
-        effective_coefficient_uncertainty = _build_block_uncertainty_payload(
-            design_schema,
-            standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
-            confidence_interval_lower=np.asarray(
-                _add_pass_through_to_parameter_matrix(
-                    np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
-                    design_schema,
-                    pass_through_operator,
+        if coefficient_inference is None:
+            identifiable_coefficient_uncertainty = None
+            effective_coefficient_uncertainty = None
+        else:
+            identifiable_coefficient_uncertainty = _build_block_uncertainty_payload(
+                design_schema,
+                standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
+                confidence_interval_lower=np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
+                confidence_interval_upper=np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
+            )
+            effective_coefficient_uncertainty = _build_block_uncertainty_payload(
+                design_schema,
+                standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
+                confidence_interval_lower=np.asarray(
+                    _add_pass_through_to_parameter_matrix(
+                        np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
+                        design_schema,
+                        pass_through_operator,
+                    ),
+                    dtype=float,
                 ),
-                dtype=float,
-            ),
-            confidence_interval_upper=np.asarray(
-                _add_pass_through_to_parameter_matrix(
-                    np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
-                    design_schema,
-                    pass_through_operator,
+                confidence_interval_upper=np.asarray(
+                    _add_pass_through_to_parameter_matrix(
+                        np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
+                        design_schema,
+                        pass_through_operator,
+                    ),
+                    dtype=float,
                 ),
-                dtype=float,
-            ),
-        )
+            )
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="predict", objective=str(options["objective_name"]))
@@ -1099,7 +1194,8 @@ def train_icsor_model(
         "collapse_residuals": np.asarray(solve_result["collapse_residuals"], dtype=float),
         "collapse_rank": int(solve_result["collapse_rank"]),
         "collapse_singular_values": np.asarray(solve_result["collapse_singular_values"], dtype=float),
-        "ols_metadata": dict(solve_result["ols_metadata"]),
+        "estimation_metadata": dict(solve_result["estimation_metadata"]),
+        "ols_metadata": dict(solve_result["estimation_metadata"]),
     }
 
 
@@ -1239,8 +1335,9 @@ def run_icsor_pipeline(
     params = dict(model_params) if model_params is not None else load_icsor_params(repo_root)
     split_params = dict(params["hyperparameters"])
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
+    selected_hyperparameters["objective"] = _resolve_icsor_objective_label(selected_hyperparameters)
     _validate_scaling_configuration({**split_params, **selected_hyperparameters})
-    objective_label = resolve_training_objective_label(selected_hyperparameters, default="projected_ols")
+    objective_label = str(selected_hyperparameters["objective"])
 
     progress_bar = create_progress_bar(
         total=5,
@@ -1356,12 +1453,17 @@ def run_icsor_pipeline(
                     "test": int(len(dataset_splits.test.features)),
                 },
             }
+            optuna_payload = (
+                dict(optuna_summary)
+                if optuna_summary is not None and bool(artifact_options.get("persist_optuna", True))
+                else None
+            )
             metrics_summary = metrics_payload if bool(artifact_options.get("persist_metrics", True)) else None
             artifact_paths = persist_training_artifacts(
                 MODEL_NAME,
                 model_bundle,
                 metrics_summary=metrics_summary,
-                optuna_summary=None,
+                optuna_summary=optuna_payload,
                 repo_root=repo_root,
                 timestamp=timestamp,
             )

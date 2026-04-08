@@ -131,13 +131,23 @@ def _tiny_icsor_params() -> dict[str, Any]:
 			"training_defaults": {
 				"objective": "projected_ols",
 				"solver": "multivariate_lstsq",
+				"affine_estimator": "ols",
 				"ols_backend": "numpy_lstsq",
+				"ridge_alpha": 0.001,
 				"include_bias_term": True,
 				"lstsq_rcond": None,
+				"projection_solver": "osqp",
+				"constraint_tolerance": 1e-8,
+				"solver_tolerance": 1e-8,
+				"solver_max_iterations": 10000,
+				"allow_unconstrained_fallback": False,
+				"uncertainty_method": "analytic",
+				"confidence_level": 0.95,
 			},
 			"artifact_options": {
 				"persist_model": True,
 				"persist_metrics": True,
+				"persist_optuna": False,
 			},
 		}
 	)
