@@ -17,14 +17,16 @@ For this repository, the workbook still fixes the process ordering, state orderi
 The model contains a stoichiometric matrix whose rows are processes and whose columns are state variables. The state set contains dissolved states
 
 $$
-[S_A, S_F, S_I, S_{N2}, S_{NH4}, S_{NO2}, S_{NO3}, S_{PO4}, S_{ALK}, S_{O2}]
+[S_O, S_F, S_A, S_{NH4}, S_{NO2}, S_{NO3}, S_{N2}, S_{PO4}, S_I, S_{ALK}]
 $$
 
 and particulate states
 
 $$
-[X_I, X_S, X_H, X_{PAO}, X_{PP}, X_{PHA}, X_{AOB}, X_{NOB}, X_{TSS}, X_{MeOH}, X_{MeP}].
+[X_I, X_S, X_H, X_{PAO}, X_{PP}, X_{PHA}, X_{AOB}, X_{NOB}, X_{MeP}, X_{MeOH}].
 $$
+
+The current contract intentionally does not include an internal `X_TSS` state variable. Instead, `TSS` remains a measured composite output computed directly from particulate-state composition coefficients.
 
 Several stoichiometric coefficients are not entered directly. They are derived from continuity equations:
 
@@ -41,10 +43,10 @@ $$
 $$
 
 $$
-\nu_{j,TSS} = \sum_{i \in \text{particulates}} \nu_{j,i} i_{TSS,i}
+TSS = \sum_{i \in \text{particulates}} c_{TSS,i} x_i
 $$
 
-The composition matrix maps internal state variables to standard composite variables `[COD, TN, TKN, TP, TSS, VSS]`.
+The composition matrix maps internal state variables to the measured composite variables `[COD, TN, TKN, TP, TSS]`.
 
 The current runtime implementation treats the reactor as a completely mixed steady-state system and solves the nonlinear residual balances directly. For hydraulic retention time $\tau$ with dilution rate $D = 24 / \tau$, the steady-state residual is
 

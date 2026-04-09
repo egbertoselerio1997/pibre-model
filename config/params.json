@@ -4,7 +4,7 @@
     "notes": "Replace template_model with a concrete model name when implementing a model."
   },
   "asm2d_tsn_simulation": {
-    "schema_version": "2.0",
+    "schema_version": "3.0",
     "hyperparameters": {
       "n_samples": 10000,
       "seed": 42,
@@ -142,10 +142,6 @@
       "X_MeOH": [
         0.0,
         12.0
-      ],
-      "X_TSS": [
-        0.0,
-        0.0
       ]
     },
     "aeration_model": {
@@ -211,8 +207,7 @@
         "X_AOB",
         "X_NOB",
         "X_MeP",
-        "X_MeOH",
-        "X_TSS"
+        "X_MeOH"
       ],
       "state_columns": [
         "S_O",
@@ -234,8 +229,7 @@
         "X_AOB",
         "X_NOB",
         "X_MeP",
-        "X_MeOH",
-        "X_TSS"
+        "X_MeOH"
       ],
       "composite_variables": [
         "COD",
@@ -264,8 +258,7 @@
         "X_AOB": "g COD/m^3",
         "X_NOB": "g COD/m^3",
         "X_MeP": "g TSS/m^3",
-        "X_MeOH": "g TSS/m^3",
-        "X_TSS": "g TSS/m^3"
+        "X_MeOH": "g TSS/m^3"
       },
       "processes": [
         {
@@ -554,7 +547,7 @@
           "category": "Composition Parameters",
           "symbol": "i_TSS_PHA",
           "excel_name": "i_TSS_PHA",
-          "description": "TSS to COD ratio for X_PHA used in the TSS continuity term",
+          "description": "TSS to COD ratio for X_PHA used in the TSS composite definition",
           "value": 0.6,
           "unit": "g TSS/g COD"
         },
@@ -562,7 +555,7 @@
           "category": "Composition Parameters",
           "symbol": "i_TSS_PP",
           "excel_name": "i_TSS_PP",
-          "description": "TSS to P ratio for X_PP used in the TSS continuity term",
+          "description": "TSS to P ratio for X_PP used in the TSS composite definition",
           "value": 3.23,
           "unit": "g TSS/g P"
         },

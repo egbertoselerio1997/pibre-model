@@ -121,8 +121,8 @@ STOICHIOMETRIC_COEFFICIENTS: list[dict[str, dict[str, str]]] = [
     {"coefficients": {"S_NO2": "-1/{Y_NOB}", "S_NO3": "1/{Y_NOB}", "S_O": "-((1.14-{Y_NOB})/{Y_NOB})", "X_NOB": "1"}},
     {"coefficients": {"X_I": "{f_XI}", "X_S": "1-{f_XI}", "X_AOB": "-1"}},
     {"coefficients": {"X_I": "{f_XI}", "X_S": "1-{f_XI}", "X_NOB": "-1"}},
-    {"coefficients": {"S_PO4": "-1", "X_TSS": "1.42", "X_MeOH": "-3.45", "X_MeP": "4.87"}},
-    {"coefficients": {"S_PO4": "1", "X_TSS": "-1.42", "X_MeOH": "3.45", "X_MeP": "-4.87"}},
+    {"coefficients": {"S_PO4": "-1", "X_MeOH": "-3.45", "X_MeP": "4.87"}},
+    {"coefficients": {"S_PO4": "1", "X_MeOH": "3.45", "X_MeP": "-4.87"}},
 ]
 
 COMPOSITION_FORMULAS: dict[str, dict[str, str]] = {
@@ -133,16 +133,16 @@ COMPOSITION_FORMULAS: dict[str, dict[str, str]] = {
     "S_NO2": {"TN": "1"},
     "S_NO3": {"TN": "1"},
     "S_PO4": {"TP": "1"},
-    "X_I": {"COD": "1", "TN": "{i_NXI}", "TKN": "{i_NXI}", "TP": "{i_PXI}"},
-    "X_S": {"COD": "1", "TN": "{i_NXS}", "TKN": "{i_NXS}", "TP": "{i_PXS}"},
-    "X_H": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
-    "X_PAO": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
-    "X_PP": {"TP": "1"},
-    "X_PHA": {"COD": "1"},
-    "X_AOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
-    "X_NOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}"},
-    "X_TSS": {"TSS": "1"},
-    "X_MeP": {"TP": "{i_PMeP}"},
+    "X_I": {"COD": "1", "TN": "{i_NXI}", "TKN": "{i_NXI}", "TP": "{i_PXI}", "TSS": "{i_TSS_XI}"},
+    "X_S": {"COD": "1", "TN": "{i_NXS}", "TKN": "{i_NXS}", "TP": "{i_PXS}", "TSS": "{i_TSS_XS}"},
+    "X_H": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "TSS": "{i_TSS_BM}"},
+    "X_PAO": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "TSS": "{i_TSS_BM}"},
+    "X_PP": {"TP": "1", "TSS": "{i_TSS_PP}"},
+    "X_PHA": {"COD": "1", "TSS": "{i_TSS_PHA}"},
+    "X_AOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "TSS": "{i_TSS_BM}"},
+    "X_NOB": {"COD": "1", "TN": "{i_NBM}", "TKN": "{i_NBM}", "TP": "{i_PBM}", "TSS": "{i_TSS_BM}"},
+    "X_MeOH": {"TSS": "1"},
+    "X_MeP": {"TP": "{i_PMeP}", "TSS": "1"},
 }
 
 NITROGEN_CONTINUITY_TERMS = {
@@ -171,20 +171,6 @@ PHOSPHORUS_CONTINUITY_TERMS = {
     "X_NOB": "{i_PBM}",
     "X_MeP": "{i_PMeP}",
 }
-
-TSS_CONTINUITY_TERMS = {
-    "X_I": "{i_TSS_XI}",
-    "X_S": "{i_TSS_XS}",
-    "X_H": "{i_TSS_BM}",
-    "X_PAO": "{i_TSS_BM}",
-    "X_PP": "{i_TSS_PP}",
-    "X_PHA": "{i_TSS_PHA}",
-    "X_AOB": "{i_TSS_BM}",
-    "X_NOB": "{i_TSS_BM}",
-    "X_MeOH": "1",
-    "X_MeP": "1",
-}
-
 
 def load_asm2d_tsn_simulation_params(repo_root: str | Path | None = None) -> dict[str, Any]:
     """Load the configured ASM2D-TSN simulation definition."""
@@ -306,12 +292,6 @@ def get_asm2d_tsn_matrices(model_params: Mapping[str, Any] | None = None) -> dic
             - row_values[state_index["S_NO3"]] / 14.0
             + row_values[state_index["S_PO4"]] / 31.0
         )
-
-        if "X_TSS" not in direct_coefficients:
-            row_values[state_index["X_TSS"]] = sum(
-                row_values[state_index[state_name]] * _evaluate_numeric_expression(factor_expression, parameter_values)
-                for state_name, factor_expression in TSS_CONTINUITY_TERMS.items()
-            )
 
     for output_name in measured_output_columns:
         output_row = output_index[output_name]
@@ -590,7 +570,6 @@ def sweep_asm2d_tsn_operating_space(
     state_columns = list(runtime["state_columns"])
     operational_columns = list(runtime["operational_columns"])
     state_index = dict(matrix_bundle["state_index"])
-    parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
 
     # Pre-generate a joint LHS design for all sweep points.
     all_columns = state_columns + operational_columns
@@ -612,7 +591,7 @@ def sweep_asm2d_tsn_operating_space(
     try:
         for sample_index in range(n_samples):
             sampled_state = candidate_pool[sample_index, :n_state]
-            influent_state = _build_influent_state_sample(sampled_state, state_index, parameter_values)
+            influent_state = _build_influent_state_sample(sampled_state)
             operating_point = candidate_pool[sample_index, n_state:]
             effluent_state, diagnostics = simulate_asm2d_tsn_steady_state(
                 influent_state=influent_state,
@@ -898,27 +877,10 @@ def _share(numerator: float, denominator_a: float, denominator_b: float) -> floa
     return float(numerator) / max(float(denominator_a) + float(denominator_b), 1e-9)
 
 
-def _derive_tss_state(
-    state: np.ndarray,
-    state_index: Mapping[str, int],
-    parameter_values: Mapping[str, float],
-) -> float:
-    return float(
-        sum(
-            state[state_index[state_name]] * _evaluate_numeric_expression(factor_expression, parameter_values)
-            for state_name, factor_expression in TSS_CONTINUITY_TERMS.items()
-        )
-    )
-
-
 def _build_influent_state_sample(
     sampled_state: np.ndarray,
-    state_index: Mapping[str, int],
-    parameter_values: Mapping[str, float],
 ) -> np.ndarray:
-    influent_state = np.maximum(sampled_state.copy(), 0.0)
-    influent_state[state_index["X_TSS"]] = _derive_tss_state(influent_state, state_index, parameter_values)
-    return influent_state
+    return np.maximum(sampled_state.copy(), 0.0)
 
 
 def _build_initial_guess(
@@ -1417,7 +1379,7 @@ def _generate_asm2d_tsn_dataset_chunk(
         for attempt_index in range(max_sample_attempts):
             candidate_index = local_index * max_sample_attempts + attempt_index
             sampled_state = candidate_pool[candidate_index, :n_state]
-            candidate_influent = _build_influent_state_sample(sampled_state, state_index, parameter_values)
+            candidate_influent = _build_influent_state_sample(sampled_state)
             candidate_operational = candidate_pool[candidate_index, n_state:]
 
             try:
@@ -1614,16 +1576,6 @@ def _write_stoichiometric_sheet(
             if state_name == "S_ALK":
                 cell.value = _build_alkalinity_formula(row_number, state_column_index)
                 continue
-
-            if state_name == "X_TSS":
-                cell.value = _build_weighted_formula(
-                    row_number,
-                    state_column_index,
-                    TSS_CONTINUITY_TERMS,
-                    parameter_refs,
-                    negate=False,
-                )
-
 
 def _write_composition_sheet(
     worksheet,

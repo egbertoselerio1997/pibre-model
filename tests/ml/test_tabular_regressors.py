@@ -95,6 +95,18 @@ def _build_tiny_params(
         params["training_defaults"]["learning_rate_init"] = 0.01
         params["training_defaults"]["tol"] = 0.01
 
+    # Keep KNN feasible for tiny fixture splits where train rows can be < default neighbors.
+    if "n_neighbors" in params["training_defaults"]:
+        max_neighbors = min(5, int(params["training_defaults"]["n_neighbors"]))
+        params["training_defaults"]["n_neighbors"] = max_neighbors
+        if "n_neighbors" in params["search_space"]:
+            params["search_space"]["n_neighbors"] = {
+                "type": "int",
+                "low": 1,
+                "high": max_neighbors,
+                "log": False,
+            }
+
     if fixed_iteration_key is not None and fixed_iteration_key in params["training_defaults"]:
         if fixed_iteration_key == "max_iter":
             params["training_defaults"][fixed_iteration_key] = 50

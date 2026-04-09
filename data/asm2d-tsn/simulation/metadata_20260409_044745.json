@@ -1,6 +1,6 @@
 {
   "simulation_name": "asm2d_tsn_simulation",
-  "n_samples": 10000,
+  "n_samples": 2,
   "random_seed": 42,
   "sampling_method": "latin_hypercube",
   "dependent_columns": [
@@ -32,8 +32,7 @@
     "In_X_AOB",
     "In_X_NOB",
     "In_X_MeP",
-    "In_X_MeOH",
-    "In_X_TSS"
+    "In_X_MeOH"
   ],
   "identifier_columns": [],
   "ignored_columns": [
@@ -61,8 +60,7 @@
     "Out_X_AOB",
     "Out_X_NOB",
     "Out_X_MeP",
-    "Out_X_MeOH",
-    "Out_X_TSS"
+    "Out_X_MeOH"
   ],
   "dataset_file": "data/asm2d-tsn/simulation/data_20260409_044745.csv",
   "state_columns": [
@@ -85,8 +83,7 @@
     "X_AOB",
     "X_NOB",
     "X_MeP",
-    "X_MeOH",
-    "X_TSS"
+    "X_MeOH"
   ],
   "measured_output_columns": [
     "COD",
@@ -119,8 +116,7 @@
     "In_X_AOB",
     "In_X_NOB",
     "In_X_MeP",
-    "In_X_MeOH",
-    "In_X_TSS"
+    "In_X_MeOH"
   ],
   "influent_composite_columns": [
     "In_COD",
@@ -149,8 +145,7 @@
     "Out_X_AOB",
     "Out_X_NOB",
     "Out_X_MeP",
-    "Out_X_MeOH",
-    "Out_X_TSS"
+    "Out_X_MeOH"
   ],
   "effluent_composite_columns": [
     "Out_COD",
@@ -221,11 +216,11 @@
   ],
   "petersen_matrix_shape": [
     28,
-    21
+    20
   ],
   "composition_matrix_shape": [
     5,
-    21
+    20
   ],
-  "schema_version": "2.0"
+  "schema_version": "3.0"
 }

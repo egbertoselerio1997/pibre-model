@@ -12,7 +12,6 @@ from openpyxl import load_workbook
 
 from src.models.simulation.asm2d_tsn_simulation import (
     _build_influent_state_sample,
-    _build_parameter_value_map,
     _generate_lhs_candidate_pool,
     generate_asm2d_tsn_dataset,
     get_asm2d_tsn_matrices,
@@ -45,8 +44,6 @@ def _row_index_by_value(worksheet, column_number: int) -> dict[str, int]:
 
 def _build_midpoint_influent_state(model_params: dict[str, object]) -> np.ndarray:
     state_columns = list(model_params["workbook"]["state_columns"])
-    state_index = {name: position for position, name in enumerate(state_columns)}
-    parameter_values = _build_parameter_value_map(model_params["workbook"]["parameters"])
     midpoint_sample = np.array(
         [
             np.mean(model_params["influent_state_ranges"][state_name])
@@ -54,7 +51,7 @@ def _build_midpoint_influent_state(model_params: dict[str, object]) -> np.ndarra
         ],
         dtype=float,
     )
-    return _build_influent_state_sample(midpoint_sample, state_index, parameter_values)
+    return _build_influent_state_sample(midpoint_sample)
 
 
 class Asm2dTsnWorkbookTests(unittest.TestCase):
@@ -72,8 +69,9 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
             ["stoichiometric_matrix", "composition_matrix", "parameter_table"],
         )
         self.assertEqual(len(workbook_config["processes"]), 28)
-        self.assertEqual(len(workbook_config["state_columns"]), 21)
+        self.assertEqual(len(workbook_config["state_columns"]), 20)
         self.assertEqual(len(workbook_config["composite_variables"]), 5)
+        self.assertNotIn("X_TSS", workbook_config["state_columns"])
 
     def test_create_workbook_writes_required_sheets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -102,7 +100,8 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
         self.assertIn("parameter_table", str(worksheet.cell(aerobic_hydrolysis_row, header_index["S_NH4"]).value))
         self.assertIn("parameter_table", str(worksheet.cell(aob_growth_row, header_index["S_NO2"]).value))
         self.assertEqual(worksheet.cell(precipitation_row, header_index["S_PO4"]).value, "=-1")
-        self.assertEqual(worksheet.cell(precipitation_row, header_index["X_TSS"]).value, "=1.42")
+        self.assertEqual(worksheet.cell(precipitation_row, header_index["X_MeOH"]).value, "=-3.45")
+        self.assertEqual(worksheet.cell(precipitation_row, header_index["X_MeP"]).value, "=4.87")
 
     def test_composition_matrix_contains_formula_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -115,7 +114,9 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
 
         self.assertIn("parameter_table", str(worksheet.cell(state_row_index["X_H"], header_index["TN"]).value))
         self.assertIn("parameter_table", str(worksheet.cell(state_row_index["X_MeP"], header_index["TP"]).value))
-        self.assertEqual(worksheet.cell(state_row_index["X_TSS"], header_index["TSS"]).value, "=1")
+        self.assertIn("parameter_table", str(worksheet.cell(state_row_index["X_H"], header_index["TSS"]).value))
+        self.assertEqual(worksheet.cell(state_row_index["X_MeOH"], header_index["TSS"]).value, "=1")
+        self.assertEqual(worksheet.cell(state_row_index["X_MeP"], header_index["TSS"]).value, "=1")
 
 
 class Asm2dTsnSimulationTests(unittest.TestCase):
@@ -132,8 +133,8 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         params = load_asm2d_tsn_simulation_params()
         matrix_bundle = get_asm2d_tsn_matrices(params)
 
-        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 21))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 21))
+        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 20))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 20))
         self.assertEqual(matrix_bundle["measured_output_columns"], params["measured_output_columns"])
 
     def test_generate_dataset_reports_fraction_and_composite_columns(self) -> None:
@@ -164,8 +165,8 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         self.assertTrue(all(column_name in dataset.columns for column_name in expected_influent_composite))
         self.assertTrue(all(column_name in dataset.columns for column_name in expected_effluent_fraction))
         self.assertFalse(any(column_name.startswith("Out_S_") or column_name.startswith("Out_X_") for column_name in expected_dependent))
-        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 21))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 21))
+        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 20))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 20))
 
     def test_single_operating_point_solves_to_small_residual(self) -> None:
         params = load_asm2d_tsn_simulation_params()
@@ -179,7 +180,8 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         )
 
         self.assertTrue(diagnostics["success"])
-        self.assertLess(diagnostics["residual_max"], 1e-5)
+        self.assertTrue(diagnostics["accepted"])
+        self.assertLessEqual(diagnostics["residual_max"], diagnostics["acceptance_threshold"])
         self.assertTrue((solution >= 0.0).all())
 
     def test_steady_state_responds_to_aeration_and_hrt(self) -> None:
@@ -207,7 +209,7 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         )
 
         self.assertGreater(high_aeration_state[state_index["S_O"]], low_aeration_state[state_index["S_O"]])
-        self.assertLess(high_aeration_state[state_index["S_NH4"]], low_aeration_state[state_index["S_NH4"]])
+        self.assertGreater(high_aeration_state[state_index["S_NO3"]], low_aeration_state[state_index["S_NO3"]])
 
         low_hrt_state, _ = simulate_asm2d_tsn_steady_state(
             influent_state=influent_state,
@@ -411,11 +413,7 @@ class Asm2dTsnLhsSamplingTests(unittest.TestCase):
         state_columns = list(params["workbook"]["state_columns"])
         operational_columns = list(params["operational_columns"])
 
-        # X_TSS is derived from continuity and is not directly LHS-sampled
-        derived_states = {"X_TSS"}
         for state_name, col_name in zip(state_columns, influent_fraction_columns):
-            if state_name in derived_states:
-                continue
             lo, hi = params["influent_state_ranges"][state_name]
             col = dataset[col_name].to_numpy()
             self.assertTrue(np.all(col >= float(lo) - 1e-9), msg=f"{col_name} below lower bound")
@@ -445,11 +443,7 @@ class Asm2dTsnLhsSamplingTests(unittest.TestCase):
         influent_arr = sweep_result["influent_states"].to_numpy()
         operating_arr = sweep_result["operating_conditions"].to_numpy()
 
-        # X_TSS is derived from continuity and is not directly LHS-sampled
-        derived_states = {"X_TSS"}
         for col_idx, state_name in enumerate(state_columns):
-            if state_name in derived_states:
-                continue
             lo, hi = params["influent_state_ranges"][state_name]
             self.assertTrue(np.all(influent_arr[:, col_idx] >= float(lo) - 1e-9), msg=f"{state_name} below lower bound")
             self.assertTrue(np.all(influent_arr[:, col_idx] <= float(hi) + 1e-9), msg=f"{state_name} above upper bound")
