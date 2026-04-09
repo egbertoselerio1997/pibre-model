@@ -1,4 +1,4 @@
-"""icsor (Constrained Bilinear Regression) solved in fractional space with a collapsed measured-output objective."""
+"""icsor solved in fractional space with a collapsed measured-output affine core and LP projection."""
 
 from __future__ import annotations
 
@@ -41,16 +41,17 @@ VALID_AFFINE_ESTIMATORS = {"ols", "ridge"}
 VALID_OLS_BACKENDS = {"numpy_lstsq"}
 DEFAULT_CONFIDENCE_LEVEL = 0.95
 DEFAULT_UNCERTAINTY_METHOD = "auto"
-DEFAULT_PROJECTION_SOLVER = "osqp"
+DEFAULT_PROJECTION_SOLVER = "highs"
 DEFAULT_CONSTRAINT_TOLERANCE = 1e-8
 DEFAULT_NONNEGATIVITY_TOLERANCE = 1e-10
-DEFAULT_OSQP_EPS_ABS = 1e-8
-DEFAULT_OSQP_EPS_REL = 1e-8
-DEFAULT_OSQP_MAX_ITER = 10000
-DEFAULT_OSQP_POLISH = True
-DEFAULT_OSQP_VERBOSE = False
-DEFAULT_OSQP_WARM_START = True
-VALID_PROJECTION_SOLVERS = {"osqp"}
+DEFAULT_MEASURED_DEVIATION_WEIGHT = 1.0
+DEFAULT_COMPONENT_DEVIATION_WEIGHT = 1.0
+DEFAULT_TRADEOFF_PARAMETER = 1.0
+DEFAULT_HIGHS_PRESOLVE = True
+DEFAULT_HIGHS_MAX_ITER = 10000
+DEFAULT_HIGHS_VERBOSE = False
+DEFAULT_HIGHS_RETRY_WITHOUT_PRESOLVE = True
+VALID_PROJECTION_SOLVERS = {"highs"}
 RANK_DEFICIENT_ANALYTIC_NOTE = (
     "Analytic coefficient intervals were computed with a non-full-column-rank design matrix; "
     "the original design-basis coefficients are not uniquely identifiable coefficientwise, "
@@ -64,7 +65,7 @@ RIDGE_ANALYTIC_INFERENCE_NOTE = (
 )
 AFFINE_CORE_PREDICTION_UNCERTAINTY_NOTE = (
     "Prediction uncertainty describes the affine measured-space core only and is not an exact "
-    "interval for the final nonnegative deployed predictor when the OSQP correction is active."
+    "interval for the final nonnegative deployed predictor when the LP correction is active."
 )
 
 
@@ -179,21 +180,35 @@ def _resolve_projection_settings(model_hyperparameters: Mapping[str, Any]) -> di
         "nonnegativity_tolerance": float(
             model_hyperparameters.get("nonnegativity_tolerance", DEFAULT_NONNEGATIVITY_TOLERANCE)
         ),
-        "osqp_eps_abs": float(model_hyperparameters.get("osqp_eps_abs", DEFAULT_OSQP_EPS_ABS)),
-        "osqp_eps_rel": float(model_hyperparameters.get("osqp_eps_rel", DEFAULT_OSQP_EPS_REL)),
-        "osqp_max_iter": int(model_hyperparameters.get("osqp_max_iter", DEFAULT_OSQP_MAX_ITER)),
-        "osqp_polish": bool(model_hyperparameters.get("osqp_polish", DEFAULT_OSQP_POLISH)),
-        "osqp_verbose": bool(model_hyperparameters.get("osqp_verbose", DEFAULT_OSQP_VERBOSE)),
-        "osqp_warm_start": bool(model_hyperparameters.get("osqp_warm_start", DEFAULT_OSQP_WARM_START)),
+        "measured_deviation_weight": float(
+            model_hyperparameters.get("measured_deviation_weight", DEFAULT_MEASURED_DEVIATION_WEIGHT)
+        ),
+        "component_deviation_weight": float(
+            model_hyperparameters.get("component_deviation_weight", DEFAULT_COMPONENT_DEVIATION_WEIGHT)
+        ),
+        "tradeoff_parameter": float(model_hyperparameters.get("tradeoff_parameter", DEFAULT_TRADEOFF_PARAMETER)),
+        "highs_presolve": bool(model_hyperparameters.get("highs_presolve", DEFAULT_HIGHS_PRESOLVE)),
+        "highs_max_iter": int(model_hyperparameters.get("highs_max_iter", DEFAULT_HIGHS_MAX_ITER)),
+        "highs_verbose": bool(model_hyperparameters.get("highs_verbose", DEFAULT_HIGHS_VERBOSE)),
+        "highs_retry_without_presolve": bool(
+            model_hyperparameters.get(
+                "highs_retry_without_presolve",
+                DEFAULT_HIGHS_RETRY_WITHOUT_PRESOLVE,
+            )
+        ),
     }
     if settings["constraint_tolerance"] <= 0.0:
         raise ValueError("icsor constraint_tolerance must be positive.")
     if settings["nonnegativity_tolerance"] <= 0.0:
         raise ValueError("icsor nonnegativity_tolerance must be positive.")
-    if settings["osqp_eps_abs"] <= 0.0 or settings["osqp_eps_rel"] <= 0.0:
-        raise ValueError("icsor OSQP tolerances must be positive.")
-    if settings["osqp_max_iter"] < 1:
-        raise ValueError("icsor osqp_max_iter must be at least 1.")
+    if settings["measured_deviation_weight"] <= 0.0:
+        raise ValueError("icsor measured_deviation_weight must be positive.")
+    if settings["component_deviation_weight"] <= 0.0:
+        raise ValueError("icsor component_deviation_weight must be positive.")
+    if settings["tradeoff_parameter"] <= 0.0:
+        raise ValueError("icsor tradeoff_parameter must be positive.")
+    if settings["highs_max_iter"] < 1:
+        raise ValueError("icsor highs_max_iter must be at least 1.")
     return settings
 
 
@@ -960,6 +975,7 @@ def _predict_from_bundle(
         raw_fractional_predictions,
         selected_constraint_reference.to_numpy(dtype=float),
         np.asarray(model_bundle["A_matrix"], dtype=float),
+        np.asarray(model_bundle["composition_matrix"], dtype=float),
         projection_operator=np.asarray(model_bundle["projection_matrix"], dtype=float),
         projection_complement=np.asarray(model_bundle["projection_complement"], dtype=float),
         **projection_settings,
@@ -1111,6 +1127,7 @@ def train_icsor_model(
             training_raw_fractional_predictions,
             constraint_frame.to_numpy(dtype=float),
             np.asarray(A_matrix, dtype=float),
+            composition_array,
             projection_operator=projection_matrix,
             projection_complement=projection_complement,
             **projection_settings,

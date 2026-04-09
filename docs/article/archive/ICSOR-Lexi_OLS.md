@@ -2,9 +2,9 @@
 
 ## Abstract
 
-This article presents a non-negative formulation of invariant-constrained second-order regression (ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and enforcing non-negativity of the predicted effluent ASM component state. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. An affine invariant projection resolves only part of that mismatch because it restores stoichiometric consistency but can still produce negative component predictions. The non-negative ICSOR formulation therefore uses a staged component-space deployment rule. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, the raw state is repaired to the invariant-consistent affine reference. Third, a single linear program searches the invariant-consistent non-negative set by minimizing a weighted sum of measured-composite deviation from the affine measured reference and component-state deviation from the affine component reference. An optimal component state from that LP is then collapsed into measured output space through a linear composition map.
+This article presents a non-negative formulation of invariant-constrained second-order regression (ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while preserving the stoichiometric invariants implied by the adopted reaction network and enforcing non-negativity of the predicted effluent ASM component state. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regression model built only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components. An affine invariant projection resolves only part of that mismatch because it restores stoichiometric consistency but can still produce negative component predictions. The non-negative ICSOR formulation therefore uses a staged component-space deployment rule. First, a partitioned second-order surrogate produces an unconstrained prediction of the effluent ASM component state. Second, the raw state is repaired to the invariant-consistent affine reference. Third, a linear-program selector searches the invariant-consistent non-negative set for the state whose measured composites remain as close as possible to the affine measured reference. A secondary linear tie-break then chooses, among those primary-optimal states, the one that stays closest to the affine component state, with a fixed lexicographic component ordering resolving any remaining ties. The selected component state is then collapsed into measured output space through a linear composition map.
 
-The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a single linear program with one objective and one shared feasible set, and the role of the earlier orthogonal affine projector is retained explicitly as the equality-only reference solution and zero-correction special case. In deployment, the LP stage is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved. Accordingly, the affine core is identifiable from measured composite data, whereas the final inequality-constrained deployed prediction is characterized only after a latent component-space representative and a documented weighting and scaling convention have been fixed. Because the single LP can admit multiple optimizers, the baseline formulation allows any optimizer to be used as the deployed component state. The limits of exact closed-form uncertainty analysis for that LP-corrected deployed predictor are stated explicitly. The result is a precise formulation of what non-negative ICSOR guarantees, what remains estimated by least squares, and what must instead be handled through linear-program post-estimation correction.
+The framework is written as a self-contained theory section for readers in chemical engineering, wastewater process modeling, and machine learning. All symbols are defined before use. The invariant constraint is derived from the stoichiometric change relation rather than asserted heuristically. The non-negative correction is formulated as a lexicographic sequence of linear programs, and the role of the earlier orthogonal affine projector is retained explicitly as the equality-only reference solution and zero-correction special case. In deployment, the LP stage is needed only when the raw prediction is infeasible and the closed-form affine projector still violates componentwise non-negativity. The distinction between identifiable affine measured-space coefficients and non-identifiable latent component-space coefficients is preserved. Accordingly, the affine core is identifiable from measured composite data, whereas the final inequality-constrained deployed predictor is fully specified only after a latent component-space representative, a composite-space weighting convention, and a deterministic tie-break rule have been fixed. The limits of exact closed-form uncertainty analysis for that LP-selected deployed predictor are stated explicitly. The result is a precise formulation of what non-negative ICSOR guarantees, what remains estimated by least squares, and what must instead be handled through linear-program post-estimation correction.
 
 ## 1. Introduction and Modeling Objective
 
@@ -17,13 +17,13 @@ The source of the problem is a mismatch between two spaces.
 
 These two spaces are related, but they are not the same. Conservation laws are naturally expressed in the ASM component basis because the stoichiometric matrix acts on individual components. Observations, however, are usually available only after those components have been aggregated into measurable composites. A surrogate that learns only in measured-output space may reproduce the observed aggregates while obscuring physically impossible changes in the underlying component inventory.
 
-The earlier affine-only ICSOR formulation addresses that mismatch by predicting in component space and projecting the raw surrogate output onto the affine set consistent with the stoichiometric invariants. That construction repairs invariant violations, but it does not ensure that the projected component concentrations are non-negative. Negative component predictions are a serious defect in the present setting because component concentrations are themselves physical quantities and because negative components can propagate into implausible reported composites. The non-negative ICSOR formulation developed here therefore strengthens the correction step. The affine invariant projection remains part of the derivation, but the deployed predictor is now defined by a single linear program that balances measured-composite deviation from the affine reference against component-space deviation from the affine state over the invariant-consistent non-negative set.
+The earlier affine-only ICSOR formulation addresses that mismatch by predicting in component space and projecting the raw surrogate output onto the affine set consistent with the stoichiometric invariants. That construction repairs invariant violations, but it does not ensure that the projected component concentrations are non-negative. Negative component predictions are a serious defect in the present setting because component concentrations are themselves physical quantities and because negative components can propagate into implausible reported composites. The non-negative ICSOR formulation developed here therefore strengthens the correction step. The affine invariant projection remains part of the derivation, but the deployed predictor is now defined by a linear-program selector that first minimizes measured-composite deviation from the affine reference and then applies a deterministic component-space tie-break inside that primary-optimal set.
 
 The model is constructed to answer one precise question:
 
 > Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state must satisfy the conserved quantities implied by the adopted stoichiometric model and must remain non-negative componentwise?
 
-The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. That last point requires care: measured composite data identify the affine core, whereas any component-space deployment correction requires either a chosen latent representative or additional component-space information. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and a single LP correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to LP-based non-negative selection, to collapse into measured space, and finally to estimation and uncertainty.
+The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, enforces non-negativity at the deployed component-state level, and remains simple enough that its affine core can still be estimated directly from data by least squares. That last point requires care: measured composite data identify the affine core, whereas any component-space deployment correction requires either a chosen latent representative or additional component-space information. In deployment, the correction is evaluated in stages: no correction when the raw component state is already feasible, closed-form affine projection when only the invariant equalities are violated, and a lexicographic LP correction only when non-negativity remains violated after the affine step. The discussion proceeds from physical scope and notation, to derivation of the invariant relations, to LP-based non-negative selection, to collapse into measured space, and finally to estimation and uncertainty.
 
 ## 2. Physical Scope, State Spaces, and Notation
 
@@ -60,15 +60,14 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $c_{out}$ | $\mathbb{R}^{F}$ | True steady-state effluent ASM component concentration vector |
 | $c_{raw}$ | $\mathbb{R}^{F}$ | Unconstrained surrogate prediction of the effluent ASM component concentration vector |
 | $c_{aff}$ | $\mathbb{R}^{F}$ | Affine reference state obtained by orthogonal projection of $c_{raw}$ onto the invariant-consistent set |
-| $c^*$ | $\mathbb{R}^{F}$ | Any optimal ASM component state of the combined non-negative LP |
+| $c^*$ | $\mathbb{R}^{F}$ | Final ASM component state selected by the lexicographic LP deployment rule |
 | $y$ | $\mathbb{R}^{K}$ | Measured effluent composite vector |
 | $y_{aff}$ | $\mathbb{R}^{K}$ | Affine measured reference, $I_{comp} c_{aff}$ |
 | $y^*$ | $\mathbb{R}^{K}$ | Final measured output induced by $c^*$ |
-| $s$ | $\mathbb{R}^{K}$ | Non-negative auxiliary vector bounding absolute measured-composite deviation from $y_{aff}$ in the combined LP |
-| $r$ | $\mathbb{R}^{F}$ | Non-negative auxiliary vector bounding absolute component-state deviation from $c_{aff}$ in the combined LP |
-| $w_y$ | $\mathbb{R}_{++}^{K}$ | Positive weights on measured-composite absolute deviations in the combined LP |
-| $w_c$ | $\mathbb{R}_{++}^{F}$ | Positive weights on component-state absolute deviations in the combined LP |
-| $\rho$ | $\mathbb{R}_{++}$ | Positive trade-off parameter scaling component-space deviation relative to measured-space deviation in the combined LP |
+| $s$ | $\mathbb{R}^{K}$ | Non-negative auxiliary vector bounding absolute measured-composite deviation from $y_{aff}$ in the primary LP |
+| $r$ | $\mathbb{R}^{F}$ | Non-negative auxiliary vector bounding absolute component-state deviation from $c_{aff}$ in the secondary LP |
+| $w_y$ | $\mathbb{R}_{++}^{K}$ | Positive weights on primary measured-composite absolute deviations |
+| $w_c$ | $\mathbb{R}_{++}^{F}$ | Positive weights on secondary component-state absolute deviations |
 | $I_{comp}$ | $\mathbb{R}^{K \times F}$ | Composition matrix mapping ASM component concentrations to measured composite variables |
 | $\nu$ | $\mathbb{R}^{R \times F}$ | Stoichiometric matrix with $R$ reactions and $F$ ASM components |
 | $\xi$ | $\mathbb{R}^{R}$ | Net reaction progress vector expressed in concentration-equivalent units so that $\nu^T \xi$ has the same units as $c_{out} - c_{in}$ |
@@ -82,8 +81,6 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $G$ | $\mathbb{R}^{K \times F}$ | Measured-space affine constrained operator, $G = I_{comp} P_{adm}$ |
 | $H$ | $\mathbb{R}^{K \times F}$ | Measured-space invariant carry-through operator, $H = I_{comp} P_{inv}$ |
 | $M$ | $\mathbb{R}^{K \times D}$ | Effective identifiable affine measured-space coefficient matrix, $M = G B$ |
-
-Throughout the chapter, $\rho$, $w_y$, and $w_c$ are treated as fixed model-definition quantities.
 
 The measured effluent variables are defined by the linear map
 
@@ -103,12 +100,12 @@ The framework rests on the following assumptions. These are not optional prefere
 4. **Linear composition map.** Measured effluent variables are linear combinations of the underlying ASM component concentrations through a known fixed matrix $I_{comp}$.
 5. **Direct effluent-state parameterization.** The surrogate is parameterized to predict the effluent ASM component state $c_{out}$ directly rather than the component change $c_{out} - c_{in}$.
 6. **Second-order surrogate class.** The raw surrogate is a partitioned second-order polynomial model that includes linear, quadratic, and operation-loading interaction terms.
-7. **Single combined LP objective.** After the affine reference state is formed, the deployed correction minimizes a weighted sum of a measured-space $L_1$ deviation from $y_{aff}$ and a component-space $L_1$ deviation from $c_{aff}$.
-8. **Weighting convention and optimizer scope.** The positive weights $w_y$, $w_c$, and the positive trade-off parameter $\rho$ are fixed as part of the model definition. The baseline formulation allows any optimizer of the resulting LP to be used for deployment.
-9. **Constraint scope.** The final LP correction enforces the stoichiometric invariants implied by the chosen basis and system boundary together with componentwise non-negativity. It does not enforce upper bounds, kinetic feasibility, or thermodynamic admissibility beyond those conditions.
+7. **Primary composite-space LP objective.** After the affine reference state is formed, the deployed correction first minimizes a weighted $L_1$ deviation between the deployed measured composites and the affine measured reference $y_{aff}$.
+8. **Deterministic tie-break convention.** Among all primary-optimal states, the model applies a secondary weighted $L_1$ component-space tie-break toward $c_{aff}$, with a fixed lexicographic component ordering used only if the secondary LP is still tied.
+9. **Constraint scope.** The final LP selector enforces the stoichiometric invariants implied by the chosen basis and system boundary together with componentwise non-negativity. It does not enforce upper bounds, kinetic feasibility, or thermodynamic admissibility beyond those conditions.
 10. **Influent feasibility.** The influent reference state is assumed non-negative in component space. Under that assumption the non-negative feasible set is non-empty because the influent state itself satisfies the invariant equalities.
 11. **Composite-sign scope.** Non-negative component predictions imply non-negative measured composites only when the relevant rows of $I_{comp}$ are entrywise non-negative. If the measurement convention uses negative coefficients, extra output-space sign constraints would be required for a composite non-negativity guarantee.
-12. **Statistical scope.** Classical least-squares coefficient and affine-core prediction intervals are interpreted under independent-sample Gaussian multivariate linear-model assumptions. Exact finite-sample $t$-based intervals require a full-rank affine-core design and do not generally extend through the single-LP deployed predictor.
+12. **Statistical scope.** Classical least-squares coefficient and affine-core prediction intervals are interpreted under independent-sample Gaussian multivariate linear-model assumptions. Exact finite-sample $t$-based intervals require a full-rank affine-core design and do not generally extend through the LP-selected deployed predictor.
 
 These assumptions matter because each one narrows the scientific claim. A prediction that satisfies the invariant relations and componentwise non-negativity is physically better disciplined than the affine-only formulation, but it is still not automatically guaranteed to be fully process-realizable in every operating regime.
 
@@ -196,7 +193,7 @@ $$
 c_{out,1} + c_{out,2} = c_{in,1} + c_{in,2}
 $$
 
-The reaction may redistribute material between the two components, but it cannot change the conserved total represented by $c_1 + c_2$. In the non-negative ICSOR setting, the feasible effluent set is therefore the non-negative line segment satisfying this equality. The later correction step will choose any point on that segment that minimizes the documented weighted sum of measured-space deviation from the affine reference and component-space deviation from the affine component reference.
+The reaction may redistribute material between the two components, but it cannot change the conserved total represented by $c_1 + c_2$. In the non-negative ICSOR setting, the feasible effluent set is therefore the non-negative line segment satisfying this equality. The later correction step will select the point on that segment whose measured composites stay as close as possible to the affine reference and, if several states are tied in measured space, the one favored by the documented component-space tie-break.
 
 ### 4.5 ASM-flavored miniature example
 
@@ -237,7 +234,7 @@ If
 $$
 c_{in} = \begin{bmatrix} 10 \\ 10 \\ 5 \end{bmatrix}
 \qquad \text{and} \qquad
-c_{raw} = \begin{bmatrix} -2 \\ 22 \\ 5 \end{bmatrix},
+c_{raw} = \begin{bmatrix} -1 \\ 21 \\ 5 \end{bmatrix},
 $$
 
 then the measured output is already
@@ -246,7 +243,7 @@ $$
 y_{raw} = I_{comp} c_{raw} = \begin{bmatrix} 20 \\ 5 \end{bmatrix},
 $$
 
-which is exactly the same measured output produced by the feasible state $[0, 20, 5]^T$. A measured-space-only correction cannot distinguish those two component states, because both collapse to the same aggregates. The component-space LP selector, however, still detects that $c_{raw}$ violates $c \ge 0$. In this example the invariant equalities already hold, so $c_{aff} = c_{raw}$ and $y_{aff} = I_{comp} c_{raw} = [20, 5]^T$. Every feasible state with those same composites attains zero measured-space deviation, so within that subset the single LP reduces to minimizing the weighted component-space deviation from $c_{aff}$. Because $c_{aff} = [-2, 22, 5]^T$, that reduced objective is minimized at $[0, 20, 5]^T$. The example is still toy-sized, but it captures the key logic of the full framework: invariants and non-negativity are enforced where the stoichiometric state actually lives, measured-composite closeness and component-space closeness are combined in one LP objective, and only then is the corrected state collapsed to measured outputs.
+which is exactly the same measured output produced by the feasible state $[0, 20, 5]^T$. A measured-space-only correction cannot distinguish those two component states, because both collapse to the same aggregates. The component-space LP selector, however, still detects that $c_{raw}$ violates $c \ge 0$. In this example the invariant equalities already hold, so $c_{aff} = c_{raw}$ and $y_{aff} = I_{comp} c_{raw} = [20, 5]^T$. Every feasible state with those same composites is primary-optimal because it attains zero composite deviation, and the secondary component-space tie-break then selects $[0, 20, 5]^T$ because it is the non-negative invariant-consistent state closest to $c_{aff}$ in weighted $L_1$ deviation. The example is still toy-sized, but it captures the key logic of the full framework: invariants and non-negativity are enforced where the stoichiometric state actually lives, measured-composite closeness is judged relative to the affine reference, and only then is the corrected state collapsed to measured outputs.
 
 ## 5. Unconstrained Surrogate in ASM Component Space
 
@@ -376,9 +373,9 @@ $$
 
 where $c \ge 0$ is understood componentwise. This set intersects the invariant-consistent affine space with the nonnegative orthant. In geometric terms, the affine set removes changes that violate the stoichiometric invariants, while the orthant removes candidate states with negative ASM component concentrations.
 
-### 6.4 Non-negative correction as a single linear program
+### 6.4 Non-negative correction as a lexicographic linear program
 
-After the affine reference state has been formed, the non-negative deployment step is defined by one LP in which measured-space and component-space closeness are optimized simultaneously. Let
+After the affine reference state has been formed, the non-negative deployment step is defined by a primary LP in which optimality is judged in measured composite space rather than by Euclidean distance in component space. Let
 
 $$
 y_{aff} = I_{comp} c_{aff}
@@ -389,15 +386,35 @@ and choose positive weight vectors
 $$
 w_y \in \mathbb{R}_{++}^{K},
 \qquad
-w_c \in \mathbb{R}_{++}^{F},
+w_c \in \mathbb{R}_{++}^{F}.
+$$
+
+Introduce an auxiliary vector $s \in \mathbb{R}^{K}$ that bounds the componentwise absolute composite deviation from the affine measured reference. The primary LP is
+
+$$
+\min_{c \in \mathbb{R}^{F},\, s \in \mathbb{R}^{K}} \; w_y^T s
+$$
+
+subject to
+
+$$
+A c = A c_{in},
 \qquad
-\rho \in \mathbb{R}_{++}.
+c \ge 0,
 $$
 
-Introduce auxiliary vectors $s \in \mathbb{R}^{K}$ and $r \in \mathbb{R}^{F}$ that bound the componentwise absolute deviations in measured space and component space. The combined LP is
+$$
+-s \le I_{comp} c - y_{aff} \le s,
+\qquad
+s \ge 0.
+$$
+
+Because $s_k$ bounds $\lvert (I_{comp} c - y_{aff})_k \rvert$, the objective is the weighted $L_1$ distance between the deployed measured composites and the affine measured reference. The feasible set is polyhedral and the objective is linear, so the primary correction problem is a linear program.
+
+The primary LP can have multiple optima when several non-negative component states produce the same best composite deviation. To turn the deployed correction into a function, define $\eta^*$ as the optimal value of the primary LP and introduce a second auxiliary vector $r \in \mathbb{R}^{F}$ that bounds the componentwise absolute deviation from the affine component reference. The secondary LP is
 
 $$
-\min_{c \in \mathbb{R}^{F},\, s \in \mathbb{R}^{K},\, r \in \mathbb{R}^{F}} \; w_y^T s + \rho \, w_c^T r
+\min_{c \in \mathbb{R}^{F},\, s \in \mathbb{R}^{K},\, r \in \mathbb{R}^{F}} \; w_c^T r
 $$
 
 subject to
@@ -412,6 +429,8 @@ $$
 -s \le I_{comp} c - y_{aff} \le s,
 \qquad
 s \ge 0,
+\qquad
+w_y^T s = \eta^*,
 $$
 
 $$
@@ -420,66 +439,60 @@ $$
 r \ge 0.
 $$
 
-Because $s_k$ bounds $\lvert (I_{comp} c - y_{aff})_k \rvert$ and $r_f$ bounds $\lvert c_f - c_{aff,f} \rvert$, the objective is the weighted sum of measured-space $L_1$ deviation from $y_{aff}$ and component-space $L_1$ deviation from $c_{aff}$, with $\rho$ setting the cross-space trade-off. The feasible set is polyhedral and the objective is linear, so the correction problem is a single linear program.
+This second stage is only a tie-break. It is not allowed to sacrifice the primary composite-space objective. It merely chooses, among the primary-optimal component states, the one with the smallest weighted $L_1$ deviation from $c_{aff}$. If the secondary LP is still tied, the deployed state is defined to be the lexicographically smallest component vector under the fixed ASM component ordering. That final clause can itself be implemented by a finite sequence of LPs, so the full deployment map remains completely linear-program based.
 
-We denote any optimizer of this LP by $c^*$. The role of $c_{raw}$ is indirect but essential: it determines $c_{aff}$, and $c_{aff}$ in turn determines both the measured-space reference $y_{aff}$ and the component-space reference used inside the LP.
+We denote the output of this full lexicographic LP procedure by
 
-### 6.5 Feasibility, existence, and possible non-uniqueness
+$$
+c^* = \operatorname{LexLP}_{\mathcal{S}_+}(c_{raw}, c_{in}).
+$$
+
+The role of $c_{raw}$ is indirect but essential: it determines $c_{aff}$, and $c_{aff}$ in turn determines both the primary measured reference $y_{aff}$ and the secondary component-space tie-break.
+
+### 6.5 Feasibility, existence, and deterministic selection
 
 The first question is whether the feasible set can be empty. This is where Assumption 10 matters. Under the present modeling assumptions, it is not. If the influent component state is non-negative, then $c = c_{in}$ is feasible because it satisfies
 
 $$
 A c_{in} = A c_{in},
 \qquad
-c_{in} \ge 0.
+c_{in} \ge 0
 $$
 
 Hence
 
 $$
-c_{in} \in \mathcal{S}_+(c_{in}).
+c_{in} \in \mathcal{S}_+(c_{in})
 $$
 
-Moreover, this feasible point yields a finite objective value after choosing admissible auxiliary vectors such as
+and the feasible set is non-empty.
+
+Because $\mathcal{S}_+(c_{in})$ is a non-empty polyhedron and the primary objective $w_y^T s$ is bounded below by zero, the primary LP attains at least one optimum. Its optimal face is therefore non-empty. The secondary LP is solved over that non-empty primary-optimal face, and its objective $w_c^T r$ is also bounded below by zero, so it too attains at least one optimum. If that second stage is still tied, each step of the final lexicographic component-ordering convention is another LP over a non-empty optimal face and therefore attains a solution.
+
+Thus, for every pair $(c_{raw}, c_{in})$ with $c_{in} \ge 0$, the full documented LP procedure produces at least one admissible deployed component state, and the fixed lexicographic tie-break makes the deployed map single-valued by definition. Uniqueness is therefore a property of the full selection rule, not of the primary LP in isolation. If an upstream reconstruction were to produce negative influent components, that guarantee would fail and feasibility would have to be checked separately.
+
+### 6.6 Primal-dual characterization of the primary LP
+
+Introduce multipliers $\lambda \in \mathbb{R}^{q}$ for the equality constraints, $\alpha^+, \alpha^- \in \mathbb{R}_{\ge 0}^{K}$ for the upper and lower absolute-deviation bounds, $\mu \in \mathbb{R}_{\ge 0}^{F}$ for componentwise non-negativity, and $\beta \in \mathbb{R}_{\ge 0}^{K}$ for $s \ge 0$. The Lagrangian of the primary LP is
 
 $$
-s = \lvert I_{comp} c_{in} - y_{aff} \rvert,
-\qquad
-r = \lvert c_{in} - c_{aff} \rvert.
-$$
-
-Because the objective is bounded below by zero, the LP has a finite optimum, and standard linear-program theory implies that at least one optimizer exists.
-
-That optimizer need not be unique. The baseline formulation in this article does not impose an additional deterministic selection rule beyond the documented objective and constraints. Accordingly, any optimizer may be used as the deployed component state. If a software implementation requires a unique deployed state, that extra convention should be stated separately as an implementation choice rather than as part of the baseline mathematical model.
-
-### 6.6 Primal-dual characterization of the combined LP
-
-Introduce multipliers $\pi \in \mathbb{R}^{q}$ for the equality constraints, $\alpha^+, \alpha^- \in \mathbb{R}_{\ge 0}^{K}$ for the upper and lower measured-space absolute-deviation bounds, $\gamma^+, \gamma^- \in \mathbb{R}_{\ge 0}^{F}$ for the upper and lower component-space absolute-deviation bounds, $\mu \in \mathbb{R}_{\ge 0}^{F}$ for componentwise non-negativity, $\beta \in \mathbb{R}_{\ge 0}^{K}$ for $s \ge 0$, and $\delta \in \mathbb{R}_{\ge 0}^{F}$ for $r \ge 0$. The Lagrangian of the combined LP is
-
-$$
-\begin{aligned}
-\mathcal{L}(c, s, r, \pi, \alpha^+, \alpha^-, \gamma^+, \gamma^-, \mu, \beta, \delta)
-= {} & w_y^T s + \rho \, w_c^T r + \pi^T(A c - A c_{in}) \\
-& + (\alpha^+)^T(I_{comp} c - y_{aff} - s)
-+ (\alpha^-)^T(-I_{comp} c + y_{aff} - s) \\
-& + (\gamma^+)^T(c - c_{aff} - r)
-+ (\gamma^-)^T(-c + c_{aff} - r) \\
-& - \mu^T c - \beta^T s - \delta^T r.
-\end{aligned}
+\mathcal{L}(c, s, \lambda, \alpha^+, \alpha^-, \mu, \beta)
+= w_y^T s
++ \lambda^T(A c - A c_{in})
++ (\alpha^+)^T(I_{comp} c - y_{aff} - s)
++ (\alpha^-)^T(-I_{comp} c + y_{aff} - s)
+- \mu^T c
+- \beta^T s.
 $$
 
 The corresponding primal-dual optimality conditions are
 
 $$
-A^T \pi + I_{comp}^T(\alpha^+ - \alpha^-) + (\gamma^+ - \gamma^-) - \mu = 0,
+A^T \lambda + I_{comp}^T(\alpha^+ - \alpha^-) - \mu = 0,
 $$
 
 $$
 w_y - \alpha^+ - \alpha^- - \beta = 0,
-$$
-
-$$
-\rho \, w_c - \gamma^+ - \gamma^- - \delta = 0,
 $$
 
 $$
@@ -495,13 +508,7 @@ s \ge 0,
 $$
 
 $$
--r \le c - c_{aff} \le r,
-\qquad
-r \ge 0,
-$$
-
-$$
-\alpha^+, \alpha^-, \gamma^+, \gamma^-, \mu, \beta, \delta \ge 0,
+\alpha^+, \alpha^-, \mu, \beta \ge 0,
 $$
 
 together with complementary slackness for every active inequality:
@@ -515,26 +522,16 @@ $$
 $$
 
 $$
-\gamma_f^+ \big((c - c_{aff})_f - r_f\big) = 0,
-$$
-
-$$
-\gamma_f^- \big(-(c - c_{aff})_f - r_f\big) = 0,
-$$
-
-$$
 \mu_f c_f = 0,
 \qquad
-\beta_k s_k = 0,
-\qquad
-\delta_f r_f = 0.
+\beta_k s_k = 0.
 $$
 
-The first stationarity relation shows that the selected component state balances four geometric objects: the invariant normals in the row space of $A$, the measured-space discrepancy normals pulled back through $I_{comp}^T$, the component-space discrepancy normals anchored at $c_{aff}$, and the active faces of the non-negative orthant. The scalar $\rho$ rescales the influence of the component-space discrepancy normals relative to the measured-space discrepancy normals. The remaining stationarity relations allocate the documented weights across the signed absolute-deviation faces and any inactive slack.
+The first stationarity relation shows that the selected component state balances three geometric objects: the invariant normals in the row space of $A$, the measured-space discrepancy normals pulled back through $I_{comp}^T$, and the active faces of the non-negative orthant. The second stationarity relation allocates each output weight $w_{y,k}$ across the two signed composite-deviation faces and any inactive slack. The secondary LP has an analogous primal-dual structure, but with the additional constraints that lock the primary optimum and bound absolute deviation from $c_{aff}$.
 
 ### 6.7 Relation to the orthogonal affine projector
 
-The orthogonal affine projection remains embedded in the new formulation as a special case. If the affine projector already satisfies non-negativity, then the combined LP returns exactly the same point.
+The orthogonal affine projection remains embedded in the new formulation as a special case. If the affine projector already satisfies non-negativity, then the lexicographic LP rule returns exactly the same point.
 
 Indeed, suppose
 
@@ -546,11 +543,15 @@ componentwise. Then $c_{aff} \in \mathcal{S}_+(c_{in})$. At that point,
 
 $$
 I_{comp} c_{aff} - y_{aff} = 0,
-\qquad
+$$
+
+so the primary LP can choose $s = 0$ and attain objective value zero. Because $s \ge 0$ and $w_y > 0$, no feasible point can do better than zero, hence the primary optimum is $\eta^* = 0$. The same point also satisfies
+
+$$
 c_{aff} - c_{aff} = 0,
 $$
 
-so the LP can choose $s = 0$ and $r = 0$ and attain objective value zero. Because $s \ge 0$, $r \ge 0$, $w_y > 0$, $w_c > 0$, and $\rho > 0$, no feasible point can improve on zero. Moreover, objective value zero forces $s = 0$ and $r = 0$, and $r = 0$ implies $c = c_{aff}$. Therefore every optimizer satisfies
+so the secondary LP can choose $r = 0$ and attain objective value zero. Because $r \ge 0$ and $w_c > 0$, no primary-optimal point can improve on that value. Therefore the full lexicographic LP selector returns
 
 $$
 c^* = c_{aff}
@@ -565,14 +566,16 @@ This result preserves continuity with the earlier affine-only ICSOR theory. The 
 The deployed correction should still be evaluated in a staged order so that the LP machinery is activated only when it is actually needed.
 
 1. Form the raw component prediction $c_{raw}$.
-2. If $c_{raw}$ already satisfies $A c_{raw} = A c_{in}$ and $c_{raw} \ge 0$, return $c_{raw}$ directly. In that case $c_{aff} = c_{raw}$, $y_{aff} = I_{comp} c_{raw}$, and the combined LP has objective value zero at $c_{raw}$.
+2. If $c_{raw}$ already satisfies $A c_{raw} = A c_{in}$ and $c_{raw} \ge 0$, return $c_{raw}$ directly. In that case $c_{aff} = c_{raw}$, $y_{aff} = I_{comp} c_{raw}$, and both LP objectives are already zero.
 3. Otherwise compute the closed-form affine projection $c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}$ and the affine measured reference $y_{aff} = I_{comp} c_{aff}$.
-4. If $c_{aff} \ge 0$, return $c_{aff}$. Section 6.7 shows that this is exactly the optimizer of the combined LP.
-5. Otherwise solve the single combined LP.
+4. If $c_{aff} \ge 0$, return $c_{aff}$. Again the primary and secondary LP objectives are zero at that point.
+5. Otherwise solve the primary composite-space LP.
+6. Solve the secondary component-space tie-break LP over the primary-optimal set.
+7. If the second stage is still tied, apply the fixed lexicographic component-ordering convention via additional LPs.
 
 This order follows directly from the construction above. The first check avoids unnecessary correction when the raw surrogate already lies in the feasible set. The second check uses the orthogonal affine projector as the cheapest exact repair of invariant violations. The LP stage is therefore a residual correction step for the subset of samples in which the affine projector still leaves the non-negative orthant.
 
-One degenerate case is worth noting. If $A$ has zero rows, then there is no non-trivial invariant equality to enforce and $c_{aff} = c_{raw}$. The correction problem does not collapse generically to componentwise clipping. Instead, it becomes a non-negativity LP that minimizes a weighted sum of measured-space deviation from $I_{comp} c_{raw}$ and component-space deviation from $c_{raw}$. Componentwise clipping is recovered only for special composition maps and should not be treated as the generic no-invariant case.
+One degenerate case is worth noting. If $A$ has zero rows, then there is no non-trivial invariant equality to enforce and $c_{aff} = c_{raw}$. The correction problem does not collapse generically to componentwise clipping. Instead, it becomes a non-negativity LP that keeps the measured composites as close as possible to $I_{comp} c_{raw}$, followed by the same component-space tie-break and lexicographic selection. Componentwise clipping is recovered only for special composition maps and should not be treated as the generic no-invariant case.
 
 ### 6.9 Reduced null-space LP formulation
 
@@ -584,10 +587,34 @@ $$
 
 for some reduced coordinate vector $z \in \mathbb{R}^{F-q}$, because $A c_{aff} = A c_{in}$ and $A N_A = 0$.
 
-Substituting this parameterization into the combined LP gives
+Substituting this parameterization into the primary LP gives
 
 $$
-\min_{z \in \mathbb{R}^{F-q},\, s \in \mathbb{R}^{K},\, r \in \mathbb{R}^{F}} \; w_y^T s + \rho \, w_c^T r
+\min_{z \in \mathbb{R}^{F-q},\, s \in \mathbb{R}^{K}} \; w_y^T s
+$$
+
+subject to
+
+$$
+N_A z \ge -c_{aff},
+$$
+
+$$
+-s \le I_{comp} N_A z \le s,
+\qquad
+s \ge 0.
+$$
+
+The equality constraints are now absorbed into the affine parameterization, and the affine measured reference has disappeared from the residual expression because
+
+$$
+I_{comp}(c_{aff} + N_A z) - y_{aff} = I_{comp} N_A z.
+$$
+
+Once the primary optimum $\eta^*$ has been found, the reduced secondary LP becomes
+
+$$
+\min_{z \in \mathbb{R}^{F-q},\, s \in \mathbb{R}^{K},\, r \in \mathbb{R}^{F}} \; w_c^T r
 $$
 
 subject to
@@ -600,6 +627,8 @@ $$
 -s \le I_{comp} N_A z \le s,
 \qquad
 s \ge 0,
+\qquad
+w_y^T s = \eta^*,
 $$
 
 $$
@@ -608,23 +637,11 @@ $$
 r \ge 0.
 $$
 
-The equality constraints are now absorbed into the affine parameterization, and the affine measured reference has disappeared from the residual expression because
+If the secondary LP is still tied, the fixed lexicographic component-ordering convention can be implemented by minimizing the relevant coordinate of $c_{aff} + N_A z$ over the current optimal face, one component at a time. The reduced formulation therefore remains linear throughout. There is no reduced Hessian, no Euclidean metric preservation argument, and no solver structure tied specifically to quadratic programming. The fixed matrices are $N_A$ and $I_{comp} N_A$; sample dependence enters through the right-hand side $-c_{aff}$. An orthonormal null-space basis is still numerically convenient because it keeps these reduced matrices well scaled, but its role is now computational rather than metric.
 
-$$
-I_{comp}(c_{aff} + N_A z) - y_{aff} = I_{comp} N_A z,
-$$
+### 6.10 What the LP selector guarantees and what it does not
 
-while the component-space residual is simply
-
-$$
-(c_{aff} + N_A z) - c_{aff} = N_A z.
-$$
-
-The reduced formulation therefore remains linear throughout. There is no reduced Hessian, no Euclidean metric preservation argument, and no solver structure tied specifically to quadratic programming. The fixed matrices are $N_A$ and $I_{comp} N_A$; sample dependence enters through the right-hand side $-c_{aff}$. An orthonormal null-space basis is still numerically convenient because it keeps these reduced matrices well scaled, but its role is now computational rather than metric.
-
-### 6.10 What the LP correction guarantees and what it does not
-
-The single combined LP guarantees that every optimizer satisfies
+The full lexicographic LP selector guarantees that
 
 $$
 A c^* = A c_{in}
@@ -633,26 +650,20 @@ $$
 and
 
 $$
-c^* \ge 0.
+c^* \ge 0
 $$
 
-It also guarantees that no feasible component state achieves a smaller value of
+for every sample. It also guarantees that no feasible component state achieves a smaller weighted $L_1$ deviation from the affine measured reference $y_{aff}$, and that among all such primary-optimal states the deployed state minimizes the documented weighted $L_1$ deviation from $c_{aff}$. If those two stages are still tied, the fixed lexicographic component ordering chooses one state without changing the earlier optimality priorities.
 
-$$
-w_y^T \lvert I_{comp} c - y_{aff} \rvert + \rho \, w_c^T \lvert c - c_{aff} \rvert
-$$
-
-when the absolute values are interpreted componentwise through the auxiliary-variable formulation above. What it does not guarantee is equally important.
+It does not guarantee the following.
 
 1. It does not guarantee realistic upper bounds or process-feasible operating ranges.
 2. It does not impose kinetic feasibility beyond the chosen invariant relations and non-negativity.
 3. It does not guarantee thermodynamic admissibility.
 4. It does not correct errors introduced by a misspecified stoichiometric basis or an incorrect system boundary.
 5. It does not by itself guarantee non-negative measured composites unless the composition map has the sign structure discussed in Section 7.2.
-6. It does not impose a strict measured-space priority over component-space deviation; those two goals compete directly through the documented weights and the trade-off parameter $\rho$.
-7. It does not guarantee a unique deployed state unless extra selection rules are added beyond the baseline LP.
 
-These are not derivation errors. They are the exact consequences of the feasible set and combined objective being enforced.
+These are not derivation errors. They are the exact consequences of the feasible set and lexicographic objectives being enforced.
 
 ## 7. Collapse from ASM Component Space to Measured Output Space
 
@@ -744,7 +755,7 @@ $$
 y^* = y_{aff} + \delta_{LP}(u, c_{in})
 $$
 
-When the affine projector is already non-negative, $\delta_{LP}(u, c_{in}) = 0$. When it is not, $\delta_{LP}(u, c_{in})$ is the measured effect of the single LP correction: measured-space deviation from $y_{aff}$ and component-space deviation from $c_{aff}$ are traded off simultaneously through $w_y$, $w_c$, and $\rho$. This decomposition is useful because it separates the globally affine, data-identifiable part of the model from the local LP correction needed to enforce physical admissibility. It also exposes a key boundary: once the LP stage activates, $\delta_{LP}(u, c_{in})$ depends on the chosen component-space raw prediction and on the documented weighting and scaling convention. If the LP is non-unique, it can also depend on which optimizer is used for deployment.
+When the affine projector is already non-negative, $\delta_{LP}(u, c_{in}) = 0$. When it is not, $\delta_{LP}(u, c_{in})$ is the measured effect of the lexicographic LP selector: the primary LP keeps the deployed measured composites as close as possible to $y_{aff}$, while the secondary tie-break and any residual lexicographic convention choose which component-space state among the primary-optimal set is actually deployed. This decomposition is useful because it separates the globally affine, data-identifiable part of the model from the local LP-selected correction needed to enforce physical admissibility. It also exposes a key boundary: once the LP selector activates, $\delta_{LP}(u, c_{in})$ depends on the chosen component-space raw prediction, the documented weighting convention, and the fixed tie-break rule, so it is not identified from measured composite data alone unless a latent representative has already been fixed.
 
 ### 7.5 Blockwise affine-core interpretation
 
@@ -966,7 +977,11 @@ $$
 \widehat c_{raw} = \widehat B \phi(u, c_{in})
 $$
 
-The final deployed non-negative component prediction is then obtained by the same staged component-space logic introduced in Section 6: keep $\widehat c_{raw}$ if it is already feasible, otherwise apply the affine projector, and if non-negativity still fails solve the single combined LP with $\widehat c_{raw}$ in place of $c_{raw}$. We denote any optimizer of that LP by $\widehat c^*$.
+The final deployed non-negative component prediction is then obtained by the same staged component-space logic introduced in Section 6: keep $\widehat c_{raw}$ if it is already feasible, otherwise apply the affine projector, then solve the primary composite-space LP and the component-space tie-break LP, with the fixed lexicographic component ordering used only if those two stages are still tied. In compact notation,
+
+$$
+\widehat c^* = \operatorname{LexLP}_{\mathcal{S}_+}(\widehat c_{raw}, c_{in})
+$$
 
 and the final deployed measured prediction is
 
@@ -974,13 +989,13 @@ $$
 \widehat y^* = I_{comp} \widehat c^*
 $$
 
-This last map is defined relative to the chosen representative $\widehat B$ and the documented weighting and scaling convention, but it is not globally affine in $\phi(u, c_{in})$. If the LP is non-unique, the deployed output can also depend on which optimizer is used. If the non-negativity constraints are inactive, then the deployed prediction collapses to the representable affine core
+This last map is deterministic conditional on the chosen representative $\widehat B$, the documented weighting convention, and the fixed tie-break rule, but it is not globally affine in $\phi(u, c_{in})$. If the non-negativity constraints are inactive, then the deployed prediction collapses to the representable affine core
 
 $$
 \widehat y_{aff,G} = \widehat M_G \phi(u, c_{in}) + H c_{in},
 $$
 
-which equals the unconstrained least-squares affine-core fit only when $\widehat M$ already lies in $\operatorname{range}(G)$ or representability was enforced during estimation. If the LP stage activates, different admissible representatives can generate different $\widehat c_{raw}$ and therefore different optimal deployed outputs. The least-squares coefficients therefore characterize the measured-space affine-core fit, while the final deployed predictor becomes operational only after a representative such as $\widehat B_{ls} = G^+ \widehat M$ and a weighting and scaling convention have been fixed. Extra component-space structure or data can still be used if one wishes to identify $B$ more tightly.
+which equals the unconstrained least-squares affine-core fit only when $\widehat M$ already lies in $\operatorname{range}(G)$ or representability was enforced during estimation. If one or more LP stages activate, different admissible representatives can generate different $\widehat c_{raw}$ and therefore different LP-selected outputs. The least-squares coefficients therefore characterize the measured-space affine-core fit, while the final deployed predictor becomes a fully specified ICSOR model only after one of two additional steps is taken: select a representative such as $\widehat B_{ls} = G^+ \widehat M$, together with its compatible affine core $\widehat M_G = G G^+ \widehat M$, or impose extra component-space structure or data that identify $B$ more tightly.
 
 ## 9. Statistical Inference and Predictive Uncertainty
 
@@ -1080,24 +1095,24 @@ $$
 
 ### 9.4 Why these formulas do not globally extend to the final non-negative predictor
 
-The final deployed prediction is obtained by solving the single LP from Section 6 with $\widehat c_{raw,*}$ in place of $c_{raw}$ and then setting
+The final deployed prediction is
 
 $$
-\widehat y_*^* = I_{comp} \, \widehat c_*^*,
+\widehat y_*^* = I_{comp} \, \operatorname{LexLP}_{\mathcal{S}_+}(\widehat c_{raw,*}, c_{in,*})
 $$
 
-where $\widehat c_*^*$ denotes any optimizer. This map is generally piecewise affine over polyhedral regions determined by the active non-negativity faces and the signed absolute-deviation faces associated with both the measured-space and component-space residual bounds. At boundaries where the optimal LP basis changes, the mapping is not described by one global coefficient matrix. If the LP is non-unique, different optimizer selections can also produce different deployed outputs. Consequently, the closed-form affine-core variance formulas above are not exact finite-sample formulas for the final deployed predictor in general.
+This map is generally piecewise affine over polyhedral regions determined by the active non-negativity faces, the signed absolute-deviation faces of the primary LP, and the tie-break regime used inside the primary-optimal set. At boundaries where the optimal LP basis or the final lexicographic selection changes, the mapping is not described by one global coefficient matrix. Consequently, the closed-form affine-core variance formulas above are not exact finite-sample formulas for the final deployed predictor in general.
 
 Two special cases are simpler.
 
 1. If the affine projector is already non-negative at the prediction point, then $\widehat y_*^* = \widehat y_{aff,*}$ and the affine-core formulas apply exactly.
-2. If the optimal LP basis is locally stable and the optimizer is locally unique, the final predictor is locally affine and the affine-core formulas can sometimes be adapted as a local approximation.
+2. If the optimal LP basis and tie-break regime are locally stable, the final predictor is locally affine and the affine-core formulas can sometimes be adapted as a local approximation.
 
 Neither of those special cases justifies a global exact interval formula for the final non-negative predictor.
 
 ### 9.5 Recommended uncertainty treatment for the final predictor
 
-For the final deployed non-negative predictor, the most defensible default approach is resampling-based uncertainty quantification, such as bootstrap refitting or residual bootstrap, because it propagates uncertainty through both stages of the model: least-squares coefficient estimation and the sample-specific LP correction. Each replicate should rebuild the affine reference and rerun the single LP when needed. In applications where only a fast approximation is needed, the affine-core intervals may still be reported as intervals for the linear core, provided they are labeled accordingly and not misrepresented as exact intervals for the final LP-corrected predictor.
+For the final deployed non-negative predictor, the most defensible default approach is resampling-based uncertainty quantification, such as bootstrap refitting or residual bootstrap, because it propagates uncertainty through both stages of the model: least-squares coefficient estimation and the sample-specific LP selection rule. Each replicate should rebuild the affine reference and rerun the primary LP, the secondary component-space tie-break LP, and the final lexicographic component-ordering convention when needed. In applications where only a fast approximation is needed, the affine-core intervals may still be reported as intervals for the linear core, provided they are labeled accordingly and not misrepresented as exact intervals for the final LP-selected predictor.
 
 ## 10. Implications of the Main Modeling Choices
 
@@ -1109,19 +1124,19 @@ The surrogate is parameterized on the effluent component state rather than on th
 
 The partitioned feature map separates operating effects, influent-composition effects, and operation-loading interactions in a way that is interpretable to process engineers. The price of that interpretability is rapid feature growth, which can create multicollinearity, unstable coefficients, and weakly identified directions if the dataset does not adequately excite the design space. Since $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$, even moderate values of $M_{op}$ and $F$ can produce a feature basis that is large relative to the sample count. The resulting affine core can still interpolate training data through the pseudoinverse while leaving individual coefficients poorly determined.
 
-### 10.3 Combined $L_1$ Objective in Measured and Component Space
+### 10.3 Composite-space $L_1$ objective and component-space tie-break
 
-The deployed correction is not defined by Euclidean nearest-point geometry. Instead, it minimizes a weighted sum of measured-space $L_1$ deviation from $y_{aff}$ and component-space $L_1$ deviation from $c_{aff}$. The output weights $w_y$ define the within-space prioritization among measured composites, the component weights $w_c$ define the within-space prioritization among ASM components, and the scalar $\rho$ governs the cross-space trade-off. Rescaling total COD relative to total nitrogen, changing the relative component weights, or changing $\rho$ changes the model because those choices alter how the LP balances aggregate prediction fidelity against closeness to the affine component reference.
+The deployed correction is not defined by Euclidean nearest-point geometry. Its primary objective is the weighted $L_1$ deviation of the deployed measured composites from $y_{aff}$, while its secondary objective is the weighted $L_1$ deviation of the component state from $c_{aff}$ over the primary-optimal set. The output weights $w_y$ therefore define the main physical prioritization of the deployed model. Rescaling total COD relative to total nitrogen, for example, changes the model because it changes which composite discrepancies are treated as equally costly.
 
-This is a substantive change from a lexicographic construction. Component-space penalties now compete directly with measured-space penalties rather than acting only after measured-space optimality has been fixed. Alternative weights, norms, or scaling conventions are therefore different model definitions rather than numerical afterthoughts.
+The component-space tie-break weights $w_c$ play a different role. They do not compete with the primary composite objective. They matter only after primary optimality has been fixed, and they determine which latent component state is selected when multiple feasible states share the same best composite fit. The final lexicographic component ordering is an even narrower convention: it exists only to make the deployed map single-valued if both earlier LP stages are still tied. Alternative weights, norms, or tie-break conventions are different model definitions rather than numerical afterthoughts.
 
 ### 10.4 Correction before measurement collapse
 
-Enforcing the invariant relations and componentwise non-negativity in ASM component space before accepting a measured-space correction is a substantive modeling decision, not a notational convenience. The combined LP judges closeness in measured space, but it does so over component states that already respect the stoichiometric model. Once the state is collapsed into measured composites, some physically meaningful directions are no longer separately visible, so moving the entire correction into measured space would generally lose control over the latent ASM inventory.
+Enforcing the invariant relations and componentwise non-negativity in ASM component space before accepting a measured-space correction is a substantive modeling decision, not a notational convenience. The primary LP judges closeness in measured space, but it does so over component states that already respect the stoichiometric model. Once the state is collapsed into measured composites, some physically meaningful directions are no longer separately visible, so moving the entire correction into measured space would generally lose control over the latent ASM inventory.
 
 ### 10.5 Affine-core coefficients versus the final deployed predictor
 
-The affine-core coefficients $M$ are the correct objects for direct engineering interpretation because they act directly on observed outputs through the identifiable least-squares stage. The latent component-space coefficients $B$ remain generally non-unique unless extra structure is imposed. The final deployed predictor $y^*$ adds one more layer: even when $M$ is well estimated, the final sample-specific output depends on the chosen latent representative used to form $c_{raw}$ and on the combined LP weighting and scaling convention. If the LP is non-unique, it can also depend on the optimizer used in deployment. That means coefficient interpretation is clearest for the affine core, whereas the final prediction should be read as affine signal plus a representative-dependent LP feasibility correction.
+The affine-core coefficients $M$ are the correct objects for direct engineering interpretation because they act directly on observed outputs through the identifiable least-squares stage. The latent component-space coefficients $B$ remain generally non-unique unless extra structure is imposed. The final deployed predictor $y^*$ adds one more layer: even when $M$ is well estimated, the final sample-specific output depends on the chosen latent representative used to form $c_{raw}$, on the composite-space weighting convention, and on the fixed tie-break rule used once the LP selector activates. That means coefficient interpretation is clearest for the affine core, whereas the final prediction should be read as affine signal plus a representative-dependent LP-selected feasibility correction.
 
 ## 11. Limitations
 
@@ -1131,22 +1146,22 @@ Non-negative ICSOR is deliberately narrower than a full mechanistic reactor mode
 2. It enforces only the invariant relations encoded by the chosen stoichiometric basis and system boundary together with componentwise non-negativity.
 3. Non-negative component concentrations do not guarantee full kinetic, biological, or thermodynamic feasibility.
 4. Non-negative component predictions imply non-negative measured composites only when the adopted composition matrix has the appropriate sign structure.
-5. The correction depends on the chosen measured-space weights, component-space weights, trade-off parameter $\rho$, and any scaling or normalization used to define them.
+5. The correction depends on the chosen composite-output weights, component-space tie-break weights, and any scaling or normalization used to define them.
 6. The final deployed predictor is not globally representable by one affine measured-space coefficient matrix once LP-regime changes become active.
-7. The baseline single-LP formulation need not be single-valued; if a unique deployed component state is required, an additional optimizer-selection convention must be added.
-8. When the LP correction activates, the final deployed predictor is not identified from measured composite data alone unless a component-space representative and a weighting and scaling convention are chosen.
-9. Exact closed-form prediction intervals are available for the affine core under the usual linear-model assumptions, but not in general for the final LP-corrected deployed predictor.
+7. Determinism of the deployed component state comes from the documented lexicographic LP selection rule rather than from intrinsic uniqueness of the primary feasible correction problem.
+8. When the LP selector activates, the final deployed predictor is not identified from measured composite data alone unless a component-space representative is chosen or extra component-space information is supplied.
+9. Exact closed-form prediction intervals are available for the affine core under the usual linear-model assumptions, but not in general for the final LP-selected deployed predictor.
 10. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear.
-11. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct LP-optimal state on the wrong physical constraint set.
+11. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally correct LP-selected state on the wrong physical constraint set.
 12. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the regression and is not represented by the affine-core output-noise covariance formulas derived here.
 
 These limitations should be stated explicitly in any application. Doing so does not weaken the model. It defines the scope of its claims correctly.
 
 ## 12. Conclusion
 
-Non-negative ICSOR combines a partitioned second-order surrogate with a single LP correction derived from stoichiometric invariants, componentwise non-negativity, measured-composite closeness to the affine reference, and component-space closeness to the affine state. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies. In deployment, the correction can still be evaluated hierarchically so that the LP stage is reserved for the subset of samples not already repaired by the raw-feasible and affine-feasible shortcuts.
+Non-negative ICSOR combines a partitioned second-order surrogate with a lexicographic LP selector derived from stoichiometric invariants, componentwise non-negativity, and measured-composite closeness to the affine reference. The framework is useful for wastewater applications because it preserves the distinction between operating conditions and influent composition, enforces conservation structure where that structure naturally lives, removes negative deployed component predictions, and returns predictions in the measured variables used by plant operators and simulation studies. In deployment, the correction should be evaluated hierarchically so that the LP stage is reserved for the subset of samples not already repaired by the raw-feasible and affine-feasible shortcuts.
 
-The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by least squares, the final prediction is obtained by solving one documented weighted-sum LP on the invariant-consistent non-negative set. When the affine reference is already non-negative, that deployed prediction collapses exactly to the identifiable affine core. When the LP stage activates, deployment additionally requires a chosen component-space representative and a weighting and scaling convention; if the LP is non-unique, any optimizer is admissible unless an extra implementation rule is imposed. Under that reading, non-negative ICSOR is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
+The central theoretical point remains that measured composite data identify the affine measured-space operator $M$, not the latent component-space coefficient matrix $B$ uniquely. The non-negative extension does not alter that identifiability fact. Instead, it changes the deployment map: after estimating the affine core by least squares, the final prediction is obtained by applying a fully linear, lexicographic selection rule on the invariant-consistent non-negative set. When the affine reference is already non-negative, that deployed prediction collapses exactly to the identifiable affine core. When the LP selector activates, deployment additionally requires a chosen component-space representative, a composite-space weighting convention, and the fixed tie-break rule, because measured composite data alone do not identify the corrected component-space map uniquely. Under that reading, non-negative ICSOR is best understood as an analytically structured steady-state surrogate for activated-sludge prediction: more physically disciplined than a generic black-box regressor, more realistic than affine-only invariant correction when negative component states would otherwise occur, but still narrower in scope than a full dynamic mechanistic simulator.
 
 ## References
 

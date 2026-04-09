@@ -132,7 +132,7 @@ def build_icsor_projection_stage_frame(
             "projection_stage": np.asarray(projection_details["projection_stage"], dtype=object),
             "raw_feasible": np.asarray(projection_details["raw_feasible_mask"], dtype=bool),
             "affine_feasible": np.asarray(projection_details["affine_feasible_mask"], dtype=bool),
-            "qp_active": np.asarray(projection_details["qp_active_mask"], dtype=bool),
+            "lp_active": np.asarray(projection_details["lp_active_mask"], dtype=bool),
             "solver_status": np.asarray(projection_details["solver_status"], dtype=object),
             "solver_iterations": np.asarray(projection_details["solver_iterations"], dtype=int),
             "raw_constraint_max_abs": np.asarray(projection_details["raw_constraint_max_abs"], dtype=float),
@@ -160,7 +160,7 @@ def build_icsor_projection_stage_summary(
         stage_frame.groupby("projection_stage", dropna=False)
         .agg(
             sample_count=("projection_stage", "size"),
-            qp_active_count=("qp_active", "sum"),
+            lp_active_count=("lp_active", "sum"),
             mean_solver_iterations=("solver_iterations", "mean"),
             max_solver_iterations=("solver_iterations", "max"),
             minimum_projected_component=("projected_min_component", "min"),
@@ -172,7 +172,7 @@ def build_icsor_projection_stage_summary(
         100.0 * summary["sample_count"] / float(total_samples),
         0.0,
     )
-    stage_order = {"raw_feasible": 0, "affine_feasible": 1, "qp_corrected": 2, "orthant_clip": 3}
+    stage_order = {"raw_feasible": 0, "affine_feasible": 1, "lp_corrected": 2}
     return summary.sort_values(
         by="projection_stage",
         key=lambda series: series.map(stage_order).fillna(len(stage_order)),
@@ -471,9 +471,9 @@ def evaluate_icsor_prediction_bundle(
             comparison_target_space="measured",
             constraint_space="fractional",
             direct_comparison_scope="measured_output_metrics_only",
-            diagnostic_scope="model_native_fractional_space_nonnegative_qp_diagnostics",
+            diagnostic_scope="model_native_fractional_space_nonnegative_lp_diagnostics",
             projection_active=True,
-            constraint_status="active_nonnegative_qp",
+            constraint_status="active_nonnegative_lp",
         ),
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,

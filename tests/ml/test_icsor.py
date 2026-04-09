@@ -298,10 +298,11 @@ class icsorModelTests(unittest.TestCase):
                 persist_artifacts=False,
             )
 
-    def test_nonnegative_projection_uses_osqp_when_affine_prediction_is_negative(self) -> None:
-        a_matrix = np.asarray([[1.0, 1.0]], dtype=float)
-        raw_predictions = np.asarray([[-1.0, 2.0]], dtype=float)
-        constraint_reference = np.asarray([[1.0, 1.0]], dtype=float)
+    def test_nonnegative_projection_uses_highs_lp_when_affine_prediction_is_negative(self) -> None:
+        a_matrix = np.asarray([[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+        composition_matrix = np.asarray([[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+        raw_predictions = np.asarray([[-2.0, 22.0, 5.0]], dtype=float)
+        constraint_reference = np.asarray([[10.0, 10.0, 5.0]], dtype=float)
         projection_matrix = build_projection_operator(a_matrix)
         projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
 
@@ -309,51 +310,57 @@ class icsorModelTests(unittest.TestCase):
             raw_predictions,
             constraint_reference,
             a_matrix,
+            composition_matrix,
             projection_operator=projection_matrix,
             projection_complement=projection_complement,
-            projection_solver="osqp",
+            projection_solver="highs",
             constraint_tolerance=1e-8,
             nonnegativity_tolerance=1e-10,
-            osqp_eps_abs=1e-8,
-            osqp_eps_rel=1e-8,
-            osqp_max_iter=10000,
-            osqp_polish=True,
-            osqp_verbose=False,
-            osqp_warm_start=True,
+            measured_deviation_weight=1.0,
+            component_deviation_weight=1.0,
+            tradeoff_parameter=1.0,
+            highs_presolve=True,
+            highs_max_iter=10000,
+            highs_verbose=False,
+            highs_retry_without_presolve=True,
         )
 
-        np.testing.assert_allclose(projection_result["affine_predictions"], [[-0.5, 2.5]], atol=1e-8, rtol=1e-8)
-        np.testing.assert_allclose(projection_result["projected_predictions"], [[0.0, 2.0]], atol=1e-8, rtol=1e-8)
+        np.testing.assert_allclose(projection_result["affine_predictions"], raw_predictions, atol=1e-8, rtol=1e-8)
+        np.testing.assert_allclose(projection_result["projected_predictions"], [[0.0, 20.0, 5.0]], atol=1e-8, rtol=1e-8)
         self.assertFalse(bool(projection_result["raw_feasible_mask"][0]))
         self.assertFalse(bool(projection_result["affine_feasible_mask"][0]))
-        self.assertTrue(bool(projection_result["qp_active_mask"][0]))
-        self.assertEqual(str(projection_result["projection_stage"][0]), "qp_corrected")
+        self.assertTrue(bool(projection_result["lp_active_mask"][0]))
+        self.assertEqual(str(projection_result["projection_stage"][0]), "lp_corrected")
 
-    def test_nonnegative_projection_clips_when_invariant_matrix_is_trivial(self) -> None:
-        raw_predictions = np.asarray([[1.0, -0.2, 0.3]], dtype=float)
+    def test_nonnegative_projection_uses_lp_when_invariant_matrix_is_trivial(self) -> None:
+        raw_predictions = np.asarray([[-2.0, 22.0, 5.0]], dtype=float)
         constraint_reference = np.asarray([[0.4, 0.5, 0.6]], dtype=float)
+        composition_matrix = np.asarray([[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=float)
         a_matrix = np.zeros((0, 3), dtype=float)
 
         projection_result = project_to_nonnegative_feasible_set(
             raw_predictions,
             constraint_reference,
             a_matrix,
+            composition_matrix,
             projection_operator=np.zeros((3, 3), dtype=float),
             projection_complement=np.eye(3, dtype=float),
-            projection_solver="osqp",
+            projection_solver="highs",
             constraint_tolerance=1e-8,
             nonnegativity_tolerance=1e-10,
-            osqp_eps_abs=1e-8,
-            osqp_eps_rel=1e-8,
-            osqp_max_iter=10000,
-            osqp_polish=True,
-            osqp_verbose=False,
-            osqp_warm_start=True,
+            measured_deviation_weight=1.0,
+            component_deviation_weight=1.0,
+            tradeoff_parameter=1.0,
+            highs_presolve=True,
+            highs_max_iter=10000,
+            highs_verbose=False,
+            highs_retry_without_presolve=True,
         )
 
         np.testing.assert_allclose(projection_result["affine_predictions"], raw_predictions, atol=1e-10, rtol=1e-10)
-        np.testing.assert_allclose(projection_result["projected_predictions"], [[1.0, 0.0, 0.3]], atol=1e-10, rtol=1e-10)
-        self.assertEqual(str(projection_result["projection_stage"][0]), "orthant_clip")
+        np.testing.assert_allclose(projection_result["projected_predictions"], [[0.0, 20.0, 5.0]], atol=1e-10, rtol=1e-10)
+        self.assertTrue(bool(projection_result["lp_active_mask"][0]))
+        self.assertEqual(str(projection_result["projection_stage"][0]), "lp_corrected")
 
     def test_projected_ols_matches_explicit_kronecker_solution(self) -> None:
         params = self._tiny_params(ols_backend="numpy_lstsq")
@@ -581,15 +588,16 @@ class icsorModelTests(unittest.TestCase):
                     "ridge_alpha": ridge_alpha,
                     "include_bias_term": True,
                     "lstsq_rcond": None,
-                    "projection_solver": "osqp",
-                    "constraint_tolerance": 1e-8,
-                    "nonnegativity_tolerance": 1e-10,
-                    "osqp_eps_abs": 1e-8,
-                    "osqp_eps_rel": 1e-8,
-                    "osqp_max_iter": 10000,
-                    "osqp_polish": True,
-                    "osqp_verbose": False,
-                    "osqp_warm_start": True,
+                        "projection_solver": "highs",
+                        "constraint_tolerance": 1e-8,
+                        "nonnegativity_tolerance": 1e-10,
+                        "measured_deviation_weight": 1.0,
+                        "component_deviation_weight": 1.0,
+                        "tradeoff_parameter": 1.0,
+                        "highs_presolve": True,
+                        "highs_max_iter": 10000,
+                        "highs_verbose": False,
+                        "highs_retry_without_presolve": True,
                     "uncertainty_method": uncertainty_method,
                     "confidence_level": 0.95,
                 },
