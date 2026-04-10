@@ -175,6 +175,38 @@ class icsorModelTests(unittest.TestCase):
             -1e-10,
         )
 
+    def test_predict_rejects_mismatched_composition_source(self) -> None:
+        params = self._tiny_params()
+        dataset_splits = make_train_test_split(
+            self.icsor_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        result = run_icsor_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            composition_source=self.metadata.get("composition_source"),
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        mismatched_metadata = dict(self.metadata)
+        mismatched_metadata["composition_source"] = {"workbook_sha256": "mismatched_sha256"}
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            model_path = Path(temp_dir_name) / "icsor_model.pkl"
+            save_pickle_file(model_path, result["model_bundle"])
+            with self.assertRaisesRegex(ValueError, r"workbook_sha256"):
+                predict_icsor_model(
+                    self.dataset.iloc[:4].copy(),
+                    model_path,
+                    metadata=mismatched_metadata,
+                    composition_matrix=self.composition_matrix,
+                )
+
     def test_rank_deficient_training_uses_analytic_uncertainty_in_auto_mode(self) -> None:
         params = self._tiny_params()
         dataset_splits = make_train_test_split(

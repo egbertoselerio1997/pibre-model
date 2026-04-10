@@ -10,7 +10,7 @@ The notebook-facing dataset now persists both ASM component fractions and compos
 
 ASM2d extends the activated-sludge model family to include biological phosphorus removal together with nitrogen and carbon conversions. The present repository variant is being prepared as an ASM2D-TSN formulation with explicit two-step nitrification, meaning nitrite and nitrate are represented separately instead of being collapsed into a single oxidized-nitrogen state.
 
-For this repository, the workbook still fixes the process ordering, state ordering, composite-output ordering, and parameter naming. On top of that contract, the repository now implements a mechanistic steady-state simulation routine that uses the configured ASM2D-TSN process rates and matrices to generate reproducible composite-output datasets for notebook use.
+For this repository, the workbook fixes the process ordering, state ordering, composite-output ordering, and parameter naming. The `composition_matrix` sheet is the runtime source of truth for measured-output columns and composition coefficients. On top of that contract, the repository implements a mechanistic steady-state simulation routine that uses the configured ASM2D-TSN process rates and workbook-derived composition matrices to generate reproducible composite-output datasets for notebook use.
 
 ## 3. Mathematical definition and governing relations
 
@@ -84,9 +84,9 @@ Outputs of the simulation workflow are:
 
 Current assumptions:
 
-- the workbook is the canonical reference asset, not the runtime source of truth
-- `config/params.json` remains the authoritative repository parameter source
-- the workbook formulas mirror that configuration for transparency and later validation
+- the workbook `composition_matrix` sheet is the runtime source of truth for composite schema and coefficients
+- `config/params.json` remains the authoritative source for solver settings, kinetic parameters, and non-composite simulation configuration
+- workbook-derived composition artifacts may be cached with workbook fingerprint metadata for deterministic reuse
 - the current runtime is a mechanistic steady-state nonlinear solve intended to support notebook reproducibility and higher-fidelity dataset generation
 
 ## 5. Implementation used in this repository
@@ -100,7 +100,7 @@ The repository currently implements:
 3. generating the parameter table sheet
 4. generating the stoichiometric matrix sheet with direct and continuity-derived formulas
 5. generating the composition matrix sheet with parameter-linked formulas
-6. building numeric Petersen and composition matrices from the configured workbook contract
+6. building numeric Petersen and composition matrices where composition schema and coefficients come from workbook `composition_matrix`
 7. sampling operational conditions and influent states from configured ranges using seeded Latin Hypercube Sampling for well-stratified coverage
 8. solving mechanistic steady-state effluent states and persisting both component-fraction and composite views
 9. writing the canonical `.xlsx` file under `data/asm2d-tsn`
@@ -120,7 +120,7 @@ Runtime architecture:
 6. only converged operating points are admitted into the generated dataset
 7. the dataset and metadata are returned in the notebook-facing contract and may also be persisted to disk
 
-This design ensures that when a parameter value changes in configuration, both the workbook and the runtime matrices stay synchronized.
+This design ensures that when workbook `composition_matrix` columns or coefficients change, runtime measured-output schema and matrix values follow that workbook change directly.
 
 ## 7. Dataset-generation or execution workflow
 
@@ -144,7 +144,7 @@ Current limitations:
 Expected failure modes:
 
 - formula breakage if parameter names or row ordering are changed without regenerating the workbook
-- contract drift if the workbook is edited manually while `config/params.json` is not updated to match
+- malformed `composition_matrix` sheet headers or non-numeric coefficient cells that violate the workbook parsing contract
 - downstream inconsistency if future ASM2D-TSN code hardcodes state or process order instead of loading configuration
 - solver convergence failure if sampled influent states or operating conditions are incompatible with a physically acceptable steady state under the configured kinetics
 

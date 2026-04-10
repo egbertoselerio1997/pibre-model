@@ -901,6 +901,7 @@ def _build_model_bundle(
     constraint_columns: list[str],
     A_matrix: np.ndarray,
     composition_matrix: np.ndarray,
+    composition_source: Mapping[str, Any] | None,
     model_hyperparameters: Mapping[str, Any],
     training_options: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -912,6 +913,7 @@ def _build_model_bundle(
         "constraint_columns": constraint_columns,
         "A_matrix": np.asarray(A_matrix, dtype=float),
         "composition_matrix": np.asarray(composition_matrix, dtype=float),
+        "composition_source": dict(composition_source or {}),
         "projection_matrix": np.asarray(training_result["projection_matrix"], dtype=float),
         "projection_complement": np.asarray(training_result["projection_complement"], dtype=float),
         "collapse_operator": np.asarray(training_result["collapse_operator"], dtype=float),
@@ -1227,10 +1229,21 @@ def predict_icsor_model(
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
+    bundle_composition_source = dict(model_bundle.get("composition_source") or {})
 
     if isinstance(test_dataset, pd.DataFrame):
         if metadata is None or composition_matrix is None:
             raise ValueError("metadata and composition_matrix are required when predicting from a raw dataset.")
+
+        metadata_composition_source = dict(metadata.get("composition_source") or {})
+        bundle_sha = bundle_composition_source.get("workbook_sha256")
+        metadata_sha = metadata_composition_source.get("workbook_sha256")
+        if bundle_sha is not None and metadata_sha is not None and str(bundle_sha) != str(metadata_sha):
+            raise ValueError(
+                "Raw-dataset prediction requires metadata composition_source workbook_sha256 to match the "
+                "trained model bundle composition source."
+            )
+
         icsor_dataset = build_icsor_supervised_dataset(
             test_dataset,
             dict(metadata),
@@ -1339,6 +1352,7 @@ def run_icsor_pipeline(
     A_matrix: np.ndarray,
     *,
     composition_matrix: np.ndarray,
+    composition_source: Mapping[str, Any] | None = None,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
@@ -1400,6 +1414,7 @@ def run_icsor_pipeline(
             constraint_columns=list(training_split.constraint_reference.columns),
             A_matrix=np.asarray(A_matrix, dtype=float),
             composition_matrix=np.asarray(composition_matrix, dtype=float),
+            composition_source=composition_source,
             model_hyperparameters=selected_hyperparameters,
             training_options={
                 "objective_name": objective_label,

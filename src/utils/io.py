@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pickle
 import re
@@ -89,6 +90,21 @@ def save_matplotlib_figure(
     return file_path
 
 
+def compute_file_sha256(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Compute a SHA-256 digest for one file path."""
+
+    file_path = Path(path)
+    hasher = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        while True:
+            chunk = handle.read(int(chunk_size))
+            if not chunk:
+                break
+            hasher.update(chunk)
+
+    return hasher.hexdigest()
+
+
 def split_timestamped_stem(stem: str) -> tuple[str, str]:
     """Split an artifact stem of the form name_YYYYMMDD_HHMMSS."""
 
@@ -172,6 +188,7 @@ def select_latest_timestamped_file_bundle(
 
 __all__ = [
     "build_timestamped_file_index",
+    "compute_file_sha256",
     "load_dataframe_csv",
     "load_json_file",
     "load_pickle_file",

@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from scipy.integrate import solve_ivp
 from scipy.optimize import least_squares
 from tqdm import tqdm
 
+from src.utils.io import (
+    compute_file_sha256,
+    load_json_file,
+    load_pickle_file,
+    save_json_file,
+    save_pickle_file,
+)
 from src.utils.simulation import (
     get_repo_root,
     load_model_params,
@@ -29,10 +37,16 @@ MODEL_NAME = "asm2d_tsn_simulation"
 WORKBOOK_PATH_KEY = "asm2d_tsn_reference_workbook"
 DATA_PATTERN_KEY = "asm2d_tsn_simulation_data_pattern"
 METADATA_PATTERN_KEY = "asm2d_tsn_simulation_metadata_pattern"
+COMPOSITION_CACHE_PATTERN_KEY = "asm2d_tsn_composition_cache_pattern"
+COMPOSITION_CACHE_METADATA_PATTERN_KEY = "asm2d_tsn_composition_cache_metadata_pattern"
 STOICHIOMETRIC_SHEET_NAME = "stoichiometric_matrix"
 COMPOSITION_SHEET_NAME = "composition_matrix"
 PARAMETER_SHEET_NAME = "parameter_table"
 PARAMETER_VALUE_COLUMN_INDEX = 5
+
+_EXCEL_REFERENCE_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])(?:(?:'(?P<sheet_quoted>[^']+)')|(?P<sheet_unquoted>[A-Za-z_][A-Za-z0-9_]*))?!?\$?(?P<column>[A-Za-z]{1,3})\$?(?P<row>\d+)"
+)
 
 HEADER_FILL = PatternFill(fill_type="solid", fgColor="D8DEE6")
 SECTION_FILL = PatternFill(fill_type="solid", fgColor="EEF2F5")
@@ -208,6 +222,23 @@ def resolve_asm2d_tsn_simulation_artifact_paths(
     )
 
 
+def resolve_asm2d_tsn_composition_cache_paths(
+    workbook_hash: str,
+    repo_root: str | Path | None = None,
+    *,
+    paths_config: Mapping[str, Any] | None = None,
+) -> tuple[Path, Path]:
+    """Resolve configured cache paths for one workbook-derived composition artifact."""
+
+    root = get_repo_root(repo_root)
+    config = dict(paths_config) if paths_config is not None else load_paths_config(root)
+    matrix_path = root / Path(config[COMPOSITION_CACHE_PATTERN_KEY].format(workbook_hash=str(workbook_hash)))
+    metadata_path = root / Path(
+        config[COMPOSITION_CACHE_METADATA_PATTERN_KEY].format(workbook_hash=str(workbook_hash))
+    )
+    return matrix_path, metadata_path
+
+
 def create_asm2d_tsn_workbook(
     workbook_path: str | Path | None = None,
     *,
@@ -251,22 +282,308 @@ def build_asm2d_tsn_workbook(
     return workbook
 
 
-def get_asm2d_tsn_matrices(model_params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def _normalize_excel_reference(sheet_name: str, coordinate: str) -> str:
+    return f"{str(sheet_name).strip().lower()}!{str(coordinate).replace('$', '').upper()}"
+
+
+def _build_workbook_numeric_lookup(workbook) -> dict[str, float]:
+    numeric_lookup: dict[str, float] = {}
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows(
+            min_row=1,
+            max_row=worksheet.max_row,
+            min_col=1,
+            max_col=worksheet.max_column,
+        ):
+            for cell in row:
+                cell_value = cell.value
+                if isinstance(cell_value, bool):
+                    continue
+                if isinstance(cell_value, (int, float)):
+                    numeric_lookup[_normalize_excel_reference(worksheet.title, cell.coordinate)] = float(cell_value)
+    return numeric_lookup
+
+
+def _evaluate_workbook_formula(
+    formula: str,
+    numeric_lookup: Mapping[str, float],
+    *,
+    current_sheet_name: str,
+) -> float:
+    expression = str(formula).strip()
+    if expression.startswith("="):
+        expression = expression[1:]
+
+    def _replace_reference(match: re.Match[str]) -> str:
+        sheet_name = match.group("sheet_quoted") or match.group("sheet_unquoted") or str(current_sheet_name)
+        coordinate = f"{match.group('column').upper()}{match.group('row')}"
+        lookup_key = _normalize_excel_reference(sheet_name, coordinate)
+        if lookup_key not in numeric_lookup:
+            raise KeyError(
+                "Workbook formula references a non-numeric or missing cell: "
+                f"{sheet_name}!{coordinate}."
+            )
+        return str(float(numeric_lookup[lookup_key]))
+
+    resolved_expression = _EXCEL_REFERENCE_PATTERN.sub(_replace_reference, expression).replace("^", "**")
+    return float(eval(resolved_expression, {"__builtins__": {}}, {}))
+
+
+def _coerce_workbook_composition_value(
+    cell_value: Any,
+    numeric_lookup: Mapping[str, float],
+    *,
+    current_sheet_name: str,
+) -> float:
+    if cell_value is None:
+        return 0.0
+    if isinstance(cell_value, bool):
+        return float(cell_value)
+    if isinstance(cell_value, (int, float)):
+        return float(cell_value)
+
+    text_value = str(cell_value).strip()
+    if not text_value:
+        return 0.0
+    if text_value.startswith("="):
+        return _evaluate_workbook_formula(
+            text_value,
+            numeric_lookup,
+            current_sheet_name=current_sheet_name,
+        )
+
+    try:
+        return float(text_value)
+    except ValueError as error:
+        raise ValueError(f"Workbook composition_matrix contains a non-numeric value: {text_value!r}") from error
+
+
+def _read_composition_matrix_from_workbook(
+    workbook_path: str | Path,
+    *,
+    expected_state_columns: list[str],
+) -> dict[str, Any]:
+    workbook = load_workbook(filename=Path(workbook_path), data_only=False)
+    try:
+        if COMPOSITION_SHEET_NAME not in workbook.sheetnames:
+            raise KeyError(f"Workbook is missing required sheet '{COMPOSITION_SHEET_NAME}'.")
+        if PARAMETER_SHEET_NAME not in workbook.sheetnames:
+            raise KeyError(f"Workbook is missing required sheet '{PARAMETER_SHEET_NAME}'.")
+
+        worksheet = workbook[COMPOSITION_SHEET_NAME]
+        header_values = [str(cell.value).strip() if cell.value is not None else "" for cell in worksheet[1]]
+        if "state_variable" not in header_values:
+            raise KeyError("Workbook composition_matrix must include a 'state_variable' header column.")
+
+        state_column_number = header_values.index("state_variable") + 1
+        reserved_headers = {"state_group", "state_variable", "unit"}
+        composite_header_pairs = [
+            (column_number, header_name)
+            for column_number, header_name in enumerate(header_values, start=1)
+            if header_name and header_name not in reserved_headers
+        ]
+        if not composite_header_pairs:
+            raise ValueError("Workbook composition_matrix must define at least one composite output column.")
+
+        measured_output_columns = [header_name for _, header_name in composite_header_pairs]
+        _validate_unique_names(measured_output_columns, "composition_matrix output columns")
+
+        numeric_lookup = _build_workbook_numeric_lookup(workbook)
+        state_columns: list[str] = []
+        coefficients_by_state: list[list[float]] = []
+        for row_number in range(2, worksheet.max_row + 1):
+            raw_state_name = worksheet.cell(row=row_number, column=state_column_number).value
+            if raw_state_name is None:
+                continue
+            state_name = str(raw_state_name).strip()
+            if not state_name:
+                continue
+
+            state_columns.append(state_name)
+            row_coefficients: list[float] = []
+            for column_number, _ in composite_header_pairs:
+                raw_value = worksheet.cell(row=row_number, column=column_number).value
+                row_coefficients.append(
+                    _coerce_workbook_composition_value(
+                        raw_value,
+                        numeric_lookup,
+                        current_sheet_name=worksheet.title,
+                    )
+                )
+            coefficients_by_state.append(row_coefficients)
+
+        if not state_columns:
+            raise ValueError("Workbook composition_matrix must define at least one state_variable row.")
+        _validate_unique_names(state_columns, "composition_matrix state_variable")
+
+        if state_columns != expected_state_columns:
+            raise ValueError(
+                "Workbook composition_matrix state_variable rows must match configured workbook state_columns "
+                "exactly and in order."
+            )
+
+        composition_matrix = np.asarray(coefficients_by_state, dtype=float).T
+        expected_shape = (len(measured_output_columns), len(state_columns))
+        if composition_matrix.shape != expected_shape:
+            raise ValueError(
+                "Workbook composition_matrix shape must match measured_output_columns x state_columns."
+            )
+
+        return {
+            "state_columns": state_columns,
+            "measured_output_columns": measured_output_columns,
+            "composition_matrix": composition_matrix,
+        }
+    finally:
+        workbook.close()
+
+
+def _build_workbook_fingerprint(workbook_path: Path) -> dict[str, Any]:
+    resolved_path = Path(workbook_path).resolve()
+    stat_info = resolved_path.stat()
+    return {
+        "workbook_path": resolved_path.as_posix(),
+        "workbook_sha256": compute_file_sha256(resolved_path),
+        "workbook_mtime_ns": int(stat_info.st_mtime_ns),
+        "workbook_size_bytes": int(stat_info.st_size),
+    }
+
+
+def _validate_cached_composition_payload(cache_payload: Mapping[str, Any]) -> None:
+    required_keys = ("state_columns", "measured_output_columns", "composition_matrix")
+    for required_key in required_keys:
+        if required_key not in cache_payload:
+            raise KeyError(f"Cached composition payload is missing required key '{required_key}'.")
+
+
+def load_asm2d_tsn_workbook_composition(
+    *,
+    repo_root: str | Path | None = None,
+    workbook_path: str | Path | None = None,
+    model_params: Mapping[str, Any] | None = None,
+    paths_config: Mapping[str, Any] | None = None,
+    use_cache: bool = True,
+) -> dict[str, Any]:
+    """Load workbook-derived composition schema and coefficients, with fingerprinted cache reuse."""
+
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params(repo_root)
+    workbook_config = _validate_workbook_config(params)
+    expected_state_columns = list(workbook_config["state_columns"])
+    resolved_workbook_path = (
+        Path(workbook_path)
+        if workbook_path is not None
+        else resolve_asm2d_tsn_workbook_path(repo_root, paths_config=paths_config)
+    )
+    if not resolved_workbook_path.exists():
+        raise FileNotFoundError(f"ASM2D-TSN workbook not found at {resolved_workbook_path}.")
+
+    fingerprint = _build_workbook_fingerprint(resolved_workbook_path)
+    cache_matrix_path, cache_metadata_path = resolve_asm2d_tsn_composition_cache_paths(
+        fingerprint["workbook_sha256"],
+        repo_root=repo_root,
+        paths_config=paths_config,
+    )
+
+    if use_cache and cache_matrix_path.exists() and cache_metadata_path.exists():
+        cache_metadata = load_json_file(cache_metadata_path)
+        if (
+            str(cache_metadata.get("workbook_sha256")) == str(fingerprint["workbook_sha256"])
+            and int(cache_metadata.get("workbook_mtime_ns", -1)) == int(fingerprint["workbook_mtime_ns"])
+            and int(cache_metadata.get("workbook_size_bytes", -1)) == int(fingerprint["workbook_size_bytes"])
+        ):
+            cache_payload = load_pickle_file(cache_matrix_path)
+            _validate_cached_composition_payload(cache_payload)
+            state_columns = [str(name) for name in cache_payload["state_columns"]]
+            measured_output_columns = [str(name) for name in cache_payload["measured_output_columns"]]
+            if state_columns != expected_state_columns:
+                raise ValueError(
+                    "Cached composition state_columns no longer match configured workbook state_columns."
+                )
+            composition_matrix = np.asarray(cache_payload["composition_matrix"], dtype=float)
+            if composition_matrix.shape != (len(measured_output_columns), len(state_columns)):
+                raise ValueError("Cached composition_matrix shape is invalid for cached schema.")
+            return {
+                "state_columns": state_columns,
+                "measured_output_columns": measured_output_columns,
+                "composition_matrix": composition_matrix,
+                **fingerprint,
+                "cache_source": "cache",
+                "cache_paths": {
+                    "composition_matrix": cache_matrix_path,
+                    "composition_metadata": cache_metadata_path,
+                },
+            }
+
+    parsed_composition = _read_composition_matrix_from_workbook(
+        resolved_workbook_path,
+        expected_state_columns=expected_state_columns,
+    )
+    composition_payload = {
+        "state_columns": list(parsed_composition["state_columns"]),
+        "measured_output_columns": list(parsed_composition["measured_output_columns"]),
+        "composition_matrix": np.asarray(parsed_composition["composition_matrix"], dtype=float),
+    }
+
+    if use_cache:
+        save_pickle_file(cache_matrix_path, composition_payload)
+        save_json_file(
+            cache_metadata_path,
+            {
+                "cache_schema_version": 1,
+                "state_columns": composition_payload["state_columns"],
+                "measured_output_columns": composition_payload["measured_output_columns"],
+                **fingerprint,
+            },
+        )
+
+    return {
+        **composition_payload,
+        **fingerprint,
+        "cache_source": "workbook",
+        "cache_paths": {
+            "composition_matrix": cache_matrix_path,
+            "composition_metadata": cache_metadata_path,
+        },
+    }
+
+
+def get_asm2d_tsn_matrices(
+    model_params: Mapping[str, Any] | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    paths_config: Mapping[str, Any] | None = None,
+    use_composition_cache: bool = True,
+) -> dict[str, Any]:
     """Build numeric Petersen and composition matrices for the configured ASM2D-TSN model."""
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params()
-    runtime = _validate_runtime_structure(params)
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params(repo_root)
+    composition_bundle = load_asm2d_tsn_workbook_composition(
+        repo_root=repo_root,
+        model_params=params,
+        paths_config=paths_config,
+        use_cache=use_composition_cache,
+    )
+    measured_output_columns = list(composition_bundle["measured_output_columns"])
+    runtime = _validate_runtime_structure(params, measured_output_columns=measured_output_columns)
     workbook_config = runtime["workbook_config"]
     parameter_values = _build_parameter_value_map(workbook_config["parameters"])
     state_columns = list(runtime["state_columns"])
-    measured_output_columns = list(runtime["measured_output_columns"])
     process_names = list(runtime["process_names"])
     process_types = list(runtime["process_types"])
     state_index = _build_state_index(state_columns)
-    output_index = _build_state_index(measured_output_columns)
+
+    composition_state_columns = list(composition_bundle["state_columns"])
+    if composition_state_columns != state_columns:
+        raise ValueError(
+            "Workbook composition_matrix state columns do not match the configured ASM2D-TSN state columns."
+        )
 
     petersen_matrix = np.zeros((len(process_names), len(state_columns)), dtype=float)
-    composition_matrix = np.zeros((len(measured_output_columns), len(state_columns)), dtype=float)
+    composition_matrix = np.asarray(composition_bundle["composition_matrix"], dtype=float)
+    if composition_matrix.shape != (len(measured_output_columns), len(state_columns)):
+        raise ValueError(
+            "Workbook composition_matrix shape must match measured_output_columns x state_columns."
+        )
 
     for row_index, process_definition in enumerate(STOICHIOMETRIC_COEFFICIENTS):
         row_values = petersen_matrix[row_index]
@@ -293,15 +610,6 @@ def get_asm2d_tsn_matrices(model_params: Mapping[str, Any] | None = None) -> dic
             + row_values[state_index["S_PO4"]] / 31.0
         )
 
-    for output_name in measured_output_columns:
-        output_row = output_index[output_name]
-        for state_name, mapping in COMPOSITION_FORMULAS.items():
-            if output_name in mapping:
-                composition_matrix[output_row, state_index[state_name]] = _evaluate_numeric_expression(
-                    mapping[output_name],
-                    parameter_values,
-                )
-
     return {
         "petersen_matrix": petersen_matrix,
         "composition_matrix": composition_matrix,
@@ -310,6 +618,12 @@ def get_asm2d_tsn_matrices(model_params: Mapping[str, Any] | None = None) -> dic
         "state_index": state_index,
         "state_columns": state_columns,
         "measured_output_columns": measured_output_columns,
+        "composition_workbook_path": str(composition_bundle["workbook_path"]),
+        "composition_workbook_sha256": str(composition_bundle["workbook_sha256"]),
+        "composition_workbook_mtime_ns": int(composition_bundle["workbook_mtime_ns"]),
+        "composition_workbook_size_bytes": int(composition_bundle["workbook_size_bytes"]),
+        "composition_cache_source": str(composition_bundle["cache_source"]),
+        "composition_cache_paths": dict(composition_bundle["cache_paths"]),
     }
 
 
@@ -319,10 +633,21 @@ def build_asm2d_tsn_metadata(
     sample_count: int,
     random_seed: int,
     dataset_file: str | None = None,
+    measured_output_columns: list[str] | None = None,
+    composition_source: Mapping[str, Any] | None = None,
+    repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Create the metadata contract for the ASM2D-TSN mixed-schema dataset."""
 
-    runtime = _validate_runtime_structure(model_params)
+    if measured_output_columns is None:
+        measured_output_columns = list(
+            load_asm2d_tsn_workbook_composition(
+                repo_root=repo_root,
+                model_params=model_params,
+            )["measured_output_columns"]
+        )
+
+    runtime = _validate_runtime_structure(model_params, measured_output_columns=measured_output_columns)
     state_columns = list(runtime["state_columns"])
     measured_output_columns = list(runtime["measured_output_columns"])
     process_names = list(runtime["process_names"])
@@ -355,12 +680,14 @@ def build_asm2d_tsn_metadata(
         "petersen_matrix_shape": [len(process_names), len(state_columns)],
         "composition_matrix_shape": [len(measured_output_columns), len(state_columns)],
         "schema_version": str(model_params["schema_version"]),
+        "composition_source": dict(composition_source or {}),
     }
 
 
 def generate_asm2d_tsn_dataset(
     *,
     model_params: Mapping[str, Any] | None = None,
+    repo_root: str | Path | None = None,
     n_samples: int | None = None,
     random_seed: int | None = None,
     parallel_workers: int | None = None,
@@ -371,8 +698,12 @@ def generate_asm2d_tsn_dataset(
 ) -> tuple[pd.DataFrame, dict[str, Any], dict[str, Any]]:
     """Generate a mechanistic steady-state ASM2D-TSN dataset with input/output fractions and composites."""
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params()
-    runtime = _validate_runtime_structure(params)
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params(repo_root)
+    matrix_bundle = get_asm2d_tsn_matrices(params, repo_root=repo_root)
+    runtime = _validate_runtime_structure(
+        params,
+        measured_output_columns=list(matrix_bundle["measured_output_columns"]),
+    )
     configured_hyperparameters = params["hyperparameters"]
     sample_count = int(n_samples if n_samples is not None else configured_hyperparameters["n_samples"])
     if sample_count < 0:
@@ -387,8 +718,6 @@ def generate_asm2d_tsn_dataset(
         if parallel_chunk_size is not None
         else configured_hyperparameters.get("parallel_chunk_size", sample_count or 1)
     )
-
-    matrix_bundle = get_asm2d_tsn_matrices(params)
     state_columns = list(runtime["state_columns"])
     operational_columns = list(runtime["operational_columns"])
     measured_output_columns = list(runtime["measured_output_columns"])
@@ -471,6 +800,15 @@ def generate_asm2d_tsn_dataset(
         params,
         sample_count=sample_count,
         random_seed=seed,
+        measured_output_columns=measured_output_columns,
+        composition_source={
+            "workbook_path": matrix_bundle["composition_workbook_path"],
+            "workbook_sha256": matrix_bundle["composition_workbook_sha256"],
+            "workbook_mtime_ns": matrix_bundle["composition_workbook_mtime_ns"],
+            "workbook_size_bytes": matrix_bundle["composition_workbook_size_bytes"],
+            "cache_source": matrix_bundle["composition_cache_source"],
+        },
+        repo_root=repo_root,
     )
 
     simulation_bundle = dict(matrix_bundle)
@@ -505,6 +843,7 @@ def run_asm2d_tsn_simulation(
     simulation_bundle: dict[str, Any]
     dataset, metadata, simulation_bundle = generate_asm2d_tsn_dataset(
         model_params=params,
+        repo_root=repo_root,
         n_samples=n_samples,
         random_seed=random_seed,
         parallel_workers=parallel_workers,
@@ -552,6 +891,7 @@ def run_asm2d_tsn_simulation(
 def sweep_asm2d_tsn_operating_space(
     *,
     model_params: Mapping[str, Any] | None = None,
+    repo_root: str | Path | None = None,
     n_samples: int = 512,
     random_seed: int | None = None,
     show_progress: bool = False,
@@ -562,11 +902,14 @@ def sweep_asm2d_tsn_operating_space(
     if n_samples < 1:
         raise ValueError("n_samples must be at least 1.")
 
-    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params()
-    runtime = _validate_runtime_structure(params)
+    params = dict(model_params) if model_params is not None else load_asm2d_tsn_simulation_params(repo_root)
+    matrix_bundle = get_asm2d_tsn_matrices(params, repo_root=repo_root)
+    runtime = _validate_runtime_structure(
+        params,
+        measured_output_columns=list(matrix_bundle["measured_output_columns"]),
+    )
     configured_hyperparameters = params["hyperparameters"]
     seed = int(random_seed if random_seed is not None else configured_hyperparameters["seed"])
-    matrix_bundle = get_asm2d_tsn_matrices(params)
     state_columns = list(runtime["state_columns"])
     operational_columns = list(runtime["operational_columns"])
     state_index = dict(matrix_bundle["state_index"])
@@ -643,7 +986,7 @@ def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]
     dissolved_state_columns = list(workbook_config["dissolved_state_columns"])
     particulate_state_columns = list(workbook_config["particulate_state_columns"])
     state_columns = list(workbook_config["state_columns"])
-    composite_variables = list(workbook_config["composite_variables"])
+    legacy_composite_variables = workbook_config.get("composite_variables")
     processes = list(workbook_config["processes"])
     parameter_rows = list(workbook_config["parameters"])
     state_units = dict(workbook_config["state_units"])
@@ -651,7 +994,12 @@ def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]
     _validate_unique_names(dissolved_state_columns, "dissolved_state_columns")
     _validate_unique_names(particulate_state_columns, "particulate_state_columns")
     _validate_unique_names(state_columns, "state_columns")
-    _validate_unique_names(composite_variables, "composite_variables")
+    _resolve_workbook_composite_variables(
+        state_columns,
+        legacy_composite_variables=(
+            None if legacy_composite_variables is None else list(legacy_composite_variables)
+        ),
+    )
 
     if state_columns != dissolved_state_columns + particulate_state_columns:
         raise ValueError("asm2d_tsn_simulation state_columns must concatenate dissolved and particulate state columns.")
@@ -680,12 +1028,19 @@ def _validate_workbook_config(model_params: Mapping[str, Any]) -> dict[str, Any]
     return workbook_config
 
 
-def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_runtime_structure(
+    model_params: Mapping[str, Any],
+    *,
+    measured_output_columns: list[str] | None,
+) -> dict[str, Any]:
     workbook_config = _validate_workbook_config(model_params)
     solver = _validate_solver_config(model_params)
     state_columns = list(workbook_config["state_columns"])
-    composite_variables = list(workbook_config["composite_variables"])
-    measured_output_columns = list(model_params["measured_output_columns"])
+    if measured_output_columns is None:
+        raise ValueError(
+            "asm2d_tsn_simulation requires measured_output_columns derived from workbook composition_matrix."
+        )
+    measured_output_columns = [str(name) for name in measured_output_columns]
     process_names = [str(process["name"]) for process in workbook_config["processes"]]
     process_types = list(model_params["process_types"])
     operational_columns = list(model_params["operational_columns"])
@@ -695,12 +1050,6 @@ def _validate_runtime_structure(model_params: Mapping[str, Any]) -> dict[str, An
     _validate_unique_names(measured_output_columns, "measured_output_columns")
     _validate_unique_names(process_names, "process names")
     _validate_unique_names(operational_columns, "operational_columns")
-
-    if measured_output_columns != composite_variables:
-        raise ValueError(
-            "asm2d_tsn_simulation measured_output_columns must match workbook composite_variables for the "
-            "measured-output composition contract."
-        )
 
     if len(process_types) != len(process_names):
         raise ValueError("asm2d_tsn_simulation process_types must align with the configured process list.")
@@ -1228,7 +1577,15 @@ def simulate_asm2d_tsn_steady_state(
     """Solve a single mechanistic steady-state ASM2D-TSN operating point."""
 
     matrix_bundle = matrix_bundle if matrix_bundle is not None else get_asm2d_tsn_matrices(model_params)
-    runtime = _validate_runtime_structure(model_params)
+    resolved_measured_output_columns = (
+        list(matrix_bundle["measured_output_columns"])
+        if "measured_output_columns" in matrix_bundle
+        else None
+    )
+    runtime = _validate_runtime_structure(
+        model_params,
+        measured_output_columns=resolved_measured_output_columns,
+    )
     parameter_values = _build_parameter_value_map(runtime["workbook_config"]["parameters"])
     state_columns = list(runtime["state_columns"])
     state_index = dict(matrix_bundle["state_index"])
@@ -1586,7 +1943,13 @@ def _write_composition_sheet(
     dissolved_state_columns = list(workbook_config["dissolved_state_columns"])
     particulate_state_columns = list(workbook_config["particulate_state_columns"])
     state_columns = list(workbook_config["state_columns"])
-    composite_variables = list(workbook_config["composite_variables"])
+    legacy_composite_variables = workbook_config.get("composite_variables")
+    composite_variables = _resolve_workbook_composite_variables(
+        state_columns,
+        legacy_composite_variables=(
+            None if legacy_composite_variables is None else list(legacy_composite_variables)
+        ),
+    )
     state_units = dict(workbook_config["state_units"])
     headers = ["state_group", "state_variable", "unit"] + composite_variables
     _write_header_row(worksheet, headers)
@@ -1604,6 +1967,37 @@ def _write_composition_sheet(
                 column=composite_column_index[composite_name],
                 value=_format_formula(expression, parameter_refs),
             )
+
+
+def _resolve_workbook_composite_variables(
+    state_columns: list[str],
+    *,
+    legacy_composite_variables: list[str] | None,
+) -> list[str]:
+    composite_variables: list[str] = []
+    for state_name in state_columns:
+        for composite_name in COMPOSITION_FORMULAS.get(state_name, {}):
+            normalized_name = str(composite_name)
+            if normalized_name not in composite_variables:
+                composite_variables.append(normalized_name)
+
+    if not composite_variables:
+        raise ValueError(
+            "asm2d_tsn_simulation composition formulas do not define any composite output columns."
+        )
+
+    if legacy_composite_variables is not None:
+        normalized_legacy = [str(name) for name in legacy_composite_variables]
+        _validate_unique_names(normalized_legacy, "composite_variables")
+        missing_formulas = sorted(name for name in normalized_legacy if name not in composite_variables)
+        if missing_formulas:
+            missing_display = ", ".join(missing_formulas)
+            raise ValueError(
+                "asm2d_tsn_simulation legacy workbook composite_variables contains outputs without "
+                f"composition formulas: {missing_display}"
+            )
+
+    return composite_variables
 
 
 def _write_header_row(worksheet, headers: list[str]) -> None:
@@ -1677,7 +2071,9 @@ __all__ = [
     "create_asm2d_tsn_workbook",
     "generate_asm2d_tsn_dataset",
     "get_asm2d_tsn_matrices",
+    "load_asm2d_tsn_workbook_composition",
     "load_asm2d_tsn_simulation_params",
+    "resolve_asm2d_tsn_composition_cache_paths",
     "resolve_asm2d_tsn_simulation_artifact_paths",
     "resolve_asm2d_tsn_workbook_path",
     "run_asm2d_tsn_simulation",

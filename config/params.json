@@ -9,17 +9,10 @@
       "n_samples": 10000,
       "seed": 42,
       "max_sample_attempts": 25,
-      "parallel_workers": 12,
+      "parallel_workers": 20,
       "parallel_chunk_size": 64,
       "max_process_rate": 250.0
     },
-    "measured_output_columns": [
-      "COD",
-      "TN",
-      "TKN",
-      "TP",
-      "TSS"
-    ],
     "operational_columns": [
       "HRT",
       "Aeration"
@@ -230,13 +223,6 @@
         "X_NOB",
         "X_MeP",
         "X_MeOH"
-      ],
-      "composite_variables": [
-        "COD",
-        "TN",
-        "TKN",
-        "TP",
-        "TSS"
       ],
       "state_units": {
         "S_O": "g O2/m^3",

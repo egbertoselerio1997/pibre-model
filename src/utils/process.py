@@ -86,9 +86,15 @@ def compute_measured_composites(
 
 	prefixed_state_columns = [f"{state_prefix}{state_name}" for state_name in state_columns]
 	_ensure_columns_exist(dataset, prefixed_state_columns)
+	composition_array = np.asarray(composition_matrix, dtype=float)
+	expected_shape = (len(measured_output_columns), len(state_columns))
+	if composition_array.shape != expected_shape:
+		raise ValueError(
+			"composition_matrix shape must match measured_output_columns x state_columns for measured composite mapping."
+		)
 
 	state_values = dataset.loc[:, prefixed_state_columns].to_numpy(dtype=float)
-	composite_values = state_values @ np.asarray(composition_matrix, dtype=float).T
+	composite_values = state_values @ composition_array.T
 	output_columns = [f"{output_prefix}{column_name}" for column_name in measured_output_columns]
 
 	return pd.DataFrame(composite_values, index=dataset.index, columns=output_columns)

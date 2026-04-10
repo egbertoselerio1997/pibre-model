@@ -11,6 +11,11 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
+from src.models.simulation.asm2d_tsn_simulation import (
+	get_asm2d_tsn_matrices,
+	load_asm2d_tsn_simulation_params,
+)
+
 from .io import load_dataframe_csv, save_dataframe_csv, select_latest_timestamped_file_bundle
 from .process import DatasetSplit, SupervisedDatasetFrames, make_train_test_split
 from .simulation import (
@@ -771,6 +776,12 @@ def _resolve_response_surface_metadata(
 	simulation_params = dict(params["asm2d_tsn_simulation"])
 	workbook_params = dict(simulation_params.get("workbook", {}))
 	resolved_metadata = dict(metadata or {})
+	matrix_bundle = None
+	if "measured_output_columns" not in resolved_metadata:
+		matrix_bundle = get_asm2d_tsn_matrices(
+			load_asm2d_tsn_simulation_params(repo_root),
+			repo_root=repo_root,
+		)
 
 	operational_columns = list(
 		resolved_metadata.get("operational_columns", simulation_params.get("operational_columns", []))
@@ -782,7 +793,10 @@ def _resolve_response_surface_metadata(
 		)
 	)
 	measured_output_columns = list(
-		resolved_metadata.get("measured_output_columns", simulation_params.get("measured_output_columns", []))
+		resolved_metadata.get(
+			"measured_output_columns",
+			[] if matrix_bundle is None else list(matrix_bundle.get("measured_output_columns", [])),
+		)
 	)
 
 	if "HRT" not in operational_columns or "Aeration" not in operational_columns:

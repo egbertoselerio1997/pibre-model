@@ -13,9 +13,10 @@ from openpyxl import load_workbook
 from src.models.simulation.asm2d_tsn_simulation import (
     _build_influent_state_sample,
     _generate_lhs_candidate_pool,
+    create_asm2d_tsn_workbook,
     generate_asm2d_tsn_dataset,
     get_asm2d_tsn_matrices,
-    create_asm2d_tsn_workbook,
+    load_asm2d_tsn_workbook_composition,
     load_asm2d_tsn_simulation_params,
     resolve_asm2d_tsn_simulation_artifact_paths,
     resolve_asm2d_tsn_workbook_path,
@@ -54,6 +55,14 @@ def _build_midpoint_influent_state(model_params: dict[str, object]) -> np.ndarra
     return _build_influent_state_sample(midpoint_sample)
 
 
+def _build_temp_cache_paths_config(tmp_dir: Path) -> dict[str, str]:
+    cache_root = (tmp_dir / "cache").as_posix()
+    return {
+        "asm2d_tsn_composition_cache_pattern": f"{cache_root}/composition_matrix_cache_{{workbook_hash}}.pkl",
+        "asm2d_tsn_composition_cache_metadata_pattern": f"{cache_root}/composition_matrix_cache_{{workbook_hash}}.json",
+    }
+
+
 class Asm2dTsnWorkbookTests(unittest.TestCase):
     def test_resolve_workbook_path_uses_configured_location(self) -> None:
         workbook_path = resolve_asm2d_tsn_workbook_path()
@@ -63,6 +72,10 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
     def test_workbook_config_contains_expected_dimensions(self) -> None:
         params = load_asm2d_tsn_simulation_params()
         workbook_config = params["workbook"]
+        workbook_composition = load_asm2d_tsn_workbook_composition(
+            model_params=params,
+            use_cache=False,
+        )
 
         self.assertEqual(
             workbook_config["sheets"],
@@ -70,7 +83,8 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
         )
         self.assertEqual(len(workbook_config["processes"]), 28)
         self.assertEqual(len(workbook_config["state_columns"]), 20)
-        self.assertEqual(len(workbook_config["composite_variables"]), 5)
+        self.assertEqual(workbook_composition["state_columns"], workbook_config["state_columns"])
+        self.assertGreaterEqual(len(workbook_composition["measured_output_columns"]), 1)
         self.assertNotIn("X_TSS", workbook_config["state_columns"])
 
     def test_create_workbook_writes_required_sheets(self) -> None:
@@ -118,6 +132,100 @@ class Asm2dTsnWorkbookTests(unittest.TestCase):
         self.assertEqual(worksheet.cell(state_row_index["X_MeOH"], header_index["TSS"]).value, "=1")
         self.assertEqual(worksheet.cell(state_row_index["X_MeP"], header_index["TSS"]).value, "=1")
 
+    def test_workbook_composition_loader_tracks_added_composite_columns(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_root = Path(tmp_dir)
+            workbook_path = create_asm2d_tsn_workbook(temp_root / "asm2d_tsn.xlsx")
+            workbook = load_workbook(workbook_path)
+            worksheet = workbook["composition_matrix"]
+            extra_column = worksheet.max_column + 1
+            worksheet.cell(row=1, column=extra_column, value="TOC")
+            for row_number in range(2, worksheet.max_row + 1):
+                state_name = worksheet.cell(row=row_number, column=2).value
+                if state_name is None:
+                    continue
+                worksheet.cell(row=row_number, column=extra_column, value="=0")
+            workbook.save(workbook_path)
+            workbook.close()
+
+            composition_bundle = load_asm2d_tsn_workbook_composition(
+                workbook_path=workbook_path,
+                model_params=params,
+                paths_config=_build_temp_cache_paths_config(temp_root),
+                use_cache=False,
+            )
+
+        self.assertIn("TOC", composition_bundle["measured_output_columns"])
+        self.assertEqual(
+            composition_bundle["composition_matrix"].shape,
+            (len(composition_bundle["measured_output_columns"]), len(composition_bundle["state_columns"])),
+        )
+
+    def test_workbook_composition_loader_tracks_removed_composite_columns(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_root = Path(tmp_dir)
+            workbook_path = create_asm2d_tsn_workbook(temp_root / "asm2d_tsn.xlsx")
+            workbook = load_workbook(workbook_path)
+            worksheet = workbook["composition_matrix"]
+            header_index = _column_index_by_header(worksheet)
+            worksheet.delete_cols(header_index["TKN"])
+            workbook.save(workbook_path)
+            workbook.close()
+
+            composition_bundle = load_asm2d_tsn_workbook_composition(
+                workbook_path=workbook_path,
+                model_params=params,
+                paths_config=_build_temp_cache_paths_config(temp_root),
+                use_cache=False,
+            )
+
+        self.assertNotIn("TKN", composition_bundle["measured_output_columns"])
+
+    def test_workbook_composition_cache_invalidates_after_workbook_change(self) -> None:
+        params = load_asm2d_tsn_simulation_params()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_root = Path(tmp_dir)
+            workbook_path = create_asm2d_tsn_workbook(temp_root / "asm2d_tsn.xlsx")
+            cache_config = _build_temp_cache_paths_config(temp_root)
+
+            first_bundle = load_asm2d_tsn_workbook_composition(
+                workbook_path=workbook_path,
+                model_params=params,
+                paths_config=cache_config,
+                use_cache=True,
+            )
+            second_bundle = load_asm2d_tsn_workbook_composition(
+                workbook_path=workbook_path,
+                model_params=params,
+                paths_config=cache_config,
+                use_cache=True,
+            )
+
+            workbook = load_workbook(workbook_path)
+            worksheet = workbook["composition_matrix"]
+            header_index = _column_index_by_header(worksheet)
+            state_row_index = _row_index_by_value(worksheet, 2)
+            worksheet.cell(row=state_row_index["X_MeP"], column=header_index["TP"], value="=2")
+            workbook.save(workbook_path)
+            workbook.close()
+
+            third_bundle = load_asm2d_tsn_workbook_composition(
+                workbook_path=workbook_path,
+                model_params=params,
+                paths_config=cache_config,
+                use_cache=True,
+            )
+
+        self.assertEqual(first_bundle["cache_source"], "workbook")
+        self.assertEqual(second_bundle["cache_source"], "cache")
+        self.assertEqual(third_bundle["cache_source"], "workbook")
+        self.assertNotEqual(first_bundle["workbook_sha256"], third_bundle["workbook_sha256"])
+
 
 class Asm2dTsnSimulationTests(unittest.TestCase):
     def test_resolve_simulation_artifact_paths_use_requested_folder(self) -> None:
@@ -132,10 +240,13 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
     def test_numeric_matrices_have_expected_shapes(self) -> None:
         params = load_asm2d_tsn_simulation_params()
         matrix_bundle = get_asm2d_tsn_matrices(params)
+        process_count = len(params["workbook"]["processes"])
+        state_count = len(params["workbook"]["state_columns"])
+        measured_output_count = len(matrix_bundle["measured_output_columns"])
 
-        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 20))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 20))
-        self.assertEqual(matrix_bundle["measured_output_columns"], params["measured_output_columns"])
+        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (process_count, state_count))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (measured_output_count, state_count))
+        self.assertGreaterEqual(measured_output_count, 1)
 
     def test_generate_dataset_reports_fraction_and_composite_columns(self) -> None:
         params = load_asm2d_tsn_simulation_params()
@@ -146,7 +257,7 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
             parallel_workers=1,
         )
         state_columns = list(params["workbook"]["state_columns"])
-        measured_output_columns = list(params["measured_output_columns"])
+        measured_output_columns = list(metadata["measured_output_columns"])
         expected_influent_fraction = [f"In_{name}" for name in state_columns]
         expected_influent_composite = [f"In_{name}" for name in measured_output_columns]
         expected_effluent_fraction = [f"Out_{name}" for name in state_columns]
@@ -165,8 +276,12 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         self.assertTrue(all(column_name in dataset.columns for column_name in expected_influent_composite))
         self.assertTrue(all(column_name in dataset.columns for column_name in expected_effluent_fraction))
         self.assertFalse(any(column_name.startswith("Out_S_") or column_name.startswith("Out_X_") for column_name in expected_dependent))
-        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (28, 20))
-        self.assertEqual(matrix_bundle["composition_matrix"].shape, (5, 20))
+        self.assertEqual(matrix_bundle["petersen_matrix"].shape, (len(params["workbook"]["processes"]), len(state_columns)))
+        self.assertEqual(matrix_bundle["composition_matrix"].shape, (len(measured_output_columns), len(state_columns)))
+        self.assertEqual(
+            metadata["composition_source"]["workbook_sha256"],
+            matrix_bundle["composition_workbook_sha256"],
+        )
 
     def test_single_operating_point_solves_to_small_residual(self) -> None:
         params = load_asm2d_tsn_simulation_params()
@@ -273,7 +388,10 @@ class Asm2dTsnSimulationTests(unittest.TestCase):
         self.assertIn("artifact_paths", result)
         self.assertEqual(result["artifact_paths"]["dataset_csv"], None)
         self.assertEqual(result["artifact_paths"]["metadata_json"], None)
-        self.assertEqual(result["metadata"]["measured_output_columns"], ["COD", "TN", "TKN", "TP", "TSS"])
+        self.assertEqual(
+            result["metadata"]["measured_output_columns"],
+            result["matrix_bundle"]["measured_output_columns"],
+        )
 
     def test_run_simulation_can_return_in_memory_debug_payloads(self) -> None:
         params = load_asm2d_tsn_simulation_params()

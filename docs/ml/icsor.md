@@ -105,6 +105,7 @@ The persisted model bundle stores the data needed to reproduce predictions:
 
 - $A$, $P_{inv}$, $P_{adm}$, $G$, and $H$
 - the composition matrix and design schema
+- composition provenance metadata (for example workbook SHA-256) tied to the training matrix source
 - the raw component-space parameter matrix
 - the identifiable affine measured-space parameter matrix
 - the affine-core coefficient blocks exposed through the legacy `effective_*` fields
@@ -140,12 +141,13 @@ Prediction proceeds as follows:
 2. Rebuild or align the feature frame to the saved operational and influent schema.
 3. Rebuild the second-order design matrix.
 4. Compute the raw component prediction $c_{raw}$.
-5. If $c_{raw}$ already satisfies the invariant equalities and non-negativity, keep it.
-6. Otherwise compute the affine reference state $c_{aff}$.
-7. If $c_{aff}$ is non-negative, keep it.
-8. Otherwise solve the reduced non-negative quadratic program with OSQP.
-9. Collapse the affine and final component states into measured space.
-10. If inference metadata are present, compute affine-core prediction uncertainty.
+5. When predicting from raw simulation datasets, validate metadata composition provenance against the saved model-bundle provenance.
+6. If $c_{raw}$ already satisfies the invariant equalities and non-negativity, keep it.
+7. Otherwise compute the affine reference state $c_{aff}$.
+8. If $c_{aff}$ is non-negative, keep it.
+9. Otherwise solve the reduced non-negative quadratic program with OSQP.
+10. Collapse the affine and final component states into measured space.
+11. If inference metadata are present, compute affine-core prediction uncertainty.
 
 `predict_icsor_model()` returns both the affine reference prediction and the final deployed prediction:
 
