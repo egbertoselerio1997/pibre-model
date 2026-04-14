@@ -44,6 +44,8 @@ from .random_forest_regressor import (
 	run_random_forest_regressor_pipeline,
 )
 from .svr_regressor import load_svr_regressor_params, predict_svr_regressor_model, run_svr_regressor_pipeline
+from .tabicl_regressor import load_tabicl_regressor_params, predict_tabicl_regressor_model, run_tabicl_regressor_pipeline
+from .tabpfn_regressor import load_tabpfn_regressor_params, predict_tabpfn_regressor_model, run_tabpfn_regressor_pipeline
 from .xgboost_regressor import (
 	load_xgboost_regressor_params,
 	predict_xgboost_regressor_model,
@@ -62,6 +64,8 @@ __all__ = [
 	"load_pls_regressor_params",
 	"load_random_forest_regressor_params",
 	"load_svr_regressor_params",
+	"load_tabicl_regressor_params",
+	"load_tabpfn_regressor_params",
 	"load_xgboost_regressor_params",
 	"predict_ann_deep_regressor_model",
 	"predict_ann_medium_regressor_model",
@@ -74,6 +78,8 @@ __all__ = [
 	"predict_pls_regressor_model",
 	"predict_random_forest_regressor_model",
 	"predict_svr_regressor_model",
+	"predict_tabicl_regressor_model",
+	"predict_tabpfn_regressor_model",
 	"predict_xgboost_regressor_model",
 	"run_ann_deep_regressor_pipeline",
 	"run_ann_medium_regressor_pipeline",
@@ -86,6 +92,8 @@ __all__ = [
 	"run_pls_regressor_pipeline",
 	"run_random_forest_regressor_pipeline",
 	"run_svr_regressor_pipeline",
+	"run_tabicl_regressor_pipeline",
+	"run_tabpfn_regressor_pipeline",
 	"run_xgboost_regressor_pipeline",
 	"train_icsor_model",
 ]

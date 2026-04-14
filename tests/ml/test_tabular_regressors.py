@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import pickle
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 from scipy.linalg import null_space
+from sklearn.base import BaseEstimator, RegressorMixin
 
 from src.models.ml.ann_deep_regressor import (
     load_ann_deep_regressor_params,
@@ -49,6 +51,8 @@ from src.models.ml.random_forest_regressor import (
     run_random_forest_regressor_pipeline,
 )
 from src.models.ml.svr_regressor import load_svr_regressor_params, predict_svr_regressor_model, run_svr_regressor_pipeline
+from src.models.ml.tabicl_regressor import load_tabicl_regressor_params, predict_tabicl_regressor_model, run_tabicl_regressor_pipeline
+from src.models.ml.tabpfn_regressor import load_tabpfn_regressor_params, predict_tabpfn_regressor_model, run_tabpfn_regressor_pipeline
 from src.models.ml.xgboost_regressor import (
     load_xgboost_regressor_params,
     predict_xgboost_regressor_model,
@@ -132,6 +136,116 @@ def _build_tiny_params(
             }
 
     return params
+
+
+class _FakeTabPFNRegressor(BaseEstimator, RegressorMixin):
+    def __init__(
+        self,
+        *,
+        model_path: str = "auto",
+        device: str = "cpu",
+        n_estimators: int = 1,
+        softmax_temperature: float = 0.9,
+        average_before_softmax: bool = False,
+        fit_mode: str = "fit_preprocessors",
+        memory_saving_mode: str = "auto",
+        random_state: int = 42,
+        n_preprocessing_jobs: int = 1,
+        ignore_pretraining_limits: bool = False,
+    ) -> None:
+        self.model_path = model_path
+        self.device = device
+        self.n_estimators = n_estimators
+        self.softmax_temperature = softmax_temperature
+        self.average_before_softmax = average_before_softmax
+        self.fit_mode = fit_mode
+        self.memory_saving_mode = memory_saving_mode
+        self.random_state = random_state
+        self.n_preprocessing_jobs = n_preprocessing_jobs
+        self.ignore_pretraining_limits = ignore_pretraining_limits
+
+    @classmethod
+    def create_default_for_version(cls, version, **kwargs):
+        estimator = cls(**kwargs)
+        estimator.model_version_ = version
+        return estimator
+
+    def fit(self, X, y):
+        target_array = np.asarray(y, dtype=float).reshape(-1)
+        self.bias_ = float(target_array.mean()) + 0.001 * float(self.n_estimators)
+        return self
+
+    def predict(self, X):
+        feature_array = np.asarray(X, dtype=float)
+        return np.full(feature_array.shape[0], self.bias_, dtype=float)
+
+    def save_fit_state(self, path):
+        payload = {
+            "params": self.get_params(deep=False),
+            "bias": float(self.bias_),
+        }
+        with Path(path).open("wb") as handle:
+            pickle.dump(payload, handle)
+
+    @classmethod
+    def load_from_fit_state(cls, path, *, device="cpu"):
+        with Path(path).open("rb") as handle:
+            payload = pickle.load(handle)
+        estimator = cls(**payload["params"])
+        estimator.bias_ = float(payload["bias"])
+        estimator.loaded_device_ = device
+        return estimator
+
+
+class _FakeTabICLRegressor(BaseEstimator, RegressorMixin):
+    def __init__(
+        self,
+        n_estimators: int = 2,
+        norm_methods: str | None = "power",
+        feat_shuffle_method: str = "latin",
+        outlier_threshold: float = 4.0,
+        batch_size: int | None = 4,
+        kv_cache: bool | str = False,
+        model_path: str | None = None,
+        allow_auto_download: bool = True,
+        checkpoint_version: str = "tabicl-regressor-v2-20260212.ckpt",
+        device: str | None = "cpu",
+        use_amp: bool | str = "auto",
+        use_fa3: bool | str = "auto",
+        offload_mode: bool | str = "auto",
+        disk_offload_dir: str | None = None,
+        random_state: int | None = 42,
+        n_jobs: int | None = None,
+        verbose: bool = False,
+        inference_config=None,
+    ) -> None:
+        self.n_estimators = n_estimators
+        self.norm_methods = norm_methods
+        self.feat_shuffle_method = feat_shuffle_method
+        self.outlier_threshold = outlier_threshold
+        self.batch_size = batch_size
+        self.kv_cache = kv_cache
+        self.model_path = model_path
+        self.allow_auto_download = allow_auto_download
+        self.checkpoint_version = checkpoint_version
+        self.device = device
+        self.use_amp = use_amp
+        self.use_fa3 = use_fa3
+        self.offload_mode = offload_mode
+        self.disk_offload_dir = disk_offload_dir
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.verbose = verbose
+        self.inference_config = inference_config
+
+    def fit(self, X, y):
+        target_array = np.asarray(y, dtype=float).reshape(-1)
+        self.bias_ = float(target_array.mean()) + 0.002 * float(self.n_estimators)
+        return self
+
+    def predict(self, X):
+        feature_array = np.asarray(X, dtype=float)
+        return np.full(feature_array.shape[0], self.bias_, dtype=float)
 
 
 class TabularRegressorTests(unittest.TestCase):
@@ -304,6 +418,81 @@ class TabularRegressorTests(unittest.TestCase):
                         metadata=self.metadata,
                         composition_matrix=self.composition_matrix,
                     )
+
+                expected_output_dim = len(self.metadata["measured_output_columns"])
+                self.assertEqual(prediction_result["raw_predictions"].shape, (6, expected_output_dim))
+                self.assertEqual(bool(prediction_result["projection_active"]), self.projection_active)
+                if self.projection_active:
+                    self.assertEqual(prediction_result["projected_predictions"].shape, (6, expected_output_dim))
+                    summary = summarize_mass_balance_residuals(
+                        prediction_result["projected_predictions"].to_numpy(dtype=float),
+                        prediction_result["constraint_reference"].to_numpy(dtype=float),
+                        self.a_matrix,
+                    )
+                    self.assertLess(summary["constraint_max_abs"], 1e-7)
+                else:
+                    self.assertNotIn("projected_predictions", prediction_result)
+
+    def test_foundational_regressors_pipeline_and_roundtrip_with_mocked_backends(self) -> None:
+        benchmark_dataset = build_fractional_input_measured_output_dataset(
+            self.dataset,
+            self.metadata,
+            self.composition_matrix,
+        )
+        dataset_splits = make_train_test_split(
+            benchmark_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+        foundation_specs = [
+            {
+                "name": "tabpfn_regressor",
+                "load_params": load_tabpfn_regressor_params,
+                "run_pipeline": run_tabpfn_regressor_pipeline,
+                "predict_model": predict_tabpfn_regressor_model,
+                "iteration_key": "n_estimators",
+                "patch_target": "src.models.ml.tabpfn_regressor._get_tabpfn_regressor_class",
+                "fake_backend": _FakeTabPFNRegressor,
+            },
+            {
+                "name": "tabicl_regressor",
+                "load_params": load_tabicl_regressor_params,
+                "run_pipeline": run_tabicl_regressor_pipeline,
+                "predict_model": predict_tabicl_regressor_model,
+                "iteration_key": "n_estimators",
+                "patch_target": "src.models.ml.tabicl_regressor._get_tabicl_regressor_class",
+                "fake_backend": _FakeTabICLRegressor,
+            },
+        ]
+
+        for spec in foundation_specs:
+            with self.subTest(model=spec["name"]):
+                params = _build_tiny_params(spec["load_params"](), iteration_key=spec["iteration_key"])
+                with patch(spec["patch_target"], return_value=spec["fake_backend"]):
+                    result = spec["run_pipeline"](
+                        dataset_splits.train,
+                        dataset_splits.test,
+                        self.a_matrix,
+                        model_params=params,
+                        show_progress=False,
+                        persist_artifacts=False,
+                    )
+
+                    aggregate_metrics = result["test_report"]["aggregate_metrics"]
+                    expected_prediction_types = ["raw", "projected"] if self.projection_active else ["raw"]
+                    self.assertEqual(list(aggregate_metrics["prediction_type"]), expected_prediction_types)
+                    self.assertEqual(result["model_bundle"]["feature_space"], "fractional_input")
+                    self.assertEqual(bool(result["model_bundle"]["projection_active"]), self.projection_active)
+
+                    with tempfile.TemporaryDirectory() as temp_dir_name:
+                        model_path = Path(temp_dir_name) / f"{spec['name']}.pkl"
+                        save_pickle_file(model_path, result["model_bundle"])
+                        prediction_result = spec["predict_model"](
+                            self.dataset.iloc[:6].copy(),
+                            model_path,
+                            metadata=self.metadata,
+                            composition_matrix=self.composition_matrix,
+                        )
 
                 expected_output_dim = len(self.metadata["measured_output_columns"])
                 self.assertEqual(prediction_result["raw_predictions"].shape, (6, expected_output_dim))

@@ -1819,6 +1819,119 @@
       "persist_metrics": true,
       "persist_optuna": true
     }
+  },
+  "tabpfn_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": false,
+      "scale_targets": false
+    },
+    "training_defaults": {
+      "model_version": "v2",
+      "n_estimators": 2,
+      "softmax_temperature": 0.9,
+      "average_before_softmax": false,
+      "fit_mode": "fit_preprocessors",
+      "memory_saving_mode": "auto",
+      "device": "auto",
+      "ignore_pretraining_limits": true,
+      "n_preprocessing_jobs": 1
+    },
+    "search_space": {
+      "n_estimators": {
+        "type": "int",
+        "low": 1,
+        "high": 4,
+        "log": false
+      },
+      "softmax_temperature": {
+        "type": "float",
+        "low": 0.7,
+        "high": 1.2,
+        "log": false
+      },
+      "average_before_softmax": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "tabicl_regressor": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": false,
+      "scale_targets": false
+    },
+    "training_defaults": {
+      "n_estimators": 2,
+      "norm_methods": "power",
+      "feat_shuffle_method": "latin",
+      "outlier_threshold": 4.0,
+      "batch_size": 4,
+      "kv_cache": false,
+      "model_path": null,
+      "allow_auto_download": true,
+      "checkpoint_version": "tabicl-regressor-v2-20260212.ckpt",
+      "device": "auto",
+      "use_amp": "auto",
+      "use_fa3": "auto",
+      "offload_mode": "auto",
+      "disk_offload_dir": null,
+      "random_state": 42,
+      "n_jobs": null,
+      "verbose": false
+    },
+    "search_space": {
+      "n_estimators": {
+        "type": "int",
+        "low": 1,
+        "high": 4,
+        "log": false
+      },
+      "norm_methods": {
+        "type": "categorical",
+        "choices": [
+          "none",
+          "power",
+          "quantile"
+        ]
+      },
+      "feat_shuffle_method": {
+        "type": "categorical",
+        "choices": [
+          "none",
+          "shift",
+          "latin"
+        ]
+      },
+      "outlier_threshold": {
+        "type": "float",
+        "low": 3.0,
+        "high": 6.0,
+        "log": false
+      },
+      "batch_size": {
+        "type": "categorical",
+        "choices": [
+          2,
+          4,
+          8
+        ]
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
   }
 }
 

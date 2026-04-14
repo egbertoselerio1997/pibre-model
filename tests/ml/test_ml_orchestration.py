@@ -104,7 +104,7 @@ def _build_tiny_icsor_params() -> dict[str, object]:
     }
 
 
-CLASSICAL_MODEL_NAMES = [
+TABULAR_MODEL_NAMES = [
     "xgboost_regressor",
     "lightgbm_regressor",
     "catboost_regressor",
@@ -116,6 +116,8 @@ CLASSICAL_MODEL_NAMES = [
     "ann_shallow_regressor",
     "ann_medium_regressor",
     "ann_deep_regressor",
+    "tabpfn_regressor",
+    "tabicl_regressor",
 ]
 
 FIXED_HYPERPARAMETER_KEYS = {
@@ -130,6 +132,8 @@ FIXED_HYPERPARAMETER_KEYS = {
     "ann_shallow_regressor": {"hidden_layer_sizes", "solver", "max_iter", "early_stopping", "random_state", "verbose"},
     "ann_medium_regressor": {"hidden_layer_sizes", "solver", "max_iter", "early_stopping", "random_state", "verbose"},
     "ann_deep_regressor": {"hidden_layer_sizes", "solver", "max_iter", "early_stopping", "random_state", "verbose"},
+    "tabpfn_regressor": {"model_version", "fit_mode", "memory_saving_mode", "device", "ignore_pretraining_limits", "n_preprocessing_jobs"},
+    "tabicl_regressor": {"kv_cache", "model_path", "allow_auto_download", "checkpoint_version", "device", "use_amp", "use_fa3", "offload_mode", "disk_offload_dir", "random_state", "n_jobs", "verbose"},
 }
 
 
@@ -205,7 +209,7 @@ class MlOrchestrationTests(unittest.TestCase):
     def test_classical_search_space_covers_non_fixed_training_defaults(self) -> None:
         params = load_params_config()
 
-        for model_name in CLASSICAL_MODEL_NAMES:
+        for model_name in TABULAR_MODEL_NAMES:
             with self.subTest(model=model_name):
                 model_params = params[model_name]
                 training_keys = set(model_params["training_defaults"])
