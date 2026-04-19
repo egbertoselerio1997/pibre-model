@@ -57,6 +57,7 @@ Important keys include:
 - `max_outer_iterations`, `n_restarts`
 - `objective_tolerance`, `parameter_tolerance`, `conditioning_max`
 - `osqp_eps_abs`, `osqp_eps_rel`, `osqp_max_iter`, `osqp_polish`, `osqp_verbose`
+- `enable_training_warm_start`, `enable_gamma_warm_start`, `enable_c_hat_warm_start`, `warm_start_clip_tolerance`
 - `nonnegativity_tolerance`, `constraint_tolerance`
 - `highs_presolve`, `highs_max_iter`, `highs_verbose`, `highs_retry_without_presolve`, `parallel_workers`
 

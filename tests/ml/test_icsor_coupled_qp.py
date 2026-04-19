@@ -13,6 +13,7 @@ from scipy.linalg import null_space
 from src.models.ml.icsor_coupled_qp import (
     _resolve_coupled_qp_settings,
     _solve_chat_update,
+    _solve_gamma_update,
     load_icsor_coupled_qp_params,
     predict_icsor_coupled_qp_model,
     run_icsor_coupled_qp_pipeline,
@@ -288,6 +289,76 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
             float(np.min(fitted_predictions)),
             -float(settings["nonnegativity_tolerance"]) - 1e-8,
         )
+
+    def test_gamma_update_warm_start_tracks_usage_counts(self) -> None:
+        fitted_predictions = np.array(
+            [
+                [0.8, 0.1, 0.1],
+                [0.3, 0.6, 0.1],
+                [0.4, 0.4, 0.2],
+                [0.2, 0.2, 0.6],
+            ],
+            dtype=float,
+        )
+        driver_matrix = np.zeros_like(fitted_predictions)
+        initial_gamma = np.zeros((fitted_predictions.shape[1], fitted_predictions.shape[1]), dtype=float)
+        settings = _resolve_coupled_qp_settings(
+            {
+                "osqp_polish": False,
+                "enable_training_warm_start": True,
+                "enable_gamma_warm_start": True,
+            }
+        )
+
+        gamma_matrix, gamma_metadata = _solve_gamma_update(
+            fitted_predictions,
+            driver_matrix,
+            settings,
+            initial_gamma=initial_gamma,
+        )
+
+        self.assertEqual(int(gamma_metadata["warm_start_used_count"]), fitted_predictions.shape[1])
+        self.assertEqual(int(gamma_metadata["warm_start_skipped_invalid_count"]), 0)
+        self.assertTrue(any("solved" in str(status_name).lower() for status_name in gamma_metadata["status_counts"].keys()))
+        np.testing.assert_allclose(np.diag(gamma_matrix), np.zeros(gamma_matrix.shape[0]), atol=1e-10)
+
+    def test_chat_update_warm_start_tracks_active_row_usage(self) -> None:
+        target_matrix = np.array(
+            [
+                [0.8, 0.4],
+                [-1.2, 0.2],
+                [0.1, -0.5],
+            ],
+            dtype=float,
+        )
+        influent_matrix = np.zeros_like(target_matrix)
+        invariant_matrix = np.zeros((0, target_matrix.shape[1]), dtype=float)
+        coupled_matrix = np.eye(target_matrix.shape[1], dtype=float)
+        driver_matrix = np.zeros_like(target_matrix)
+        warm_start_matrix = np.zeros_like(target_matrix)
+        settings = _resolve_coupled_qp_settings(
+            {
+                "enable_c_hat_unconstrained_screening": True,
+                "enable_training_warm_start": True,
+                "enable_c_hat_warm_start": True,
+                "osqp_polish": False,
+            }
+        )
+
+        _, chat_metadata = _solve_chat_update(
+            target_matrix,
+            influent_matrix,
+            invariant_matrix,
+            coupled_matrix,
+            driver_matrix,
+            settings,
+            warm_start_matrix=warm_start_matrix,
+        )
+
+        active_qp_count = int(chat_metadata["active_qp_count"])
+        self.assertGreater(active_qp_count, 0)
+        self.assertEqual(int(chat_metadata["warm_start_used_count"]), active_qp_count)
+        self.assertEqual(int(chat_metadata["warm_start_skipped_invalid_count"]), 0)
 
 
 if __name__ == "__main__":

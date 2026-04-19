@@ -59,6 +59,10 @@ DEFAULT_OSQP_VERBOSE = False
 DEFAULT_NONNEGATIVITY_TOLERANCE = 1e-10
 DEFAULT_CONSTRAINT_TOLERANCE = 1e-8
 DEFAULT_ENABLE_C_HAT_UNCONSTRAINED_SCREENING = False
+DEFAULT_ENABLE_TRAINING_WARM_START = False
+DEFAULT_ENABLE_GAMMA_WARM_START = False
+DEFAULT_ENABLE_C_HAT_WARM_START = False
+DEFAULT_WARM_START_CLIP_TOLERANCE = 1e-10
 DEFAULT_HIGHS_PRESOLVE = True
 DEFAULT_HIGHS_MAX_ITER = 10000
 DEFAULT_HIGHS_VERBOSE = False
@@ -92,6 +96,9 @@ def _resolve_training_options(
 
 
 def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> dict[str, Any]:
+    enable_training_warm_start = bool(
+        model_hyperparameters.get("enable_training_warm_start", DEFAULT_ENABLE_TRAINING_WARM_START)
+    )
     settings = {
         "include_bias_term": bool(model_hyperparameters.get("include_bias_term", DEFAULT_INCLUDE_BIAS_TERM)),
         "lambda_inv": float(model_hyperparameters.get("lambda_inv", DEFAULT_LAMBDA_INV)),
@@ -109,6 +116,16 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         "osqp_max_iter": int(model_hyperparameters.get("osqp_max_iter", DEFAULT_OSQP_MAX_ITER)),
         "osqp_polish": bool(model_hyperparameters.get("osqp_polish", DEFAULT_OSQP_POLISH)),
         "osqp_verbose": bool(model_hyperparameters.get("osqp_verbose", DEFAULT_OSQP_VERBOSE)),
+        "enable_training_warm_start": enable_training_warm_start,
+        "enable_gamma_warm_start": bool(
+            model_hyperparameters.get("enable_gamma_warm_start", enable_training_warm_start)
+        ),
+        "enable_c_hat_warm_start": bool(
+            model_hyperparameters.get("enable_c_hat_warm_start", enable_training_warm_start)
+        ),
+        "warm_start_clip_tolerance": float(
+            model_hyperparameters.get("warm_start_clip_tolerance", DEFAULT_WARM_START_CLIP_TOLERANCE)
+        ),
         "enable_c_hat_unconstrained_screening": bool(
             model_hyperparameters.get(
                 "enable_c_hat_unconstrained_screening",
@@ -159,6 +176,8 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         raise ValueError("icsor_coupled_qp osqp_eps_rel must be positive.")
     if settings["osqp_max_iter"] < 1:
         raise ValueError("icsor_coupled_qp osqp_max_iter must be at least 1.")
+    if settings["warm_start_clip_tolerance"] <= 0.0:
+        raise ValueError("icsor_coupled_qp warm_start_clip_tolerance must be positive.")
     if settings["nonnegativity_tolerance"] <= 0.0:
         raise ValueError("icsor_coupled_qp nonnegativity_tolerance must be positive.")
     if settings["constraint_tolerance"] <= 0.0:
@@ -193,6 +212,8 @@ def _make_osqp_solver(
     lower_bounds: np.ndarray,
     upper_bounds: np.ndarray,
     settings: Mapping[str, Any],
+    *,
+    warm_starting_enabled: bool = False,
 ) -> osqp.OSQP:
     solver = osqp.OSQP()
     solver.setup(
@@ -206,7 +227,7 @@ def _make_osqp_solver(
         max_iter=int(settings["osqp_max_iter"]),
         polishing=bool(settings["osqp_polish"]),
         verbose=bool(settings["osqp_verbose"]),
-        warm_starting=False,
+        warm_starting=bool(warm_starting_enabled),
     )
     return solver
 
@@ -238,6 +259,37 @@ def _solve_unconstrained_chat_batch(
             return np.linalg.solve(quadratic_matrix, rhs_matrix).T
         except np.linalg.LinAlgError:
             return (np.linalg.pinv(quadratic_matrix, rcond=1e-10) @ rhs_matrix).T
+
+
+def _sanitize_warm_start_vector(
+    vector: np.ndarray,
+    *,
+    lower_bounds: np.ndarray,
+    upper_bounds: np.ndarray,
+    clip_tolerance: float,
+) -> np.ndarray | None:
+    candidate = np.asarray(vector, dtype=float).reshape(-1)
+    lower = np.asarray(lower_bounds, dtype=float).reshape(-1)
+    upper = np.asarray(upper_bounds, dtype=float).reshape(-1)
+
+    if candidate.shape != lower.shape or candidate.shape != upper.shape:
+        return None
+    if not np.all(np.isfinite(candidate)):
+        return None
+
+    clipped = candidate.copy()
+    near_lower = (clipped < lower) & (clipped >= (lower - clip_tolerance))
+    clipped[near_lower] = lower[near_lower]
+    clipped = np.maximum(clipped, lower)
+
+    finite_upper = np.isfinite(upper)
+    near_upper = finite_upper & (clipped > upper) & (clipped <= (upper + clip_tolerance))
+    clipped[near_upper] = upper[near_upper]
+    clipped[finite_upper] = np.minimum(clipped[finite_upper], upper[finite_upper])
+
+    if not np.all(np.isfinite(clipped)):
+        return None
+    return clipped
 
 
 def _solve_b_update(
@@ -299,6 +351,8 @@ def _solve_gamma_update(
     fitted_predictions: np.ndarray,
     driver_matrix: np.ndarray,
     settings: Mapping[str, Any],
+    *,
+    initial_gamma: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     n_outputs = fitted_predictions.shape[1]
     gamma_abs_bound = float(settings["gamma_abs_bound"])
@@ -312,6 +366,20 @@ def _solve_gamma_update(
     updated_gamma = np.zeros((n_outputs, n_outputs), dtype=float)
     status_values: list[str] = []
     iteration_values: list[int] = []
+    warm_start_used_count = 0
+    warm_start_skipped_invalid_count = 0
+    warm_start_clip_tolerance = float(settings["warm_start_clip_tolerance"])
+
+    enable_gamma_warm_start = bool(settings.get("enable_training_warm_start", False)) and bool(
+        settings.get("enable_gamma_warm_start", False)
+    )
+    initial_gamma_array: np.ndarray | None = None
+    if enable_gamma_warm_start and initial_gamma is not None:
+        candidate_gamma = np.asarray(initial_gamma, dtype=float)
+        if candidate_gamma.shape == (n_outputs, n_outputs):
+            initial_gamma_array = candidate_gamma
+        else:
+            warm_start_skipped_invalid_count = n_outputs
 
     residual_target = fitted_predictions - driver_matrix
     cross_residual = fitted_predictions.T @ residual_target
@@ -328,6 +396,7 @@ def _solve_gamma_update(
         initial_lower_bounds,
         initial_upper_bounds,
         settings,
+        warm_starting_enabled=initial_gamma_array is not None,
     )
 
     for target_index in range(n_outputs):
@@ -342,6 +411,19 @@ def _solve_gamma_update(
             l=np.asarray(lower_bounds, dtype=float),
             u=np.asarray(upper_bounds, dtype=float),
         )
+
+        if initial_gamma_array is not None:
+            warm_start_vector = _sanitize_warm_start_vector(
+                initial_gamma_array[target_index],
+                lower_bounds=lower_bounds,
+                upper_bounds=upper_bounds,
+                clip_tolerance=warm_start_clip_tolerance,
+            )
+            if warm_start_vector is not None:
+                solver.warm_start(x=warm_start_vector)
+                warm_start_used_count += 1
+            else:
+                warm_start_skipped_invalid_count += 1
 
         result = solver.solve()
         status_text = str(result.info.status)
@@ -361,6 +443,8 @@ def _solve_gamma_update(
         "status_counts": pd.Series(status_values).value_counts(dropna=False).to_dict(),
         "mean_iterations": float(np.mean(iteration_values) if iteration_values else 0.0),
         "max_iterations": int(max(iteration_values) if iteration_values else 0),
+        "warm_start_used_count": int(warm_start_used_count),
+        "warm_start_skipped_invalid_count": int(warm_start_skipped_invalid_count),
     }
 
 
@@ -371,6 +455,8 @@ def _solve_chat_update(
     coupled_matrix: np.ndarray,
     driver_matrix: np.ndarray,
     settings: Mapping[str, Any],
+    *,
+    warm_start_matrix: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     lambda_inv = float(settings["lambda_inv"])
     lambda_sys = float(settings["lambda_sys"])
@@ -398,6 +484,20 @@ def _solve_chat_update(
     status_values: list[str] = []
     iteration_values: list[int] = []
     interior_mask = np.zeros(n_samples, dtype=bool)
+    warm_start_used_count = 0
+    warm_start_skipped_invalid_count = 0
+    warm_start_clip_tolerance = float(settings["warm_start_clip_tolerance"])
+
+    enable_c_hat_warm_start = bool(settings.get("enable_training_warm_start", False)) and bool(
+        settings.get("enable_c_hat_warm_start", False)
+    )
+    warm_start_array: np.ndarray | None = None
+    if enable_c_hat_warm_start and warm_start_matrix is not None:
+        candidate_warm_start = np.asarray(warm_start_matrix, dtype=float)
+        if candidate_warm_start.shape == (n_samples, n_outputs):
+            warm_start_array = candidate_warm_start
+        else:
+            warm_start_skipped_invalid_count = n_samples
 
     if enable_screening and n_samples > 0:
         unconstrained_predictions = _solve_unconstrained_chat_batch(quadratic_matrix, linear_matrix)
@@ -420,6 +520,7 @@ def _solve_chat_update(
             lower_bounds,
             upper_bounds,
             settings,
+            warm_starting_enabled=warm_start_array is not None,
         )
 
         for sample_index in active_indices:
@@ -427,6 +528,19 @@ def _solve_chat_update(
             solver.update(q=linear_vector)
 
             initial_guess = np.maximum(np.asarray(target_matrix[sample_index], dtype=float), 0.0)
+
+            if warm_start_array is not None:
+                warm_start_vector = _sanitize_warm_start_vector(
+                    warm_start_array[sample_index],
+                    lower_bounds=lower_bounds,
+                    upper_bounds=upper_bounds,
+                    clip_tolerance=warm_start_clip_tolerance,
+                )
+                if warm_start_vector is not None:
+                    solver.warm_start(x=warm_start_vector)
+                    warm_start_used_count += 1
+                else:
+                    warm_start_skipped_invalid_count += 1
 
             result = solver.solve()
             status_text = str(result.info.status)
@@ -449,6 +563,8 @@ def _solve_chat_update(
         "interior_count": interior_count,
         "active_qp_count": active_qp_count,
         "interior_fraction": interior_fraction,
+        "warm_start_used_count": int(warm_start_used_count),
+        "warm_start_skipped_invalid_count": int(warm_start_skipped_invalid_count),
     }
 
 
@@ -532,6 +648,7 @@ def _run_coupled_qp_restart(
             fitted_predictions,
             driver_matrix,
             settings,
+            initial_gamma=gamma_matrix,
         )
         gamma_updated, conditioning_value, shrink_factor = _enforce_gamma_conditioning(
             gamma_candidate,
@@ -546,6 +663,7 @@ def _run_coupled_qp_restart(
             coupled_matrix,
             driver_matrix,
             settings,
+            warm_start_matrix=fitted_predictions,
         )
 
         updated_objective = _compute_training_objective(
