@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This article presents weighted-projection invariant-constrained second-order regression (WP-ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The purpose of WP-ICSOR is to predict measured effluent variables from operating conditions and influent activated-sludge-model (ASM) component concentrations while embedding stoichiometric conservation directly inside the model architecture. The key difficulty is that conservation laws are defined in ASM component space, whereas plant observations are usually reported as composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids. A regressor trained only in measured-output space can fit those aggregates while still implying an impossible redistribution of the underlying ASM components.
+This article presents weighted-projection invariant-constrained second-order regression (WP-ICSOR), a physics-informed surrogate model for steady-state activated-sludge systems. The model accepts operational variables and influent activated-sludge-model (ASM) component fractions, and it predicts effluent ASM component fractions in the same ASM basis. WP-ICSOR is therefore trained and deployed natively in ASM component space. If measured composite variables such as total COD, total nitrogen, total phosphorus, or suspended solids are needed, they are computed afterward by an external composition matrix. The collapse into measured-output space is not part of the model itself.
 
 The formulation has two connected parts. First, the second-order component model predicts the effluent ASM component state directly as
 
@@ -10,39 +10,39 @@ $$
 \hat c = \Pi \phi(u, c_{in}).
 $$
 
-Second, the raw component-space change $\hat c - c_{in}$ is passed through an embedded weighted projection onto the invariant-consistent change space. The projection uses prediction-dependent diagonal weights that make the conservation correction metric sensitive to components whose raw predicted values are near zero. Exact stoichiometric conservation is therefore enforced by construction, while the way the correction is distributed across components is biased by the selected weighting law. The final measured prediction is obtained only after this raw component prediction and embedded weighted projection have both been completed.
+Second, the raw component-space change $\hat c - c_{in}$ is passed through an embedded weighted projection onto the invariant-consistent change space. The projection uses prediction-dependent diagonal weights that make the conservation correction metric sensitive to components whose raw predicted values are near zero. Exact stoichiometric conservation is therefore enforced by construction, while the way the correction is distributed across components is biased by the selected weighting law. If measured composites are needed later, they are obtained only after this raw component prediction and embedded weighted projection have both been completed.
 
-Each forward pass therefore consists of direct second-order component prediction followed by a reduced weighted-projection solve, but the parameter-estimation problem still has no closed-form solution because the deployed map depends on prediction-dependent weights. The coefficients are therefore estimated end to end with Adam and $L_1$ regularization for inherent feature selection. The framework is written for readers in chemical engineering, wastewater process modeling, and machine learning, with the structural guarantee of exact conservation separated explicitly from softer claims about near-boundary behavior.
+Each forward pass therefore consists of direct second-order component prediction followed by a reduced weighted-projection solve, but the parameter-estimation problem still has no closed-form solution because the deployed map depends on prediction-dependent weights. The coefficients are therefore estimated end to end with Adam and $L_1$ regularization for inherent feature selection on component-space targets. The framework is written for readers in chemical engineering, wastewater process modeling, and machine learning, with the structural guarantee of exact conservation separated explicitly from softer claims about near-boundary behavior.
 
 ## 1. Introduction and Modeling Objective
 
 Surrogate models are valuable in wastewater engineering because they replace repeated numerical simulation or repeated plant-wide optimization with a direct input-output map. That speed matters when screening operating scenarios, embedding a reactor model in a larger optimization loop, or performing sensitivity studies over many influent conditions. In this article, each sample is assumed to represent a quasi-steady operating condition: the operating variables, influent composition, and effluent response are treated as effectively time-invariant over the control volume being modeled for the sampling window of interest. The usual difficulty is that a generic data-driven regressor can fit observed effluent data while still violating fundamental conservation structure. In activated-sludge modeling, that failure is not a minor technical detail. It undermines the physical credibility of the surrogate because it can imply component inventories that are inconsistent with the adopted reaction network even when the measured aggregates appear plausible.
 
-The source of the problem is a mismatch between two spaces.
+The source of the problem is a mismatch between the space in which wastewater stoichiometry is defined and the space in which plant variables are often reported.
 
 1. The mechanistic stoichiometric model is written in an ASM component basis, such as soluble substrate, ammonium, nitrate, autotrophic biomass, particulate organics, phosphate, dissolved oxygen, and alkalinity.
-2. The plant or simulator often reports outputs in measured composite variables, such as total COD, total nitrogen, total phosphorus, TSS, or VSS.
+2. Plant or simulator dashboards often report composite variables, such as total COD, total nitrogen, total phosphorus, TSS, or VSS.
 
-These two spaces are related, but they are not the same. Conservation laws are naturally expressed in the ASM component basis because the stoichiometric matrix acts on individual components. Observations, however, are usually available only after those components have been aggregated into measurable composites. A surrogate that learns only in measured-output space may reproduce the observed aggregates while obscuring physically impossible changes in the underlying component inventory.
+Those two spaces are related, but they should not be confused. Conservation laws are naturally expressed in the ASM component basis because the stoichiometric matrix acts on individual components. Composite outputs are downstream aggregates of those components. In the formulation developed here, that downstream aggregation is treated explicitly as an external reporting step rather than as the model target.
 
 WP-ICSOR embeds the physical structure directly in the forward model. The effluent ASM component targets are predicted directly from the shared second-order feature vector, and the predicted component-space change is passed through a weighted projection layer that is active during both coefficient estimation and deployment. The projection preserves stoichiometric invariants exactly because it operates only on admissible changes. Its weighting law does not impose hard inequality constraints; instead, it changes the metric of the conservation correction so that components with small raw predicted values are altered reluctantly during projection.
 
 This article answers one precise question:
 
-> Given a steady-state influent state and a steady-state operating condition, what measured effluent state should be predicted if the underlying effluent ASM component state is governed by a second-order component model, must satisfy the conserved quantities implied by the adopted stoichiometric model, and is corrected in component space by an embedded weighted projection before measurement collapse?
+> Given a steady-state influent ASM component-fraction vector and a steady-state operating condition, what effluent ASM component-fraction vector should be predicted if the underlying effluent ASM component state is governed by a second-order component model, must satisfy the conserved quantities implied by the adopted stoichiometric model, and is corrected in component space by an embedded weighted projection?
 
-The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, predicts the component targets directly, embeds a conservation-preserving weighted projection in the model, and remains trainable with gradient-based optimization. Because the weighted projection is part of the model itself, the final deployed predictor is not a globally affine measured-space map and cannot be estimated by ordinary least squares. The discussion proceeds from physical scope and notation, to the invariant relations, to the direct second-order component model, to the embedded weighted projection, to collapse into measured space, and finally to end-to-end estimation and uncertainty. Throughout, exact guarantees are separated from modeling preferences and implementation choices.
+The theory in this article is restricted to steady-state reactor-block prediction. It does not aim to replace a dynamic activated-sludge simulator. Rather, it provides an analytically structured surrogate that preserves stoichiometric structure, predicts component targets directly, embeds a conservation-preserving weighted projection in the model, and remains trainable with gradient-based optimization. Because the weighted projection is part of the model itself, the final deployed component predictor is not globally affine in the parameters and cannot be estimated by ordinary least squares. The discussion proceeds from physical scope and notation, to the invariant relations, to the direct second-order component model, to the embedded weighted projection, to external reporting collapse, and finally to end-to-end estimation and uncertainty. Throughout, exact guarantees are separated from modeling preferences and implementation choices.
 
 ## 2. Physical Scope, State Spaces, and Notation
 
 ### 2.1 Control volume and modeling scope
 
-We consider a fixed reactor block or fixed process unit represented by quasi-steady samples. The system boundary is the same boundary used to define the influent and effluent state vectors. External sources or sinks that cross that boundary must either be represented explicitly in the adopted stoichiometric model or be excluded from the claim of invariant preservation. This includes transport or removal mechanisms such as bypass streams, gas stripping, chemical dosing, or sludge wastage if they cross the chosen boundary and are not encoded in the stoichiometric description. In addition, the component states entering the surrogate are assumed to be expressed on a common concentration-equivalent basis. If flow scaling, phase partitioning, or residence-time normalization are needed to make $c_{out} - c_{in}$ commensurate with stoichiometric change, that preprocessing is part of the model definition rather than a detail left implicit. The theory therefore applies only after the modeler has fixed the following items:
+We consider a fixed reactor block or fixed process unit represented by quasi-steady samples. The system boundary is the same boundary used to define the influent and effluent state vectors. External sources or sinks that cross that boundary must either be represented explicitly in the adopted stoichiometric model or be excluded from the claim of invariant preservation. This includes transport or removal mechanisms such as bypass streams, gas stripping, chemical dosing, or sludge wastage if they cross the chosen boundary and are not encoded in the stoichiometric description. In addition, the component states entering the surrogate are assumed to be expressed on a common non-negative component-fraction basis. If flow scaling, phase partitioning, or residence-time normalization are needed to make $c_{out} - c_{in}$ commensurate with stoichiometric change, that preprocessing is part of the model definition rather than a detail left implicit. The theory therefore applies only after the modeler has fixed the following items:
 
 1. the reactor or process block being represented,
 2. the ASM component basis used to describe material composition,
 3. the stoichiometric matrix associated with that basis, and
-4. the measurement map used to aggregate component concentrations into observed composite variables.
+4. the composition matrix used later for optional external reporting in measured-output space.
 
 The framework is steady-state in the sense of quasi-steady samples rather than full dynamic trajectories. It does not represent settling dynamics, sludge age dynamics, sensor dynamics, start-up transients, or time-varying trajectories. In plant applications, the samples would typically correspond to stable operating windows or time-averaged periods rather than literal mathematical equilibria. Changing the system boundary changes the admissible stoichiometric change space and therefore changes both the conservation relations and the embedded weighted projection layer.
 
@@ -53,9 +53,9 @@ To make the distinction concrete, suppose the underlying component basis contain
 The surrogate must therefore operate across two linked spaces:
 
 1. ASM component space, where stoichiometry, invariants, direct component prediction, and prediction-dependent weighting are defined.
-2. Measured composite space, where prediction targets are observed and evaluated.
+2. Measured composite space, which is retained only as an external reporting space obtained by applying a fixed composition matrix after prediction.
 
-WP-ICSOR learns and constrains the prediction in component space and only then maps the result to measured space. That order is essential in the formulation. Stoichiometric invariants originate in the component basis, the raw second-order predictor acts on component targets, and the weighted projection layer is defined on component-space changes. A measured-space-only correction would generally be too weak to control the unobserved ASM component inventory.
+WP-ICSOR learns and constrains the prediction in component space and only afterward, if desired, maps the result to measured space. That order is essential in the formulation. Stoichiometric invariants originate in the component basis, the raw second-order predictor acts on component targets, and the weighted projection layer is defined on component-space changes. A measured-space-only training target would generally be too weak to control the unobserved ASM component inventory.
 
 ### 2.3 Notation
 
@@ -64,13 +64,12 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | Symbol | Dimension | Meaning |
 | --- | --- | --- |
 | $u$ | $\mathbb{R}^{M_{op}}$ | Operational input vector, for example hydraulic retention time, aeration intensity, recycle ratio, or other manipulated or design variables |
-| $c_{in}$ | $\mathbb{R}^{F}$ | Influent ASM component concentration vector |
-| $c_{out}$ | $\mathbb{R}^{F}$ | True steady-state effluent ASM component concentration vector |
+| $c_{in}$ | $\mathbb{R}_{+}^{F}$ | Influent ASM component-fraction vector |
+| $c_{out}$ | $\mathbb{R}_{+}^{F}$ | True steady-state effluent ASM component-fraction vector |
 | $\hat c$ | $\mathbb{R}^{F}$ | Raw component prediction obtained directly from the second-order feature map |
-| $c^*$ | $\mathbb{R}^{F}$ | Projected component prediction used for deployment and measurement collapse |
-| $y$ | $\mathbb{R}^{K}$ | Measured effluent composite vector |
-| $y^*$ | $\mathbb{R}^{K}$ | Final measured output induced by $c^*$ |
-| $I_{comp}$ | $\mathbb{R}^{K \times F}$ | Composition matrix mapping ASM component concentrations to measured composite variables |
+| $c^*$ | $\mathbb{R}^{F}$ | Projected component prediction used for deployment |
+| $y_{ext}$ | $\mathbb{R}^{K}$ | External measured composite vector computed from a component vector |
+| $I_{comp}$ | $\mathbb{R}^{K \times F}$ | Composition matrix mapping ASM component fractions to measured composite variables for external reporting |
 | $\nu$ | $\mathbb{R}^{R \times F}$ | Stoichiometric matrix with $R$ reactions and $F$ ASM components |
 | $\xi$ | $\mathbb{R}^{R}$ | Net reaction progress vector expressed in concentration-equivalent units so that $\nu^T \xi$ has the same units as $c_{out} - c_{in}$ |
 | $A$ | $\mathbb{R}^{q \times F}$ | Full-row-rank matrix whose rows span the invariant space, equivalently $A \nu^T = 0$ |
@@ -86,13 +85,13 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $\beta$ | $\mathbb{R}_{++}$ | Weight-sharpening exponent controlling how aggressively the projection resists the zero boundary |
 | $\vartheta$ | collection | Trainable parameter set, $\vartheta = \{\Pi\}$ |
 
-The measured effluent variables are defined by the linear map
+The external measured variables are defined by the linear map
 
 $$
-y = I_{comp} c_{out}.
+y_{ext} = I_{comp} c.
 $$
 
-This linear composition map is standard in activated-sludge modeling when measured variables are aggregates of ASM components. For example, total COD or total nitrogen is formed by summing the relevant component concentrations with appropriate conversion factors. In the common case of total COD, total nitrogen, total phosphorus, TSS, or VSS built as sums with non-negative conversion factors, the rows of $I_{comp}$ are entrywise non-negative. That sign structure matters because componentwise non-negativity would carry over to measured composites only under that condition, and the present weighting strategy does not by itself guarantee componentwise non-negativity of $c^*$.
+When this map is applied to the true effluent state, it yields the true measured composites. When it is applied to the deployed component prediction $c^*$, it yields the externally reported prediction $y_{ext} = I_{comp} c^*$. This reporting step is outside the model: WP-ICSOR itself predicts only ASM component fractions.
 
 ## 3. Modeling Assumptions
 
@@ -101,17 +100,18 @@ The framework rests on the following assumptions. These are not optional prefere
 1. **Steady-state scope.** Each sample represents a quasi-steady input-output condition, typically a stable operating epoch or time-averaged window. The model is not a dynamic state estimator.
 2. **Fixed component basis.** The ASM component basis and the associated stoichiometric matrix are fixed before regression begins.
 3. **Consistent system boundary.** The same physical boundary is used to define $c_{in}$, $c_{out}$, and the conservation statement. Any external source or sink outside that boundary is outside the present model.
-4. **Common concentration-equivalent basis.** The vectors $c_{in}$ and $c_{out}$ are expressed on a common basis so that $c_{out} - c_{in}$ and $\nu^T \xi$ are dimensionally commensurate.
-5. **Linear composition map.** Measured effluent variables are linear combinations of the underlying ASM component concentrations through a known fixed matrix $I_{comp}$.
-6. **Direct effluent-state parameterization.** The surrogate is parameterized to predict the effluent ASM component state directly rather than the component change alone.
-7. **Second-order surrogate class.** The base predictor is a partitioned second-order polynomial model that includes linear, quadratic, and operation-loading interaction terms.
-8. **Direct component prediction.** The raw effluent ASM component prediction is parameterized directly as $\hat c = \Pi \phi(u, c_{in})$.
-9. **Embedded weighted projection.** Stoichiometric conservation is enforced by projecting the predicted change onto $\operatorname{null}(A)$ inside the model architecture rather than by a separate post-training correction stage.
-10. **Near-zero-sensitive weighting, not hard non-negativity constraints.** Prediction-dependent diagonal weights with exponent $\beta > 1$ make the projection metric highly sensitive to components whose raw predicted values are small. This influences how the conservation correction is distributed across coordinates, but it does not impose the inequality constraint $c^* \ge 0$.
-11. **Influent feasibility.** The influent reference state is assumed non-negative in component space.
-12. **Conditional composite-sign interpretation.** If $c^*$ is componentwise non-negative and the relevant rows of $I_{comp}$ are entrywise non-negative, then the corresponding measured composites are non-negative. The model guarantees the second premise only if the measurement convention satisfies it; it does not guarantee the first premise.
-13. **Optimization-based estimation.** Because the forward model depends nonlinearly on $\Pi$ through a prediction-dependent weighted projection, the coefficients are estimated by gradient-based optimization rather than ordinary least squares.
-14. **Lasso regularization.** $L_1$ penalties are used to encourage sparse second-order coefficients as an inherent feature-selection device.
+4. **Common component-fraction basis.** The vectors $c_{in}$ and $c_{out}$ are expressed on a common basis so that $c_{out} - c_{in}$ and $\nu^T \xi$ are dimensionally commensurate.
+5. **Direct component-space supervision.** The training targets are effluent ASM component fractions, not measured composite outputs.
+6. **External composition map.** The collapse from ASM component fractions to measured composites is an external calculation performed after prediction through a known fixed matrix $I_{comp}$.
+7. **Direct effluent-state parameterization.** The surrogate is parameterized to predict the effluent ASM component state directly rather than the component change alone.
+8. **Second-order surrogate class.** The base predictor is a partitioned second-order polynomial model that includes linear, quadratic, and operation-loading interaction terms.
+9. **Direct component prediction.** The raw effluent ASM component prediction is parameterized directly as $\hat c = \Pi \phi(u, c_{in})$.
+10. **Embedded weighted projection.** Stoichiometric conservation is enforced by projecting the predicted change onto $\operatorname{null}(A)$ inside the model architecture rather than by a separate post-training correction stage.
+11. **Near-zero-sensitive weighting, not hard non-negativity constraints.** Prediction-dependent diagonal weights with exponent $\beta > 1$ make the projection metric highly sensitive to components whose raw predicted values are small. This influences how the conservation correction is distributed across coordinates, but it does not impose the inequality constraint $c^* \ge 0$.
+12. **Influent feasibility.** The influent reference state is assumed non-negative in component space.
+13. **Conditional composite-sign interpretation.** If $c^*$ is componentwise non-negative and the relevant rows of $I_{comp}$ are entrywise non-negative, then the corresponding externally reported composites are non-negative. The model guarantees the second premise only if the measurement convention satisfies it; it does not guarantee the first premise.
+14. **Optimization-based estimation.** Because the forward model depends nonlinearly on $\Pi$ through a prediction-dependent weighted projection, the coefficients are estimated by gradient-based optimization rather than ordinary least squares.
+15. **Lasso regularization.** $L_1$ penalties are used to encourage sparse second-order coefficients as an inherent feature-selection device.
 
 These assumptions matter because each one narrows the scientific claim. WP-ICSOR embeds conservation exactly and introduces a near-zero-sensitive weighted correction inside the model, but it is still not automatically guaranteed to be componentwise non-negative or fully process-realizable in every operating regime.
 
@@ -193,7 +193,7 @@ $$
 
 If the raw model proposes a change that violates this relation, the weighted projection replaces it with the closest change, under the chosen prediction-dependent weights, that stays on this line. Conservation is therefore exact after projection, while the weights bias the correction against moving mass into a component that is already near zero.
 
-### 4.5 ASM-flavored miniature example before measurement collapse
+### 4.5 ASM-flavored miniature example with external reporting
 
 Suppose the component vector is
 
@@ -218,7 +218,7 @@ A = \begin{bmatrix}
 \end{bmatrix}.
 $$
 
-Suppose the measured outputs are total COD and ammonium,
+If one later wishes to report total COD and ammonium externally, one may use
 
 $$
 I_{comp} = \begin{bmatrix}
@@ -233,7 +233,7 @@ $$
 \Pi \phi(u, c_{in}) = \begin{bmatrix} 8 \\ 14 \\ 5 \end{bmatrix}
 $$
 
-The raw component prediction is therefore read directly from the second-order regressor. The embedded weighted projection is then applied to $\Delta \hat c = \hat c - c_{in}$ so that the corrected change lies in $\operatorname{null}(A)$. Only after that step is the measured output computed as $y^* = I_{comp} c^*$. This ordering is the core design rule of WP-ICSOR: component prediction and invariant-preserving correction both happen in component space first, and measured composites are computed last.
+The raw component prediction is therefore read directly from the second-order regressor. The embedded weighted projection is then applied to $\Delta \hat c = \hat c - c_{in}$ so that the corrected change lies in $\operatorname{null}(A)$. If measured composites are later needed, they are computed externally as $y_{ext} = I_{comp} c^*$. This ordering is the core design rule of WP-ICSOR: component prediction and invariant-preserving correction both happen in component space first, and measured composites are computed only afterward.
 
 ## 5. Second-Order Surrogate in ASM Component Space
 
@@ -321,7 +321,7 @@ For fixed $\Pi$, evaluating $\hat c$ requires only matrix-vector multiplication.
 
 Two observations are important here.
 
-1. The raw component prediction happens before measurement collapse because $\Pi$ acts in component space.
+1. The raw component prediction happens before any external reporting collapse because $\Pi$ acts in component space.
 2. The only reduced linear solve in each forward pass comes from the weighted projection.
 
 ### 5.6 Interpretation of $\Pi$
@@ -464,54 +464,53 @@ For each sample, the deployed forward map is evaluated in the following order:
 3. Form the raw change $\Delta \hat c = \hat c - c_{in}$.
 4. Build the sharpened prediction-dependent weight matrix $W_{\beta}(\hat c)$.
 5. Solve the weighted projection for $\alpha^*$ and obtain $c^*$.
-6. Collapse the corrected component state to measured space through $y^* = I_{comp} c^*$.
+6. If measured composites are needed, compute them afterward as the external report $y_{ext} = I_{comp} c^*$.
 
 Because this sequence sits inside the training objective, conservation and the chosen correction metric influence coefficient estimation directly. There is no separate projection layer attached after training is complete.
 
-## 7. Collapse from ASM Component Space to Measured Output Space
+## 7. External Composition-Matrix Collapse
 
-### 7.1 Final measured output equation
+### 7.1 External reporting equation
 
-Practical prediction targets are usually measured composite variables rather than ASM component concentrations. After the raw component prediction and embedded weighted projection have been completed in component space, the final measured output is
+If measured composites are needed for reporting, they are obtained after the model prediction has already been completed in ASM component space. The external reporting equation is
 
 $$
-y^* = I_{comp} c^*.
+y_{ext} = I_{comp} c^*.
 $$
 
-This is the deployed prediction reported by WP-ICSOR.
+This map is not part of WP-ICSOR itself. The model's native output is the component-space prediction $c^*$.
 
-### 7.2 Component prediction and projection precede measurement collapse
+### 7.2 Prediction and correction remain in component space
 
 The order of operations is essential.
 
 1. The base second-order signal is formed in component space.
 2. Raw component targets are predicted directly as $\hat c = \Pi \phi(u, c_{in})$.
 3. The raw component-space change is projected onto the invariant-consistent change space with prediction-dependent weighting.
-4. The corrected component state is finally aggregated to measured outputs.
+4. The corrected component state $c^*$ is the deployed model output.
+5. Any measured composite is obtained only afterward by applying the external composition matrix.
 
-This ordering prevents the loss of physical information that would occur if one attempted to correct only the measured aggregates. Two different ASM component states can collapse to the same measured COD or nitrogen total while implying different stoichiometric feasibility. WP-ICSOR resolves that ambiguity by enforcing structure before measurement collapse, even though the measured-space loss still observes the underlying component state only indirectly.
+This ordering prevents the loss of physical information that would occur if one attempted to train or correct only the measured aggregates. Two different ASM component states can collapse to the same measured COD or nitrogen total while implying different stoichiometric feasibility. WP-ICSOR resolves that ambiguity by learning and enforcing structure in component space before any reporting collapse is applied.
 
-### 7.3 When componentwise non-negativity implies non-negative composites
+### 7.3 When componentwise non-negativity implies non-negative reported composites
 
 If every row of $I_{comp}$ is entrywise non-negative, then componentwise non-negativity in the component state transfers naturally to the measured outputs. For output index $k$,
 
 $$
-y_k^* = \sum_{f=1}^{F} (I_{comp})_{k f} c_f^*.
+(y_{ext})_k = \sum_{f=1}^{F} (I_{comp})_{k f} c_f^*.
 $$
 
-If $(I_{comp})_{k f} \ge 0$ for all $f$ and $c_f^* \ge 0$ for all $f$, then $y_k^* \ge 0$. This is the common case for total COD, total nitrogen, total phosphorus, TSS, or VSS defined as sums with non-negative conversion factors.
+If $(I_{comp})_{k f} \ge 0$ for all $f$ and $c_f^* \ge 0$ for all $f$, then $(y_{ext})_k \ge 0$. This is the common case for total COD, total nitrogen, total phosphorus, TSS, or VSS defined as sums with non-negative conversion factors.
 
 If a chosen measurement convention uses negative coefficients, extra output-space treatment would be required to make a measured-space sign claim. Conversely, even with non-negative rows in $I_{comp}$, the present architecture makes no unconditional non-negativity guarantee because the weighted projection does not impose $c^* \ge 0$. Both conditions must be stated explicitly.
 
-### 7.4 End-to-end deployed prediction map
+### 7.4 End-to-end component predictor and optional external report
 
-Combining the direct component predictor and the weighted projection gives the full deployed measured predictor
+Combining the direct component predictor and the weighted projection gives the full deployed component predictor
 
 $$
-y^*(u, c_{in}; \vartheta)
-= I_{comp} \left[
-c_{in} + N_A \left( N_A^T W_{\beta}(\hat c)^2 N_A \right)^{-1} N_A^T W_{\beta}(\hat c)^2 \left( \Pi \phi(u, c_{in}) - c_{in} \right)
-\right],
+c^*(u, c_{in}; \vartheta)
+= c_{in} + N_A \left( N_A^T W_{\beta}(\hat c)^2 N_A \right)^{-1} N_A^T W_{\beta}(\hat c)^2 \left( \Pi \phi(u, c_{in}) - c_{in} \right),
 $$
 
 where
@@ -520,7 +519,7 @@ $$
 \hat c = \Pi \phi(u, c_{in}).
 $$
 
-This expression defines the deployed predictor as a single end-to-end nonlinear map produced by direct component prediction followed by an embedded weighted projection.
+This expression defines the deployed predictor as a single end-to-end nonlinear map produced by direct component prediction followed by an embedded weighted projection. If measured composites are needed afterward, they are computed externally as $y_{ext}(u, c_{in}; \vartheta) = I_{comp} c^*(u, c_{in}; \vartheta)$.
 
 ## 8. Estimation by Adam with Lasso Regularization
 
@@ -531,7 +530,7 @@ It is important to distinguish between the samplewise forward evaluation and the
 1. **Forward prediction.** For fixed $\Pi$, the raw component state $\hat c$ is obtained directly by evaluating $\Pi \phi(u, c_{in})$, and the projected state $c^*$ is obtained by a reduced weighted least-squares solve.
 2. **Coefficient estimation.** The parameters themselves are not available from a closed-form least-squares or pseudoinverse formula.
 
-The second point follows from the structure of the forward map. The embedded weighted projection depends on the current prediction through $W_{\beta}(\hat c)$, and $\hat c$ itself depends on $\Pi$. The deployed measured predictor is therefore nonlinear in the parameters even though the raw second-order model is linear in the features and coefficients. Coefficient estimation therefore proceeds through gradient-based optimization.
+The second point follows from the structure of the forward map. The embedded weighted projection depends on the current prediction through $W_{\beta}(\hat c)$, and $\hat c$ itself depends on $\Pi$. The deployed component predictor is therefore nonlinear in the parameters even though the raw second-order model is linear in the features and coefficients. Coefficient estimation therefore proceeds through gradient-based optimization.
 
 ### 8.2 Dataset-level training objective
 
@@ -556,15 +555,15 @@ c_{in,N}^T
 $$
 
 $$
-Y = \begin{bmatrix}
-y_1^T \\
-y_2^T \\
+C_{out} = \begin{bmatrix}
+c_{out,1}^T \\
+c_{out,2}^T \\
 \vdots \\
-y_N^T
-\end{bmatrix} \in \mathbb{R}^{N \times K}.
+c_{out,N}^T
+\end{bmatrix} \in \mathbb{R}^{N \times F}.
 $$
 
-For sample $n$, the deployed prediction is $y_n^*(\vartheta)$ as defined in Section 7.4. A natural measured-space training objective is
+For sample $n$, the deployed prediction is $c_n^*(\vartheta)$ as defined in Section 7.4. A natural component-space training objective is
 
 $$
 \min_{\Pi} \; \mathcal{J}(\Pi)
@@ -574,13 +573,13 @@ where
 
 $$
 \mathcal{J}(\Pi)
-= \frac{1}{N} \sum_{n=1}^{N} \left\| y_n - y_n^*(\Pi) \right\|_2^2
+= \frac{1}{N} \sum_{n=1}^{N} \left\| c_{out,n} - c_n^*(\Pi) \right\|_2^2
 + \lambda_{\Pi} \lVert \Pi \rVert_1.
 $$
 
-The first term fits measured outputs after the raw component prediction and embedded weighted projection have both been applied. The $L_1$ term is a lasso penalty that encourages sparsity in the second-order coefficients.
+The first term fits effluent ASM component fractions after the raw component prediction and embedded weighted projection have both been applied. The $L_1$ term is a lasso penalty that encourages sparsity in the second-order coefficients.
 
-If output scaling is needed because COD, nitrogen, phosphorus, and solids live on different numeric scales, the squared loss above may be replaced by a weighted measured-space norm without changing the architecture.
+If component scaling is needed because some ASM fractions are estimated more reliably or are judged more important than others, the squared loss above may be replaced by a weighted component-space norm without changing the architecture.
 
 ### 8.3 Adam optimization and inherent feature selection
 
@@ -589,12 +588,12 @@ With the hard floor in $W_{\beta}(\hat c)$, the optimization problem is piecewis
 1. build the second-order features,
 2. evaluate the raw component predictor,
 3. apply the embedded weighted projection,
-4. collapse to measured outputs, and
-5. evaluate the measured-space loss plus lasso penalties.
+4. evaluate the component-space loss, and
+5. add the lasso penalties.
 
 Gradients are then propagated back through the reduced projection solve. In this way, conservation and the chosen projection metric affect the coefficient updates directly. The model is not first trained as a generic regressor and then repaired afterward.
 
-The lasso penalties serve as inherent feature selection. If a quadratic interaction, influent term, or operating term does not materially improve the measured prediction after the embedded projection is taken into account, the corresponding entry of $\Pi$ can be driven toward zero.
+The lasso penalties serve as inherent feature selection. If a quadratic interaction, influent term, or operating term does not materially improve the component prediction after the embedded projection is taken into account, the corresponding entry of $\Pi$ can be driven toward zero.
 
 ### 8.4 Regularization in the direct model
 
@@ -605,24 +604,24 @@ The direct architecture narrows the parameter space and eliminates the need to m
 Once $\widehat \Pi$ has been estimated, a new sample is evaluated by the same embedded forward map:
 
 $$
-\widehat y^*(u, c_{in}) = I_{comp} \widehat c^*(u, c_{in}),
+\widehat c^*(u, c_{in}) = c^*(u, c_{in}; \widehat \Pi),
 $$
 
-where $\widehat c^*$ is obtained from the direct component predictor and weighted projection using the learned parameters. The learned model is evaluated through the same embedded forward map used during training.
+where $\widehat c^*$ is obtained from the direct component predictor and weighted projection using the learned parameters. If measured composites are needed, they are computed afterward as $\widehat y_{ext}(u, c_{in}) = I_{comp} \widehat c^*(u, c_{in})$. The learned model is evaluated through the same embedded forward map used during training.
 
 ## 9. Identifiability, Well-Posedness, and Uncertainty
 
 ### 9.1 What the data identify in the uncoupled model
 
-Measured composite data identify the end-to-end prediction map induced by the projected second-order component model. They do not, in general, determine a unique component-space second-order coefficient matrix.
+Component-space training data identify the end-to-end prediction map induced by the projected second-order component model. They still do not, in general, determine a unique second-order coefficient matrix.
 
 This has three consequences.
 
-1. Different coefficient matrices $\Pi$ can yield similar measured predictions once the embedded projection is applied.
-2. The lasso penalty selects one sparse, well-posed representative rather than recovering a unique unobserved component-space coefficient matrix from measured composites alone.
+1. Different coefficient matrices $\Pi$ can yield similar component predictions once the embedded projection is applied.
+2. The lasso penalty selects one sparse, well-posed representative rather than recovering a unique coefficient matrix in an underdetermined or weakly excited design.
 3. If the full Kronecker basis is retained, symmetric duplicate monomials further weaken uniqueness of individual quadratic coefficients; the induced predictor is identifiable more readily than any single coefficient attached to a duplicated feature coordinate.
 
-This behavior is an intrinsic consequence of the nonlinear projected architecture, the embedded physical projection, and the fact that measured-space supervision only partially observes component space.
+This behavior is an intrinsic consequence of the nonlinear projected architecture, the embedded physical projection, and the duplicated structure of the full second-order basis.
 
 ### 9.2 Existence and numerical stability of the forward pass
 
@@ -640,21 +639,21 @@ Under these conditions, the forward map is continuous in the parameters away fro
 
 ### 9.3 Uncertainty assessment
 
-Exact ordinary-least-squares covariance formulas and $t$-based prediction intervals are not available for WP-ICSOR because the deployed predictor is not globally affine in the parameters and because the parameters are estimated by nonconvex gradient-based optimization. The most defensible default strategy is therefore resampling-based uncertainty quantification.
+Exact ordinary-least-squares covariance formulas and $t$-based prediction intervals are not available for WP-ICSOR because the deployed predictor is not globally affine in the parameters and because the parameters are estimated by nonconvex gradient-based optimization. The most defensible default strategy is therefore resampling-based uncertainty quantification in component space.
 
 Recommended options include the following.
 
-1. **Bootstrap refitting.** Resample the training set, refit the model with Adam, and recompute predictions.
+1. **Bootstrap refitting.** Resample the training set, refit the model with Adam, and recompute component predictions.
 2. **Ensemble refitting.** Train multiple models from different initializations and summarize predictive spread.
 3. **Validation-based sensitivity analysis.** Examine how predictions change under perturbations of $\lambda_{\Pi}$, $\varepsilon$, $\beta$, and any smoothing or stabilization choices used in the weight definition.
 
-These procedures quantify uncertainty in the deployed nonlinear predictor itself.
+These procedures quantify uncertainty in the deployed nonlinear component predictor itself. If measured composites are later reported, they should be computed from each resampled component prediction by the same external composition matrix.
 
 ## 10. Implications of the Main Modeling Choices
 
 ### 10.1 Direct effluent-state parameterization
 
-The surrogate is parameterized on the effluent component state rather than on the net change alone. This keeps the learned target aligned with the quantity ultimately used for reporting and decision support. Each component target is predicted directly from the shared feature vector through one row of $\Pi$. Dependence among the predicted components therefore enters through the common predictors and the shared projection step. This simplifies the architecture and removes the need for an additional stability condition, but it also means that any residual cross-component structure not captured by the features must be absorbed indirectly.
+The surrogate is parameterized on the effluent component state rather than on the net change alone. This keeps the learned target aligned with the ASM state that the stoichiometric model actually constrains. Each component target is predicted directly from the shared feature vector through one row of $\Pi$. Dependence among the predicted components therefore enters through the common predictors and the shared projection step. This simplifies the architecture and removes the need for an additional stability condition, but it also means that any residual cross-component structure not captured by the features must be absorbed indirectly.
 
 ### 10.2 Embedded Weighted Projection in the Forward Model
 
@@ -668,27 +667,28 @@ The model has an explicit component prediction formula but no closed-form parame
 
 The second-order feature map can be high dimensional. Lasso regularization therefore does more than prevent overfitting. It expresses a modeling preference for sparse polynomial structure. The resulting model is easier to interpret because inactive feature blocks are explicitly shrunk toward zero. That said, when the full Kronecker basis is used, interpretability should be attached to active monomials or symmetrized coefficient summaries rather than to any one duplicated quadratic coordinate.
 
-### 10.5 Measurement collapse after component correction
+### 10.5 External reporting after component correction
 
-Component prediction and conservation-preserving correction are both executed in component space, and measured outputs are computed only afterward. This keeps the physically meaningful decisions in the same space in which stoichiometry operates. A measured-space-only architecture would lose control over unobserved component redistributions that can be invisible in aggregate outputs. The tradeoff is that directions in component space that collapse weakly through $I_{comp}$ remain only indirectly identified by the measured-space loss.
+Component prediction and conservation-preserving correction are both executed in component space, and measured outputs are computed only afterward. This keeps the physically meaningful decisions in the same space in which stoichiometry operates. It also decouples model training from reporting convention: the same trained component-space model can be post-processed into different measured composite outputs by different external composition matrices without redefining the fitted surrogate.
 
 ## 11. Limitations
 
 WP-ICSOR is deliberately narrower than a full mechanistic reactor model. Its main limitations are the following.
 
 1. It is steady-state in the quasi-steady-sample sense and does not represent temporal dynamics or path dependence.
-2. It enforces only the invariant relations encoded by the chosen stoichiometric basis and system boundary.
-3. The embedded weighted projection preserves conservation exactly, but it does not impose the hard inequality constraint $c^* \ge 0$ and does not in general repair a negative raw component prediction.
-4. The effect of the weighting depends on the chosen metric design, the stabilization floor $\varepsilon$, the sharpening exponent $\beta$, and the operating regime.
-5. Measured composite data do not generally identify a unique unobserved component-space second-order coefficient matrix.
-6. The direct architecture can underfit if important inter-component dependence is not captured by the shared feature basis and projection.
-7. The full Kronecker quadratic basis contains symmetric duplicate monomials unless it is compressed, so individual quadratic coefficients are not uniquely interpretable without additional symmetrization conventions.
-8. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear.
-9. Non-negative measured composites are supported most naturally only when the composition matrix has non-negative rows and the component prediction itself is non-negative.
-10. Exact closed-form inference formulas for the final deployed predictor are not available because the estimation problem is nonlinear and the predictor includes prediction-dependent weights.
-11. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally consistent projection on the wrong physical change space.
-12. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the surrogate and is not represented by the measured-space loss alone.
-13. The relation $c_{out} - c_{in} = \nu^T \xi$ is a reduced concentration-equivalent closure; flow-resolved dynamics, phase partitioning, and unmodeled transport mechanisms remain outside the present surrogate.
+2. It requires effluent ASM component-fraction targets for training, either directly from a simulator or from an upstream reconstruction step.
+3. It enforces only the invariant relations encoded by the chosen stoichiometric basis and system boundary.
+4. The embedded weighted projection preserves conservation exactly, but it does not impose the hard inequality constraint $c^* \ge 0$ and does not in general repair a negative raw component prediction.
+5. The effect of the weighting depends on the chosen metric design, the stabilization floor $\varepsilon$, the sharpening exponent $\beta$, and the operating regime.
+6. Different coefficient matrices can still induce similar deployed component predictions, especially when the second-order design is weakly excited or highly collinear.
+7. The direct architecture can underfit if important inter-component dependence is not captured by the shared feature basis and projection.
+8. The full Kronecker quadratic basis contains symmetric duplicate monomials unless it is compressed, so individual quadratic coefficients are not uniquely interpretable without additional symmetrization conventions.
+9. The second-order feature basis can be statistically fragile if it is weakly excited or highly collinear.
+10. Non-negative external measured composites are supported most naturally only when the composition matrix has non-negative rows and the component prediction itself is non-negative.
+11. Exact closed-form inference formulas for the final deployed predictor are not available because the estimation problem is nonlinear and the predictor includes prediction-dependent weights.
+12. A misspecified stoichiometric matrix or incorrect system boundary leads to a formally consistent projection on the wrong physical change space.
+13. If the influent ASM component state is reconstructed from measured aggregate variables rather than observed directly, reconstruction error enters upstream of the surrogate and is not represented by the component-space loss alone.
+14. The relation $c_{out} - c_{in} = \nu^T \xi$ is a reduced concentration-equivalent closure; flow-resolved dynamics, phase partitioning, and unmodeled transport mechanisms remain outside the present surrogate.
 
 These limitations should be stated explicitly in any application. Doing so does not weaken the model. It defines the scope of its claims correctly.
 
@@ -700,9 +700,9 @@ $$
 \hat c = \Pi \phi(u, c_{in}),
 $$
 
-and the raw change is then projected onto the invariant-consistent change space with prediction-dependent weights that preserve conservation exactly and determine how the required correction is distributed across components. Only after those component-space steps are completed is the state collapsed to measured outputs.
+and the raw change is then projected onto the invariant-consistent change space with prediction-dependent weights that preserve conservation exactly and determine how the required correction is distributed across components. The native output of the model is the corrected ASM component-fraction vector itself.
 
-The central methodological point is therefore twofold. First, the component targets are predicted directly in component space before measurement collapse. Second, the physical structure is embedded in the learned model: conservation is exact by construction, the projection metric is specified explicitly, and the parameters are estimated end to end with Adam and lasso regularization. Under that reading, WP-ICSOR is an analytically structured steady-state surrogate for activated-sludge prediction that preserves stoichiometric structure in every forward pass and remains narrower in scope than a full dynamic mechanistic simulator. Its strongest hard claim is exact invariant preservation; any claim about non-negativity remains conditional on additional constraints not included in the baseline formulation.
+The central methodological point is therefore twofold. First, the component targets are predicted directly in component space and supervised in that same space during training. Second, the physical structure is embedded in the learned model: conservation is exact by construction, the projection metric is specified explicitly, and the parameters are estimated end to end with Adam and lasso regularization. If measured composites are needed, they are computed only afterward as an external reporting calculation through the composition matrix. Under that reading, WP-ICSOR is an analytically structured steady-state surrogate for activated-sludge prediction that preserves stoichiometric structure in every forward pass and remains narrower in scope than a full dynamic mechanistic simulator. Its strongest hard claim is exact invariant preservation; any claim about non-negativity remains conditional on additional constraints not included in the baseline formulation.
 
 ## References
 
