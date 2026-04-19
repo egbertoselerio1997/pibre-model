@@ -56,9 +56,9 @@ DEFAULT_OSQP_EPS_REL = 1e-6
 DEFAULT_OSQP_MAX_ITER = 20000
 DEFAULT_OSQP_POLISH = True
 DEFAULT_OSQP_VERBOSE = False
-DEFAULT_WARM_START = True
 DEFAULT_NONNEGATIVITY_TOLERANCE = 1e-10
 DEFAULT_CONSTRAINT_TOLERANCE = 1e-8
+DEFAULT_ENABLE_C_HAT_UNCONSTRAINED_SCREENING = False
 DEFAULT_HIGHS_PRESOLVE = True
 DEFAULT_HIGHS_MAX_ITER = 10000
 DEFAULT_HIGHS_VERBOSE = False
@@ -109,7 +109,12 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         "osqp_max_iter": int(model_hyperparameters.get("osqp_max_iter", DEFAULT_OSQP_MAX_ITER)),
         "osqp_polish": bool(model_hyperparameters.get("osqp_polish", DEFAULT_OSQP_POLISH)),
         "osqp_verbose": bool(model_hyperparameters.get("osqp_verbose", DEFAULT_OSQP_VERBOSE)),
-        "warm_start": bool(model_hyperparameters.get("warm_start", DEFAULT_WARM_START)),
+        "enable_c_hat_unconstrained_screening": bool(
+            model_hyperparameters.get(
+                "enable_c_hat_unconstrained_screening",
+                DEFAULT_ENABLE_C_HAT_UNCONSTRAINED_SCREENING,
+            )
+        ),
         "nonnegativity_tolerance": float(
             model_hyperparameters.get("nonnegativity_tolerance", DEFAULT_NONNEGATIVITY_TOLERANCE)
         ),
@@ -201,7 +206,7 @@ def _make_osqp_solver(
         max_iter=int(settings["osqp_max_iter"]),
         polishing=bool(settings["osqp_polish"]),
         verbose=bool(settings["osqp_verbose"]),
-        warm_starting=bool(settings["warm_start"]),
+        warm_starting=False,
     )
     return solver
 
@@ -218,60 +223,46 @@ def _build_qp_constraint_system(n_outputs: int) -> tuple[np.ndarray, np.ndarray,
     return nonnegativity_matrix, nonnegativity_lower, nonnegativity_upper
 
 
+def _solve_unconstrained_chat_batch(
+    quadratic_matrix: np.ndarray,
+    linear_matrix: np.ndarray,
+) -> np.ndarray:
+    rhs_matrix = -np.asarray(linear_matrix, dtype=float).T
+
+    try:
+        cholesky_factor = np.linalg.cholesky(quadratic_matrix)
+        intermediate_solution = np.linalg.solve(cholesky_factor, rhs_matrix)
+        return np.linalg.solve(cholesky_factor.T, intermediate_solution).T
+    except np.linalg.LinAlgError:
+        try:
+            return np.linalg.solve(quadratic_matrix, rhs_matrix).T
+        except np.linalg.LinAlgError:
+            return (np.linalg.pinv(quadratic_matrix, rcond=1e-10) @ rhs_matrix).T
+
+
 def _solve_b_update(
     design_matrix: np.ndarray,
     fitted_predictions: np.ndarray,
     gamma_matrix: np.ndarray,
     settings: Mapping[str, Any],
-    *,
-    b_update_cache: Mapping[str, Any] | None = None,
 ) -> np.ndarray:
     lambda_sys = float(settings["lambda_sys"])
     lambda_B = float(settings["lambda_B"])
 
     response_matrix = fitted_predictions @ (np.eye(gamma_matrix.shape[0], dtype=float) - gamma_matrix).T
-    cache = dict(b_update_cache) if b_update_cache is not None else _prepare_b_update_cache(design_matrix, settings)
-
-    if bool(cache["use_dual"]):
-        dual_solution = np.asarray(cache["lhs_solver"], dtype=float) @ response_matrix
-        solved_matrix = np.asarray(cache["design_transpose"], dtype=float) @ dual_solution
-    else:
-        rhs_matrix = lambda_sys * (np.asarray(cache["design_transpose"], dtype=float) @ response_matrix)
-        solved_matrix = np.asarray(cache["lhs_solver"], dtype=float) @ rhs_matrix
-
-    return solved_matrix.T
-
-
-def _prepare_b_update_cache(
-    design_matrix: np.ndarray,
-    settings: Mapping[str, Any],
-) -> dict[str, Any]:
-    lambda_sys = float(settings["lambda_sys"])
-    lambda_B = float(settings["lambda_B"])
-
-    n_samples, n_features = design_matrix.shape
     design_transpose = design_matrix.T
-    use_dual = bool(n_features > n_samples)
+    lhs_matrix = lambda_sys * (design_transpose @ design_matrix)
+    if lambda_B > 0.0:
+        lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
 
-    if use_dual:
-        lhs_matrix = lambda_sys * (design_matrix @ design_transpose)
-        if lambda_B > 0.0:
-            lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
-    else:
-        lhs_matrix = lambda_sys * (design_transpose @ design_matrix)
-        if lambda_B > 0.0:
-            lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
+    rhs_matrix = lambda_sys * (design_transpose @ response_matrix)
 
     try:
-        lhs_solver = np.linalg.inv(lhs_matrix)
+        solved_matrix = np.linalg.solve(lhs_matrix, rhs_matrix)
     except np.linalg.LinAlgError:
-        lhs_solver = np.linalg.pinv(lhs_matrix, rcond=1e-10)
+        solved_matrix = np.linalg.pinv(lhs_matrix, rcond=1e-10) @ rhs_matrix
 
-    return {
-        "use_dual": use_dual,
-        "design_transpose": design_transpose,
-        "lhs_solver": lhs_solver,
-    }
+    return solved_matrix.T
 
 
 def _enforce_gamma_conditioning(
@@ -308,8 +299,6 @@ def _solve_gamma_update(
     fitted_predictions: np.ndarray,
     driver_matrix: np.ndarray,
     settings: Mapping[str, Any],
-    *,
-    initial_gamma: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     n_outputs = fitted_predictions.shape[1]
     gamma_abs_bound = float(settings["gamma_abs_bound"])
@@ -325,8 +314,6 @@ def _solve_gamma_update(
     iteration_values: list[int] = []
 
     residual_target = fitted_predictions - driver_matrix
-    warm_start_gamma = np.asarray(initial_gamma, dtype=float) if initial_gamma is not None else None
-
     cross_residual = fitted_predictions.T @ residual_target
     base_lower_bounds = np.full(n_outputs, -gamma_abs_bound, dtype=float)
     base_upper_bounds = np.full(n_outputs, gamma_abs_bound, dtype=float)
@@ -355,8 +342,6 @@ def _solve_gamma_update(
             l=np.asarray(lower_bounds, dtype=float),
             u=np.asarray(upper_bounds, dtype=float),
         )
-        if warm_start_gamma is not None:
-            solver.warm_start(x=np.asarray(warm_start_gamma[target_index], dtype=float))
 
         result = solver.solve()
         status_text = str(result.info.status)
@@ -386,11 +371,11 @@ def _solve_chat_update(
     coupled_matrix: np.ndarray,
     driver_matrix: np.ndarray,
     settings: Mapping[str, Any],
-    *,
-    warm_start_matrix: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     lambda_inv = float(settings["lambda_inv"])
     lambda_sys = float(settings["lambda_sys"])
+    enable_screening = bool(settings.get("enable_c_hat_unconstrained_screening", False))
+    screening_tolerance = max(float(settings["nonnegativity_tolerance"]), float(settings["osqp_eps_abs"]))
 
     n_samples, n_outputs = target_matrix.shape
     at_a_matrix = invariant_matrix.T @ invariant_matrix
@@ -401,54 +386,69 @@ def _solve_chat_update(
         + lambda_sys * rt_r_matrix
     )
 
-    constraint_matrix, lower_bounds, upper_bounds = _build_qp_constraint_system(n_outputs)
-
-    solver = _make_osqp_solver(
-        quadratic_matrix,
-        np.zeros(n_outputs, dtype=float),
-        constraint_matrix,
-        lower_bounds,
-        upper_bounds,
-        settings,
+    at_a_influents = influent_matrix @ at_a_matrix.T
+    rt_driver_matrix = driver_matrix @ coupled_matrix
+    linear_matrix = -2.0 * (
+        target_matrix
+        + lambda_inv * at_a_influents
+        + lambda_sys * rt_driver_matrix
     )
 
     fitted_predictions = np.zeros((n_samples, n_outputs), dtype=float)
     status_values: list[str] = []
     iteration_values: list[int] = []
+    interior_mask = np.zeros(n_samples, dtype=bool)
 
-    at_a_influents = influent_matrix @ at_a_matrix.T
-    rt_driver_matrix = driver_matrix @ coupled_matrix
+    if enable_screening and n_samples > 0:
+        unconstrained_predictions = _solve_unconstrained_chat_batch(quadratic_matrix, linear_matrix)
+        interior_mask = np.min(unconstrained_predictions, axis=1) >= -screening_tolerance
+        if np.any(interior_mask):
+            interior_predictions = np.asarray(unconstrained_predictions[interior_mask], dtype=float).copy()
+            interior_predictions[
+                (interior_predictions < 0.0) & (interior_predictions >= -screening_tolerance)
+            ] = 0.0
+            fitted_predictions[interior_mask] = np.maximum(interior_predictions, 0.0)
 
-    for sample_index in range(n_samples):
-        linear_vector = -2.0 * (
-            target_matrix[sample_index]
-            + lambda_inv * at_a_influents[sample_index]
-            + lambda_sys * rt_driver_matrix[sample_index]
+    active_indices = np.flatnonzero(~interior_mask)
+
+    if active_indices.size > 0:
+        constraint_matrix, lower_bounds, upper_bounds = _build_qp_constraint_system(n_outputs)
+        solver = _make_osqp_solver(
+            quadratic_matrix,
+            np.zeros(n_outputs, dtype=float),
+            constraint_matrix,
+            lower_bounds,
+            upper_bounds,
+            settings,
         )
-        solver.update(q=np.asarray(linear_vector, dtype=float))
 
-        if warm_start_matrix is not None:
-            initial_guess = np.asarray(warm_start_matrix[sample_index], dtype=float)
-        else:
+        for sample_index in active_indices:
+            linear_vector = np.asarray(linear_matrix[sample_index], dtype=float)
+            solver.update(q=linear_vector)
+
             initial_guess = np.maximum(np.asarray(target_matrix[sample_index], dtype=float), 0.0)
 
-        if bool(settings["warm_start"]):
-            solver.warm_start(x=initial_guess)
+            result = solver.solve()
+            status_text = str(result.info.status)
+            status_values.append(status_text)
+            iteration_values.append(int(result.info.iter))
 
-        result = solver.solve()
-        status_text = str(result.info.status)
-        status_values.append(status_text)
-        iteration_values.append(int(result.info.iter))
+            if _is_osqp_solved(status_text) and result.x is not None:
+                fitted_predictions[sample_index] = np.maximum(np.asarray(result.x, dtype=float), 0.0)
+            else:
+                fitted_predictions[sample_index] = initial_guess
 
-        if _is_osqp_solved(status_text) and result.x is not None:
-            fitted_predictions[sample_index] = np.maximum(np.asarray(result.x, dtype=float), 0.0)
-        else:
-            fitted_predictions[sample_index] = initial_guess
+    interior_count = int(np.sum(interior_mask))
+    active_qp_count = int(active_indices.size)
+    interior_fraction = float(interior_count / n_samples) if n_samples > 0 else 0.0
 
     return fitted_predictions, {
         "status_counts": pd.Series(status_values).value_counts(dropna=False).to_dict(),
         "mean_iterations": float(np.mean(iteration_values) if iteration_values else 0.0),
         "max_iterations": int(max(iteration_values) if iteration_values else 0),
+        "interior_count": interior_count,
+        "active_qp_count": active_qp_count,
+        "interior_fraction": interior_fraction,
     }
 
 
@@ -491,7 +491,6 @@ def _run_coupled_qp_restart(
     *,
     initial_gamma: np.ndarray,
 ) -> dict[str, Any]:
-    b_update_cache = _prepare_b_update_cache(design_matrix, settings)
     gamma_matrix, conditioning_value, shrink_factor = _enforce_gamma_conditioning(
         initial_gamma,
         conditioning_max=float(settings["conditioning_max"]),
@@ -502,7 +501,6 @@ def _run_coupled_qp_restart(
         fitted_predictions,
         gamma_matrix,
         settings,
-        b_update_cache=b_update_cache,
     )
 
     objective_history: list[float] = []
@@ -527,7 +525,6 @@ def _run_coupled_qp_restart(
             fitted_predictions,
             gamma_matrix,
             settings,
-            b_update_cache=b_update_cache,
         )
         driver_matrix = design_matrix @ b_updated.T
 
@@ -535,7 +532,6 @@ def _run_coupled_qp_restart(
             fitted_predictions,
             driver_matrix,
             settings,
-            initial_gamma=gamma_matrix,
         )
         gamma_updated, conditioning_value, shrink_factor = _enforce_gamma_conditioning(
             gamma_candidate,
@@ -550,7 +546,6 @@ def _run_coupled_qp_restart(
             coupled_matrix,
             driver_matrix,
             settings,
-            warm_start_matrix=fitted_predictions,
         )
 
         updated_objective = _compute_training_objective(

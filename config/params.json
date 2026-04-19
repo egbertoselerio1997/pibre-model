@@ -1104,7 +1104,6 @@
       "osqp_max_iter": 20000,
       "osqp_polish": false,
       "osqp_verbose": false,
-      "warm_start": true,
       "nonnegativity_tolerance": 1e-10,
       "constraint_tolerance": 1e-8,
       "highs_presolve": true,

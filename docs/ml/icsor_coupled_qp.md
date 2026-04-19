@@ -56,7 +56,7 @@ Important keys include:
 - `gamma_abs_bound`
 - `max_outer_iterations`, `n_restarts`
 - `objective_tolerance`, `parameter_tolerance`, `conditioning_max`
-- `osqp_eps_abs`, `osqp_eps_rel`, `osqp_max_iter`, `osqp_polish`, `osqp_verbose`, `warm_start`
+- `osqp_eps_abs`, `osqp_eps_rel`, `osqp_max_iter`, `osqp_polish`, `osqp_verbose`
 - `nonnegativity_tolerance`, `constraint_tolerance`
 - `highs_presolve`, `highs_max_iter`, `highs_verbose`, `highs_retry_without_presolve`, `parallel_workers`
 

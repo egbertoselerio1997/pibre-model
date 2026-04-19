@@ -11,6 +11,8 @@ import numpy as np
 from scipy.linalg import null_space
 
 from src.models.ml.icsor_coupled_qp import (
+    _resolve_coupled_qp_settings,
+    _solve_chat_update,
     load_icsor_coupled_qp_params,
     predict_icsor_coupled_qp_model,
     run_icsor_coupled_qp_pipeline,
@@ -203,8 +205,89 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
             for entry in gamma_update_history
             for status_name in dict(entry.get("status_counts", {})).keys()
         }
-        self.assertTrue(any("solved" in str(status_name).lower() for status_name in chat_statuses))
+        chat_has_solved_status = any("solved" in str(status_name).lower() for status_name in chat_statuses)
+        chat_all_rows_screened = all(int(entry.get("active_qp_count", 0)) == 0 for entry in chat_update_history)
+        self.assertTrue(chat_has_solved_status or chat_all_rows_screened)
         self.assertTrue(any("solved" in str(status_name).lower() for status_name in gamma_statuses))
+
+    def test_chat_update_screening_all_interior_skips_osqp_rows(self) -> None:
+        target_matrix = np.array(
+            [
+                [0.8, 0.2],
+                [0.4, 0.6],
+                [0.5, 0.3],
+            ],
+            dtype=float,
+        )
+        influent_matrix = np.zeros_like(target_matrix)
+        invariant_matrix = np.zeros((0, target_matrix.shape[1]), dtype=float)
+        coupled_matrix = np.eye(target_matrix.shape[1], dtype=float)
+        driver_matrix = np.zeros_like(target_matrix)
+        settings = _resolve_coupled_qp_settings(
+            {
+                "enable_c_hat_unconstrained_screening": True,
+                "osqp_polish": False,
+            }
+        )
+
+        fitted_predictions, chat_metadata = _solve_chat_update(
+            target_matrix,
+            influent_matrix,
+            invariant_matrix,
+            coupled_matrix,
+            driver_matrix,
+            settings,
+        )
+
+        np.testing.assert_allclose(fitted_predictions, 0.5 * target_matrix, atol=1e-7, rtol=1e-7)
+        self.assertEqual(int(chat_metadata["interior_count"]), target_matrix.shape[0])
+        self.assertEqual(int(chat_metadata["active_qp_count"]), 0)
+        self.assertAlmostEqual(float(chat_metadata["interior_fraction"]), 1.0, places=9)
+        self.assertEqual(dict(chat_metadata["status_counts"]), {})
+        self.assertEqual(float(chat_metadata["mean_iterations"]), 0.0)
+        self.assertEqual(int(chat_metadata["max_iterations"]), 0)
+
+    def test_chat_update_screening_mixed_rows_uses_osqp_fallback(self) -> None:
+        target_matrix = np.array(
+            [
+                [0.8, 0.4],
+                [-1.2, 0.2],
+                [0.1, -0.5],
+            ],
+            dtype=float,
+        )
+        influent_matrix = np.zeros_like(target_matrix)
+        invariant_matrix = np.zeros((0, target_matrix.shape[1]), dtype=float)
+        coupled_matrix = np.eye(target_matrix.shape[1], dtype=float)
+        driver_matrix = np.zeros_like(target_matrix)
+        settings = _resolve_coupled_qp_settings(
+            {
+                "enable_c_hat_unconstrained_screening": True,
+                "osqp_polish": False,
+            }
+        )
+
+        fitted_predictions, chat_metadata = _solve_chat_update(
+            target_matrix,
+            influent_matrix,
+            invariant_matrix,
+            coupled_matrix,
+            driver_matrix,
+            settings,
+        )
+
+        interior_count = int(chat_metadata["interior_count"])
+        active_qp_count = int(chat_metadata["active_qp_count"])
+        self.assertGreater(interior_count, 0)
+        self.assertGreater(active_qp_count, 0)
+        self.assertEqual(interior_count + active_qp_count, target_matrix.shape[0])
+        status_counts = dict(chat_metadata["status_counts"])
+        self.assertTrue(status_counts)
+        self.assertTrue(any("solved" in str(status_name).lower() for status_name in status_counts.keys()))
+        self.assertGreaterEqual(
+            float(np.min(fitted_predictions)),
+            -float(settings["nonnegativity_tolerance"]) - 1e-8,
+        )
 
 
 if __name__ == "__main__":
