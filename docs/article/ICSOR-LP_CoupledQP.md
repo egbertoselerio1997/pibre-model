@@ -4,9 +4,9 @@
 
 This article presents a coupled mathematical-programming formulation of invariant-constrained second-order regression (ICSOR) for steady-state activated-sludge surrogate modeling. The model accepts operational variables and influent activated-sludge-model (ASM) component states expressed on a common concentration-equivalent linear basis, and it predicts effluent ASM component states in that same basis. ICSOR remains defined natively in ASM component space. It is trained to predict ASM component states directly, and only those component states. If measured composite variables such as total COD, total nitrogen, total phosphorus, TSS, or VSS are needed, they are computed afterward by an external composition matrix. The collapse into measured-output space is therefore not part of the model itself.
 
-The surrogate is split into two layers. A second-order feature map produces a feature-driven driver vector $r(u, c_{in}) = B \phi(u, c_{in})$. An estimated coupling matrix $\Gamma$ then links ASM components through the coupled system matrix $R = I_F - \Gamma$. The present article does not constrain $B$ to be entrywise non-negative. Instead, fitted predictions during training and deployed predictions at inference are obtained by solving optimization problems that enforce componentwise nonnegativity directly in prediction space. Because both $B$ and $\Gamma$ are estimated, the training problem is jointly nonconvex but retains blockwise convex structure. Conditional on trained parameters, deployment-time inference remains a convex quadratic program in the predicted component vector.
+The surrogate is split into two layers. A second-order feature map produces a feature-driven driver vector $r(u, c_{in}) = B \phi(u, c_{in})$. An estimated coupling matrix $\Gamma$ then links ASM components through the coupled system matrix $R = I_F - \Gamma$. The present article does not constrain $B$ to be entrywise non-negative. Instead, fitted predictions during training and deployed predictions at inference are obtained by solving optimization problems that enforce componentwise nonnegativity directly in prediction space. Because both $B$ and $\Gamma$ are estimated, the training problem is jointly nonconvex but retains blockwise convex structure. Conditional on trained parameters, deployment-time inference remains a convex linear program in the predicted component vector and its auxiliary correction variable.
 
-Stoichiometric conservation remains central, but it is handled through invariant residuals during training and, if desired, during deployment-time inference. The resulting ICSOR formulation is a coupled component-space surrogate with optimization-based training, optimization-based inference, nonnegative fitted and deployed predictions, and external measurement collapse. This article develops that theory carefully, states what it guarantees, and revises the discussion, estimation logic, uncertainty treatment, and limitations around that contract.
+Stoichiometric conservation remains central, and in this article it is handled through invariant-residual penalties in the fitted-prediction program used during training and as a hard linear equality in the deployed inference program. The resulting ICSOR formulation is a coupled component-space surrogate with optimization-based training, optimization-based inference, nonnegative fitted and deployed predictions, invariant-aware training, exact invariant preservation inside the deployed inference problem, and external measurement collapse. This article develops that theory carefully, states what it guarantees, and revises the discussion, estimation logic, uncertainty treatment, and limitations around that contract.
 
 ## 1. Introduction and Modeling Objective
 
@@ -29,7 +29,7 @@ That external collapse is deliberate. It keeps the learned map in the same space
 
 This article answers one precise question:
 
-> Given a steady-state influent ASM component-state vector and a steady-state operating condition, what effluent ASM component-state vector should be predicted if the surrogate is second order, its ASM components are explicitly coupled through coefficients that must be estimated from data, training is posed as a coupled mathematical program, deployment itself is posed as a constrained inference program, and non-negative predictions must be enforced in prediction space while stoichiometric invariants remain structurally important?
+> Given a steady-state influent ASM component-state vector and a steady-state operating condition, what effluent ASM component-state vector should be predicted if the surrogate is second order, its ASM components are explicitly coupled through coefficients that must be estimated from data, training is posed as a coupled mathematical program, deployment itself is posed as a constrained inference program, and non-negative predictions must be enforced directly in prediction space while stoichiometric invariants are penalized during training and enforced exactly at deployment?
 
 The theory in this article is restricted to steady-state reactor-block prediction. It does not replace a dynamic activated-sludge simulator. It also does not claim that non-negative ASM component predictions are automatically kinetically or biologically realizable. Its narrower claim is that the surrogate should live in component space, be fitted in component space, produce deployed predictions through a constrained mathematical program, and treat measured-output collapse as an external downstream calculation.
 
@@ -84,9 +84,8 @@ Single-sample vectors are written as column vectors. Dataset matrices are define
 | $R$ | $\mathbb{R}^{F \times F}$ | Coupled-system matrix $I_F - \Gamma$ |
 | $r(u, c_{in})$ | $\mathbb{R}^{F}$ | Feature-driven driver vector defined by $r(u, c_{in}) = B \phi(u, c_{in})$ |
 | $\widehat C$ | $\mathbb{R}_{+}^{N \times F}$ | Fitted prediction matrix used in the training mathematical program |
-| $\lambda_{inv}$ | $\mathbb{R}_{+}$ | Invariant-residual penalty weight in the estimation objective |
+| $\lambda_{inv}$ | $\mathbb{R}_{+}$ | Invariant-residual penalty weight in the training objective |
 | $\lambda_{sys}$ | $\mathbb{R}_{+}$ | Coupled-system consistency penalty weight in the training objective |
-| $\lambda_{pred}$ | $\mathbb{R}_{+}$ | Invariant-residual penalty weight in the deployment-time inference program |
 
 The external measured variables are defined by the linear map
 
@@ -111,12 +110,12 @@ The framework rests on the following assumptions. They define the exact model an
 9. **Coupled mathematical-programming training.** Parameter estimation is posed as a jointly nonconvex but blockwise structured mathematical program in the driver coefficients, the coupling coefficients, and the fitted component predictions.
 10. **Mathematical-programming inference.** Deployment-time prediction is itself posed as a constrained optimization problem in the predicted component vector, conditional on the trained parameters.
 11. **Prediction-space nonnegativity.** Non-negativity is imposed directly on fitted and deployed predictions rather than on coefficients.
-12. **Invariant-aware objectives.** Stoichiometric invariants are handled through residual terms in ASM component space during training and, if desired, during deployment-time inference.
+12. **Invariant-aware training with exact deployed conservation.** Stoichiometric invariants are handled through residual penalties in ASM component space during training and through hard linear equality constraints during deployment-time inference.
 13. **External composition map.** The collapse from ASM component states to measured composites is an external calculation performed after prediction through $I_{comp}$.
 14. **Composite-sign scope.** Non-negative component predictions imply non-negative measured composites only when the relevant rows of $I_{comp}$ are entrywise non-negative.
 15. **Target availability.** The effluent ASM component states used for training are assumed available directly or through an upstream state-reconstruction step outside the present model.
 
-These assumptions matter because they narrow the scientific claim. The model guarantees non-negative fitted predictions and non-negative deployed predictions because the corresponding optimization problems impose those constraints directly in prediction space. It does not claim that the unconstrained driver $B \phi(u, c_{in})$ is non-negative, and it does not by itself guarantee exact kinetics, thermodynamic feasibility, or universal exact conservation for every unseen operating point. It also does not claim that the joint estimation problem in $(B, \Gamma, \widehat C)$ is globally convex.
+These assumptions matter because they narrow the scientific claim. The model guarantees non-negative fitted predictions and non-negative deployed predictions because the corresponding optimization problems impose those constraints directly in prediction space. It also guarantees exact preservation of the adopted stoichiometric invariants inside the deployed inference program. During training, invariant mismatch is penalized in ASM component space rather than eliminated by a hard equality constraint at every fitted sample. The model does not claim that the unconstrained driver $B \phi(u, c_{in})$ is non-negative, and it does not by itself guarantee exact kinetics, thermodynamic feasibility, or global convexity of the joint estimation problem in $(B, \Gamma, \widehat C)$.
 
 ## 4. Stoichiometric Structure and Conserved Quantities
 
@@ -316,7 +315,7 @@ $$
 c = R^{-1} r(u, c_{in}).
 $$
 
-For training and deployment, however, ICSOR does not rely on this unconstrained expression as the final prediction rule. Instead, it treats the coupled relation as a structural target inside mathematical programs that also enforce prediction nonnegativity and account for invariant residuals. Because $\Gamma$ is estimated jointly with $B$, the coupled relation enters training through a residual term rather than as a fixed known map.
+For training and deployment, however, ICSOR does not rely on this unconstrained expression as the final prediction rule. Instead, it treats the coupled relation as a structural target inside mathematical programs that also enforce prediction nonnegativity, penalize invariant mismatch during training, and enforce exact invariant equalities during deployment-time inference. Because $\Gamma$ is estimated jointly with $B$, the coupled relation enters training through a residual term rather than as a fixed known map.
 
 At dataset level, the fitted prediction matrix $\widehat C$ and the feature-driven driver matrix $\Phi B^T$ are linked through the same coupled structure:
 
@@ -338,7 +337,7 @@ The coupled formulation separates two roles that were previously folded into one
 
 1. The matrix $B$ maps operating conditions and influent composition into a feature-driven driver vector.
 2. The matrix $\Gamma$ mediates direct coupling among ASM components.
-3. The invariant terms in the training and inference programs add a second structural layer tied to stoichiometric conservation.
+3. The invariant-aware training term and the deployed invariant equality constraints add a second structural layer tied to stoichiometric conservation.
 
 This separation changes interpretation. The blocks of $B$ still describe how the second-order feature basis pushes the latent driver, but the final component prediction is mediated through the coupled system and, at deployment, through the constrained inference solve. Because $\Gamma$ is estimated jointly with $B$, interpretation must also account for partial confounding between driver effects and coupling effects: without structural restrictions or regularization on $\Gamma$, some behavior attributed to direct coupling can be absorbed by $B$ and vice versa. Because $B$ is not sign-constrained, the revised model is no longer monotone by construction in the native feature basis. That loss of monotonicity is intentional: it trades the old sign-restricted guarantee for a more expressive but harder estimation problem while moving the non-negativity guarantee into prediction space.
 
@@ -391,7 +390,7 @@ The training mathematical program also introduces a fitted prediction matrix $\w
 
 ### 6.2 Coupled training objective in prediction space
 
-When $\Gamma$ is estimated, the natural component-space fit minimizes squared component error, penalizes invariant residuals, penalizes mismatch between the fitted prediction matrix and the coupled driver relation, and regularizes the driver and coupling terms enough to control identifiability and conditioning. Let $\lambda_B, \lambda_\Gamma \ge 0$, and let $\mathcal R_B$ and $\mathcal R_\Gamma$ denote optional regularizers on $B$ and $\Gamma$.
+When $\Gamma$ is estimated, the natural component-space fit minimizes squared component error, penalizes invariant residuals, penalizes mismatch between the fitted prediction matrix and the coupled driver relation, and regularizes the driver and coupling terms enough to control identifiability and conditioning. Let $\lambda_{inv}, \lambda_B, \lambda_\Gamma \ge 0$, and let $\mathcal R_B$ and $\mathcal R_\Gamma$ denote optional regularizers on $B$ and $\Gamma$.
 
 $$
 (\widehat B, \widehat \Gamma, \widehat C)
@@ -420,15 +419,7 @@ C_{out} - \widehat C
 + \lambda_\Gamma \mathcal R_\Gamma(\Gamma).
 $$
 
-The first term fits the effluent ASM component states directly. The second term penalizes violations of the stoichiometric invariant relations in the fitted prediction matrix. The third term enforces consistency between the fitted prediction matrix and the coupled second-order driver. The last two terms stabilize the driver and coupling estimates when regularization is used. The hard nonnegativity constraint acts on $\widehat C$, while the admissible-set restriction acts on $\Gamma$.
-
-If one wishes to impose exact invariant equalities during training, the second term may be replaced by the linear equality constraint
-
-$$
-\widehat C A^T = C_{in} A^T.
-$$
-
-The present article keeps the invariant treatment in penalized form for clarity and flexibility.
+The first term fits the effluent ASM component states directly. The second term penalizes violations of the stoichiometric invariant relations in the fitted prediction matrix. The third term enforces consistency between the fitted prediction matrix and the coupled second-order driver. The last two terms stabilize the driver and coupling estimates when regularization is used. The hard nonnegativity constraint acts directly on $\widehat C$, while the admissible-set restriction acts on $\Gamma$.
 
 ### 6.3 Blockwise optimization when $\Gamma$ is estimated
 
@@ -519,10 +510,10 @@ $$
 $$
 \widehat C^{(t+1,s)}
 =
-\arg\min_{\widehat C \in \mathbb{R}_{+}^{N \times F}} J(B^{(t+1,s)}, \Gamma^{(t+1,s)}, \widehat C),
+\arg\min_{\widehat C \in \mathbb{R}_{+}^{N \times F}} J(B^{(t+1,s)}, \Gamma^{(t+1,s)}, \widehat C).
 $$
 
-or, in the exact-invariant variant, replace the last domain with $\widehat C \ge 0$ and $\widehat C A^T = C_{in} A^T$. After each full cycle, compute the objective value
+After each full cycle, compute the objective value
 
 $$
 J^{(t+1,s)} = J(B^{(t+1,s)}, \Gamma^{(t+1,s)}, \widehat C^{(t+1,s)}).
@@ -559,38 +550,37 @@ d_* = \widehat B \phi_*,
 \widehat R = I_F - \widehat \Gamma.
 $$
 
-The deployed prediction is defined by the convex quadratic program
+Whenever $\widehat R$ is nonsingular, define the coupled affine predictor by
 
 $$
-\hat c_*
-=
-\arg\min_{c \in \mathbb{R}^{F}}
-\left\|
-\widehat R c - d_*
-\right\|_2^2
-+ \lambda_{pred}
-\left\|
-A(c - c_{in,*})
-\right\|_2^2
-\qquad
-\text{subject to } c \ge 0.
+c_{aff} = \widehat R^{-1} d_*.
 $$
 
-This is the deployed inference rule of the model. It is not merely the direct evaluation of $\widehat B \phi_*$. The first term asks the predicted component vector to remain close to the learned coupled second-order driver. The second term penalizes invariant mismatch at deployment. The hard inequality enforces componentwise nonnegative predictions.
+Let $w_c \in \mathbb{R}_{+}^{F}$ denote a user-chosen componentwise correction-weight vector, and introduce an auxiliary vector $r \in \mathbb{R}^{F}$ that bounds the componentwise absolute correction away from $c_{aff}$.
 
-The inference Hessian is
+The deployed prediction is defined by the convex linear program
 
 $$
-H_{pred} = 2(\widehat R^T \widehat R + \lambda_{pred} A^T A) \succeq 0,
+\min_{c \in \mathbb{R}^{F},\, r \in \mathbb{R}^{F}} \; w_c^T r
 $$
 
-so the deployment problem is convex conditional on the trained parameters. If exact invariant preservation is mandatory during deployment, the penalty term may be replaced by the equality constraint
+subject to
 
 $$
 A c = A c_{in,*},
+\qquad
+c \ge 0,
 $$
 
-Under the adopted non-negative concentration-equivalent state basis, the equality-constrained feasible set contains $c_{in,*}$ and is therefore not empty. In practice, the penalized form can still be useful when one wants softer invariant enforcement under model misspecification, uncertain reconstructed states, or other sources of mismatch between the learned driver and the exact invariant equations.
+$$
+-r \le c - c_{aff} \le r,
+\qquad
+r \ge 0.
+$$
+
+This is the deployed inference rule of the model. It is not merely the direct evaluation of $\widehat B \phi_*$. The objective minimizes a weighted absolute correction away from the coupled affine predictor while preserving the stoichiometric invariants exactly and enforcing componentwise nonnegative predictions. The auxiliary variable $r$ linearizes the absolute correction term component by component.
+
+Because the objective is linear and every constraint is linear, the deployment problem is a convex linear program conditional on the trained parameters. Under the adopted non-negative concentration-equivalent state basis, the feasible set contains $(c, r) = (c_{in,*}, |c_{in,*} - c_{aff}|)$ and is therefore not empty.
 
 ### 6.5 What this formulation guarantees and what it does not
 
@@ -600,8 +590,8 @@ The formulation guarantees the following.
 2. **Non-negative deployed predictions.** The deployed prediction vector is nonnegative because the inference program imposes $c \ge 0$ directly.
 3. **Component-space training target.** The model is trained on ASM component states directly on the adopted concentration-equivalent basis.
 4. **Explicit learned coupling.** Cross-component dependence enters the surrogate through the estimated coupling matrix $\Gamma$ and the coupled-system matrix $R = I_F - \Gamma$.
-5. **Invariant-aware estimation and inference.** Conservation enters training and, if desired, deployment through invariant residual terms or equality constraints in ASM component space.
-6. **Conditional convex deployment.** Once $(\widehat B, \widehat \Gamma)$ have been trained, deployment-time inference is a convex quadratic program in the predicted component vector.
+5. **Invariant-aware fitted predictions and exact deployed conservation.** Conservation enters training through invariant residual terms in ASM component space and enters deployment through hard linear equality constraints.
+6. **Conditional convex deployment.** Once $(\widehat B, \widehat \Gamma)$ have been trained, deployment-time inference is a convex linear program in the predicted component vector and its auxiliary correction variable.
 7. **External measurement collapse.** Conversion to measured aggregates remains outside the model.
 
 It does not guarantee the following.
@@ -610,11 +600,11 @@ It does not guarantee the following.
 2. **Nonnegative unconstrained coupled solutions.** The formal unconstrained solution $R^{-1} B \phi(u, c_{in})$ need not be nonnegative.
 3. **Global convexity of training.** Joint estimation of $(B, \Gamma, \widehat C)$ is not a one-shot convex program.
 4. **Unique identification of driver and coupling.** Without sufficient excitation, structural restrictions, and regularization, some effects of $B$ and $\Gamma$ can be partially confounded.
-5. **Universal exact conservation at every unseen point.** With finite penalties $\lambda_{inv}$ and $\lambda_{pred}$, invariants are encouraged but not automatically exact at every unseen point.
+5. **Exact fitted conservation at training points.** With finite $\lambda_{inv}$, the training objective encourages but does not guarantee exact invariant satisfaction in $\widehat C$.
 6. **Full biological realizability.** Non-negative component states are necessary but not sufficient for full process feasibility.
 7. **Monotonicity in the feature basis.** Because the coefficients are unrestricted in sign, the revised model is not monotone by construction in the native second-order feature coordinates.
 
-If exact equality-constrained fitting of invariants or exact equality-constrained deployment is required, one must switch from the penalized variants above to the corresponding equality-constrained quadratic programs and analyze feasibility directly.
+If exact equality-constrained fitting is required as well, the training penalty term must be replaced by the corresponding fitted-state equality constraints and feasibility must be checked against the adopted invariant matrix, system boundary, and state basis.
 
 ## 7. External Composition-Matrix Collapse
 
@@ -682,7 +672,7 @@ Under these conditions different parameter triples $(B, \Gamma, \widehat C)$ can
 Therefore interpretation should focus on the following objects in order of reliability:
 
 1. deployed ASM component predictions produced by the inference program,
-2. fitted prediction matrices and invariant residuals,
+2. fitted prediction matrices and invariant-residual diagnostics,
 3. coupling patterns in $\Gamma$ that remain stable across admissible initializations and regularization choices,
 4. blockwise driver contributions of $B$,
 5. individual coefficients only when the design matrix is sufficiently informative and the coupling estimate is stable.
@@ -693,13 +683,13 @@ Training is no longer a one-shot convex quadratic program. It is a structured bl
 
 1. a convex least-squares or ridge-type update for $B$,
 2. a convex quadratic program or constrained least-squares update for $\Gamma$, and
-3. a convex quadratic program with nonnegativity constraints for $\widehat C$.
+3. a convex quadratic program with nonnegativity constraints and invariant-residual penalties for $\widehat C$.
 
-Standard convex machinery therefore still applies within each block, including active-set methods, interior-point methods, operator-splitting methods, and augmented-Lagrangian variants. If exact invariant equalities are added to the $\widehat C$-step, they enter as linear equality constraints without changing convexity of that block.
+Standard convex machinery therefore still applies within each block, including active-set methods, interior-point methods, operator-splitting methods, and augmented-Lagrangian variants. In the $\widehat C$-step, the invariant penalty preserves convexity without requiring additional linear equality constraints.
 
 In implementation terms, the training loop is a Gauss-Seidel sweep in the order $B \rightarrow \Gamma \rightarrow \widehat C$, with warm starts passed from one outer iteration to the next. Each restart should record the final objective value, the conditioning of $I_F - \Gamma$, and any active admissibility constraints on $\Gamma$; the retained estimate is the best feasible restart rather than merely the last one run.
 
-Deployment-time inference is substantially smaller. For each new sample, one solves a convex quadratic program in only $F$ variables. That means the additional online cost is typically modest relative to the cost of plant simulation, while still giving a hard nonnegativity guarantee on the deployed prediction.
+Deployment-time inference is substantially smaller. For each new sample, one solves a convex linear program in the $2F$ variables $(c, r)$. That means the additional online cost is typically modest relative to the cost of plant simulation, while still giving a hard nonnegativity guarantee and exact invariant preservation on the deployed prediction.
 
 Three practical points matter.
 
@@ -713,7 +703,7 @@ Three practical points matter.
 
 Once $(\widehat B, \widehat \Gamma)$ have been estimated, the deployed predictor is obtained in two steps.
 
-1. Build the feature-driven driver $d_* = \widehat B \phi(u_*, c_{in,*})$ and the learned coupled-system matrix $\widehat R = I_F - \widehat \Gamma$.
+1. Build the feature-driven driver $d_* = \widehat B \phi(u_*, c_{in,*})$, the learned coupled-system matrix $\widehat R = I_F - \widehat \Gamma$, and the coupled affine predictor $c_{aff} = \widehat R^{-1} d_*$.
 2. Solve the deployment-time inference program from Section 6.4 to obtain $\hat c_*$.
 
 This optimizer is the native output of ICSOR. If an application requires measured composites, the external reporting vector is then
@@ -730,9 +720,9 @@ That second equation is a reporting formula, not a redefinition of the model tar
 
 The revised formulation has several possible regime changes.
 
-1. In training, the nonnegativity constraints act on the entries of the fitted prediction matrix $\widehat C$.
+1. In training, the nonnegativity constraints act on the entries of the fitted prediction matrix $\widehat C$, while the invariant residual penalty remains active for every sample.
 2. If the admissible set $\mathcal G$ imposes inequality, sign, magnitude, or sparsity restrictions on $\Gamma$, those coupling constraints can also become active during training.
-3. In deployment, the nonnegativity constraints act on the entries of the inferred component vector $\hat c_*$.
+3. In deployment, the nonnegativity constraints act on the entries of the inferred component vector $\hat c_*$, while the invariant equalities remain active for every solve.
 
 These regime changes matter because the final deployed predictor is piecewise smooth rather than globally affine, even after the feature map has been fixed.
 
@@ -782,9 +772,9 @@ The model still targets the effluent ASM component states directly, so the scien
 
 The non-negativity guarantee is no longer claimed as a property of the coefficient matrix. It comes instead from the optimization problems that define fitted and deployed predictions. This restores sign flexibility in $B$, allows decreasing effects to be represented directly in the driver, and moves the hard sign guarantee to the place where it matters physically: the predicted ASM component states.
 
-### 10.3 Invariants act during training and can also act during deployment
+### 10.3 Invariants act during training and deployment in different ways
 
-Stoichiometric invariants remain structural guidance, but they now appear in two places. They shape the fitted prediction matrix during training, and they may also shape the deployed prediction during inference if the user keeps the invariant penalty or invariant equalities in the deployment program. The physics is therefore enforced through optimization rather than through a closed-form algebraic projector.
+Stoichiometric invariants remain structural guidance, and in this formulation they appear in two places. They shape the fitted prediction matrix during training through an invariant-residual penalty, and they also shape the deployed prediction during inference through hard linear equality constraints. The physics is therefore enforced through optimization rather than through a closed-form algebraic projector.
 
 ### 10.4 Measurement collapse remains a reporting decision
 
@@ -798,7 +788,7 @@ ICSOR is deliberately narrower than a full mechanistic reactor model. Its main l
 2. It requires effluent ASM component-state targets for training, either directly from a simulator or from an upstream reconstruction step.
 3. Joint estimation of $(B, \Gamma, \widehat C)$ is nonconvex, so practical algorithms generally return local solutions rather than a guaranteed global optimum.
 4. The non-negativity guarantee applies to the fitted and deployed outputs of the optimization programs, not to the unconstrained driver $B \phi(u, c_{in})$ or to the unconstrained coupled solution $R^{-1} B \phi(u, c_{in})$.
-5. Deployment requires solving a quadratic program for every prediction point, so runtime depends on solver choice, conditioning, and tolerances.
+5. Deployment requires solving a linear program for every prediction point, so runtime depends on solver choice, conditioning, and tolerances.
 6. Identification of the coupling matrix depends on admissible-set restrictions, regularization, and operating-domain excitation; without them, coupling effects and driver effects can be partially confounded.
 7. If $R = I_F - \Gamma$ is poorly conditioned or nearly singular, the coupled architecture can become numerically sensitive.
 8. The second-order feature basis can be statistically fragile when it is weakly excited or highly collinear.
@@ -807,7 +797,7 @@ ICSOR is deliberately narrower than a full mechanistic reactor model. Its main l
 11. Uncertainty for the final deployed predictor is most defensibly handled by bootstrap refitting rather than by simple closed-form covariance formulas.
 12. Non-negative component predictions imply non-negative externally reported composites only when the relevant rows of $I_{comp}$ are entrywise non-negative.
 13. The invariant theory is written on a concentration-equivalent linear component basis and does not transfer unchanged to arbitrary normalized fractions or other nonlinear state parameterizations.
-14. A misspecified stoichiometric matrix, incorrect system boundary, poorly chosen admissible set for $\Gamma$, or uncertain composition matrix can yield mathematically consistent optimization problems for the wrong physical system.
+14. A misspecified stoichiometric matrix, incorrect system boundary, poorly chosen admissible set for $\Gamma$, or uncertain composition matrix can yield mathematically consistent optimization problems for the wrong physical system, particularly because the deployed inference problem enforces the adopted invariant equalities exactly.
 
 These limitations should be stated explicitly in any application. Doing so does not weaken the model. It defines the scope of its guarantees correctly.
 
@@ -815,7 +805,7 @@ These limitations should be stated explicitly in any application. Doing so does 
 
 ICSOR is formulated here as a direct ASM component-space surrogate with an explicit separation between feature-driven forcing and final deployed prediction. It takes operational variables and influent ASM component states as input, builds a second-order driver $B \phi(u, c_{in})$, estimates a coupling matrix $\Gamma$, and predicts effluent ASM component states through optimization problems posed directly in component space.
 
-Training is cast as a jointly nonconvex but blockwise structured mathematical program. It learns the driver coefficients, coupling coefficients, and fitted nonnegative prediction matrix while penalizing invariant residuals and coupled-system mismatch. Deployment is cast as a convex quadratic program conditional on the trained parameters: for each new sample, the final component prediction is the optimizer of a constrained inference problem that enforces componentwise nonnegativity and can optionally enforce or penalize invariant residuals. Measured composites remain external calculations through the composition matrix.
+Training is cast as a jointly nonconvex but blockwise structured mathematical program. It learns the driver coefficients, coupling coefficients, and fitted nonnegative prediction matrix while penalizing invariant mismatch and coupled-system mismatch. Deployment is cast as a convex linear program conditional on the trained parameters: for each new sample, the final component prediction is the optimizer of a constrained inference problem that enforces both componentwise nonnegativity and the invariant equalities while minimizing a weighted absolute correction away from the coupled affine predictor. Measured composites remain external calculations through the composition matrix.
 
 Under that reading, ICSOR is best understood as a coupled, second-order, component-space surrogate whose scientific target remains the ASM component-state vector itself, whose coupling structure is learned rather than prescribed, whose measurement layer remains external, and whose non-negativity guarantee is created by mathematical programming at both training and inference rather than by coefficient sign restrictions.
 

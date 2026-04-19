@@ -35,6 +35,17 @@ def _compute_a_matrix(petersen_matrix: np.ndarray) -> np.ndarray:
     return a_matrix
 
 
+def _compute_invariant_max_abs(
+    predictions: np.ndarray,
+    constraint_reference: np.ndarray,
+    a_matrix: np.ndarray,
+) -> float:
+    residuals = (np.asarray(predictions, dtype=float) - np.asarray(constraint_reference, dtype=float)) @ a_matrix.T
+    if residuals.size == 0:
+        return 0.0
+    return float(np.max(np.abs(residuals)))
+
+
 def _tiny_params() -> dict[str, object]:
     params = copy.deepcopy(load_icsor_coupled_qp_params())
     params["hyperparameters"]["random_seed"] = 11
@@ -47,6 +58,8 @@ def _tiny_params() -> dict[str, object]:
             "conditioning_max": 1e6,
             "osqp_max_iter": 2000,
             "osqp_polish": False,
+            "highs_max_iter": 2000,
+            "parallel_workers": 2,
             "gamma_abs_bound": 0.3,
         }
     )
@@ -87,6 +100,15 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
 
         projected_fractional = result["test_report"]["projected_fractional_predictions"].to_numpy(dtype=float)
         self.assertGreaterEqual(float(projected_fractional.min()), -1e-8)
+        projected_constraint_max_abs = _compute_invariant_max_abs(
+            projected_fractional,
+            dataset_splits.test.constraint_reference.to_numpy(dtype=float),
+            self.a_matrix,
+        )
+        self.assertLessEqual(
+            projected_constraint_max_abs,
+            float(params["training_defaults"]["constraint_tolerance"]) + 1e-8,
+        )
 
         gamma_matrix = np.asarray(result["model_bundle"]["Gamma_matrix"], dtype=float)
         gamma_abs_bound = float(params["training_defaults"]["gamma_abs_bound"])
@@ -129,6 +151,15 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
             float(prediction_result["projected_fractional_predictions"].to_numpy(dtype=float).min()),
             -1e-8,
         )
+        projected_constraint_max_abs = _compute_invariant_max_abs(
+            prediction_result["projected_fractional_predictions"].to_numpy(dtype=float),
+            self.icsor_dataset.constraint_reference.iloc[:6].to_numpy(dtype=float),
+            self.a_matrix,
+        )
+        self.assertLessEqual(
+            projected_constraint_max_abs,
+            float(params["training_defaults"]["constraint_tolerance"]) + 1e-8,
+        )
 
     def test_training_enforces_gamma_admissibility_and_conditioning(self) -> None:
         params = _tiny_params()
@@ -147,10 +178,15 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
         gamma_matrix = np.asarray(training_result["Gamma_matrix"], dtype=float)
         conditioning = float(training_result["best_restart_summary"]["conditioning"])
         conditioning_max = float(params["training_defaults"]["conditioning_max"])
+        fitted_predictions = training_result["fitted_predictions"].to_numpy(dtype=float)
 
         np.testing.assert_allclose(np.diag(gamma_matrix), np.zeros(gamma_matrix.shape[0]), atol=1e-10)
         self.assertLessEqual(float(np.max(np.abs(gamma_matrix))), float(params["training_defaults"]["gamma_abs_bound"]) + 1e-7)
         self.assertLessEqual(conditioning, conditioning_max + 1e-6)
+        self.assertGreaterEqual(
+            float(fitted_predictions.min()),
+            -float(params["training_defaults"]["nonnegativity_tolerance"]) - 1e-8,
+        )
 
         chat_update_history = list(training_result["training_diagnostics"]["chat_update_history"])
         gamma_update_history = list(training_result["training_diagnostics"]["gamma_update_history"])

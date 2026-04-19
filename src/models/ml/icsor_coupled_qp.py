@@ -1,7 +1,9 @@
-"""ICSOR coupled-QP model with OSQP-based block-coordinate training and deployment."""
+"""ICSOR coupled-QP model with OSQP-based training and HiGHS LP deployment."""
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -9,6 +11,7 @@ import numpy as np
 import osqp
 import pandas as pd
 from scipy import sparse as sp
+from scipy.optimize import linprog
 
 from src.models.ml.icsor import build_icsor_design_frame
 from src.utils.optuna import create_progress_bar
@@ -42,7 +45,6 @@ DEFAULT_LAMBDA_INV = 1.0
 DEFAULT_LAMBDA_SYS = 1.0
 DEFAULT_LAMBDA_B = 1e-4
 DEFAULT_LAMBDA_GAMMA = 1e-4
-DEFAULT_LAMBDA_PRED = 1.0
 DEFAULT_GAMMA_ABS_BOUND = 0.5
 DEFAULT_MAX_OUTER_ITERATIONS = 50
 DEFAULT_N_RESTARTS = 3
@@ -57,6 +59,11 @@ DEFAULT_OSQP_VERBOSE = False
 DEFAULT_WARM_START = True
 DEFAULT_NONNEGATIVITY_TOLERANCE = 1e-10
 DEFAULT_CONSTRAINT_TOLERANCE = 1e-8
+DEFAULT_HIGHS_PRESOLVE = True
+DEFAULT_HIGHS_MAX_ITER = 10000
+DEFAULT_HIGHS_VERBOSE = False
+DEFAULT_HIGHS_RETRY_WITHOUT_PRESOLVE = True
+DEFAULT_PREDICTION_PARALLEL_WORKERS = 0
 
 
 def load_icsor_coupled_qp_params(repo_root: str | Path | None = None) -> dict[str, Any]:
@@ -91,7 +98,6 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         "lambda_sys": float(model_hyperparameters.get("lambda_sys", DEFAULT_LAMBDA_SYS)),
         "lambda_B": float(model_hyperparameters.get("lambda_B", DEFAULT_LAMBDA_B)),
         "lambda_gamma": float(model_hyperparameters.get("lambda_gamma", DEFAULT_LAMBDA_GAMMA)),
-        "lambda_pred": float(model_hyperparameters.get("lambda_pred", DEFAULT_LAMBDA_PRED)),
         "gamma_abs_bound": float(model_hyperparameters.get("gamma_abs_bound", DEFAULT_GAMMA_ABS_BOUND)),
         "max_outer_iterations": int(model_hyperparameters.get("max_outer_iterations", DEFAULT_MAX_OUTER_ITERATIONS)),
         "n_restarts": int(model_hyperparameters.get("n_restarts", DEFAULT_N_RESTARTS)),
@@ -108,6 +114,18 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
             model_hyperparameters.get("nonnegativity_tolerance", DEFAULT_NONNEGATIVITY_TOLERANCE)
         ),
         "constraint_tolerance": float(model_hyperparameters.get("constraint_tolerance", DEFAULT_CONSTRAINT_TOLERANCE)),
+        "highs_presolve": bool(model_hyperparameters.get("highs_presolve", DEFAULT_HIGHS_PRESOLVE)),
+        "highs_max_iter": int(model_hyperparameters.get("highs_max_iter", DEFAULT_HIGHS_MAX_ITER)),
+        "highs_verbose": bool(model_hyperparameters.get("highs_verbose", DEFAULT_HIGHS_VERBOSE)),
+        "highs_retry_without_presolve": bool(
+            model_hyperparameters.get(
+                "highs_retry_without_presolve",
+                DEFAULT_HIGHS_RETRY_WITHOUT_PRESOLVE,
+            )
+        ),
+        "parallel_workers": int(
+            model_hyperparameters.get("parallel_workers", DEFAULT_PREDICTION_PARALLEL_WORKERS)
+        ),
     }
 
     if settings["lambda_inv"] < 0.0:
@@ -118,8 +136,6 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         raise ValueError("icsor_coupled_qp lambda_B must be nonnegative.")
     if settings["lambda_gamma"] < 0.0:
         raise ValueError("icsor_coupled_qp lambda_gamma must be nonnegative.")
-    if settings["lambda_pred"] < 0.0:
-        raise ValueError("icsor_coupled_qp lambda_pred must be nonnegative.")
     if settings["gamma_abs_bound"] <= 0.0:
         raise ValueError("icsor_coupled_qp gamma_abs_bound must be positive.")
     if settings["max_outer_iterations"] < 1:
@@ -142,6 +158,10 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         raise ValueError("icsor_coupled_qp nonnegativity_tolerance must be positive.")
     if settings["constraint_tolerance"] <= 0.0:
         raise ValueError("icsor_coupled_qp constraint_tolerance must be positive.")
+    if settings["highs_max_iter"] < 1:
+        raise ValueError("icsor_coupled_qp highs_max_iter must be at least 1.")
+    if settings["parallel_workers"] < 0:
+        raise ValueError("icsor_coupled_qp parallel_workers must be greater than or equal to 0.")
 
     return settings
 
@@ -191,38 +211,67 @@ def _is_osqp_solved(status: str | None) -> bool:
     return resolved_status in {"solved", "solved inaccurate"}
 
 
+def _build_qp_constraint_system(n_outputs: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    nonnegativity_matrix = np.eye(n_outputs, dtype=float)
+    nonnegativity_lower = np.zeros(n_outputs, dtype=float)
+    nonnegativity_upper = np.full(n_outputs, np.inf, dtype=float)
+    return nonnegativity_matrix, nonnegativity_lower, nonnegativity_upper
+
+
 def _solve_b_update(
     design_matrix: np.ndarray,
     fitted_predictions: np.ndarray,
     gamma_matrix: np.ndarray,
     settings: Mapping[str, Any],
+    *,
+    b_update_cache: Mapping[str, Any] | None = None,
 ) -> np.ndarray:
     lambda_sys = float(settings["lambda_sys"])
     lambda_B = float(settings["lambda_B"])
 
     response_matrix = fitted_predictions @ (np.eye(gamma_matrix.shape[0], dtype=float) - gamma_matrix).T
-    n_samples, n_features = design_matrix.shape
-    if n_features > n_samples:
-        # Use the dual system when features outnumber samples to avoid large dense solves.
-        lhs_matrix = lambda_sys * (design_matrix @ design_matrix.T)
-        if lambda_B > 0.0:
-            lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
-        try:
-            dual_solution = np.linalg.solve(lhs_matrix, response_matrix)
-        except np.linalg.LinAlgError:
-            dual_solution = np.linalg.pinv(lhs_matrix, rcond=1e-10) @ response_matrix
-        solved_matrix = design_matrix.T @ dual_solution
+    cache = dict(b_update_cache) if b_update_cache is not None else _prepare_b_update_cache(design_matrix, settings)
+
+    if bool(cache["use_dual"]):
+        dual_solution = np.asarray(cache["lhs_solver"], dtype=float) @ response_matrix
+        solved_matrix = np.asarray(cache["design_transpose"], dtype=float) @ dual_solution
     else:
-        lhs_matrix = lambda_sys * (design_matrix.T @ design_matrix)
-        if lambda_B > 0.0:
-            lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
-        rhs_matrix = lambda_sys * (design_matrix.T @ response_matrix)
-        try:
-            solved_matrix = np.linalg.solve(lhs_matrix, rhs_matrix)
-        except np.linalg.LinAlgError:
-            solved_matrix = np.linalg.pinv(lhs_matrix, rcond=1e-10) @ rhs_matrix
+        rhs_matrix = lambda_sys * (np.asarray(cache["design_transpose"], dtype=float) @ response_matrix)
+        solved_matrix = np.asarray(cache["lhs_solver"], dtype=float) @ rhs_matrix
 
     return solved_matrix.T
+
+
+def _prepare_b_update_cache(
+    design_matrix: np.ndarray,
+    settings: Mapping[str, Any],
+) -> dict[str, Any]:
+    lambda_sys = float(settings["lambda_sys"])
+    lambda_B = float(settings["lambda_B"])
+
+    n_samples, n_features = design_matrix.shape
+    design_transpose = design_matrix.T
+    use_dual = bool(n_features > n_samples)
+
+    if use_dual:
+        lhs_matrix = lambda_sys * (design_matrix @ design_transpose)
+        if lambda_B > 0.0:
+            lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
+    else:
+        lhs_matrix = lambda_sys * (design_transpose @ design_matrix)
+        if lambda_B > 0.0:
+            lhs_matrix = lhs_matrix + lambda_B * np.eye(lhs_matrix.shape[0], dtype=float)
+
+    try:
+        lhs_solver = np.linalg.inv(lhs_matrix)
+    except np.linalg.LinAlgError:
+        lhs_solver = np.linalg.pinv(lhs_matrix, rcond=1e-10)
+
+    return {
+        "use_dual": use_dual,
+        "design_transpose": design_transpose,
+        "lhs_solver": lhs_solver,
+    }
 
 
 def _enforce_gamma_conditioning(
@@ -278,20 +327,33 @@ def _solve_gamma_update(
     residual_target = fitted_predictions - driver_matrix
     warm_start_gamma = np.asarray(initial_gamma, dtype=float) if initial_gamma is not None else None
 
+    cross_residual = fitted_predictions.T @ residual_target
+    base_lower_bounds = np.full(n_outputs, -gamma_abs_bound, dtype=float)
+    base_upper_bounds = np.full(n_outputs, gamma_abs_bound, dtype=float)
+    initial_lower_bounds = base_lower_bounds.copy()
+    initial_upper_bounds = base_upper_bounds.copy()
+    initial_lower_bounds[0] = 0.0
+    initial_upper_bounds[0] = 0.0
+    solver = _make_osqp_solver(
+        quadratic_matrix,
+        np.zeros(n_outputs, dtype=float),
+        identity_constraints,
+        initial_lower_bounds,
+        initial_upper_bounds,
+        settings,
+    )
+
     for target_index in range(n_outputs):
-        linear_vector = -2.0 * lambda_sys * (fitted_predictions.T @ residual_target[:, target_index])
-        lower_bounds = np.full(n_outputs, -gamma_abs_bound, dtype=float)
-        upper_bounds = np.full(n_outputs, gamma_abs_bound, dtype=float)
+        linear_vector = -2.0 * lambda_sys * cross_residual[:, target_index]
+        lower_bounds = base_lower_bounds.copy()
+        upper_bounds = base_upper_bounds.copy()
         lower_bounds[target_index] = 0.0
         upper_bounds[target_index] = 0.0
 
-        solver = _make_osqp_solver(
-            quadratic_matrix,
-            linear_vector,
-            identity_constraints,
-            lower_bounds,
-            upper_bounds,
-            settings,
+        solver.update(
+            q=np.asarray(linear_vector, dtype=float),
+            l=np.asarray(lower_bounds, dtype=float),
+            u=np.asarray(upper_bounds, dtype=float),
         )
         if warm_start_gamma is not None:
             solver.warm_start(x=np.asarray(warm_start_gamma[target_index], dtype=float))
@@ -339,9 +401,7 @@ def _solve_chat_update(
         + lambda_sys * rt_r_matrix
     )
 
-    constraint_matrix = np.eye(n_outputs, dtype=float)
-    lower_bounds = np.zeros(n_outputs, dtype=float)
-    upper_bounds = np.full(n_outputs, np.inf, dtype=float)
+    constraint_matrix, lower_bounds, upper_bounds = _build_qp_constraint_system(n_outputs)
 
     solver = _make_osqp_solver(
         quadratic_matrix,
@@ -367,11 +427,12 @@ def _solve_chat_update(
         )
         solver.update(q=np.asarray(linear_vector, dtype=float))
 
+        if warm_start_matrix is not None:
+            initial_guess = np.asarray(warm_start_matrix[sample_index], dtype=float)
+        else:
+            initial_guess = np.maximum(np.asarray(target_matrix[sample_index], dtype=float), 0.0)
+
         if bool(settings["warm_start"]):
-            if warm_start_matrix is not None:
-                initial_guess = np.asarray(warm_start_matrix[sample_index], dtype=float)
-            else:
-                initial_guess = np.maximum(target_matrix[sample_index], 0.0)
             solver.warm_start(x=initial_guess)
 
         result = solver.solve()
@@ -382,7 +443,7 @@ def _solve_chat_update(
         if _is_osqp_solved(status_text) and result.x is not None:
             fitted_predictions[sample_index] = np.maximum(np.asarray(result.x, dtype=float), 0.0)
         else:
-            fitted_predictions[sample_index] = np.maximum(target_matrix[sample_index], 0.0)
+            fitted_predictions[sample_index] = initial_guess
 
     return fitted_predictions, {
         "status_counts": pd.Series(status_values).value_counts(dropna=False).to_dict(),
@@ -430,12 +491,19 @@ def _run_coupled_qp_restart(
     *,
     initial_gamma: np.ndarray,
 ) -> dict[str, Any]:
+    b_update_cache = _prepare_b_update_cache(design_matrix, settings)
     gamma_matrix, conditioning_value, shrink_factor = _enforce_gamma_conditioning(
         initial_gamma,
         conditioning_max=float(settings["conditioning_max"]),
     )
     fitted_predictions = np.maximum(target_matrix, 0.0)
-    b_matrix = _solve_b_update(design_matrix, fitted_predictions, gamma_matrix, settings)
+    b_matrix = _solve_b_update(
+        design_matrix,
+        fitted_predictions,
+        gamma_matrix,
+        settings,
+        b_update_cache=b_update_cache,
+    )
 
     objective_history: list[float] = []
     gamma_update_history: list[dict[str, Any]] = []
@@ -454,7 +522,13 @@ def _run_coupled_qp_restart(
     objective_history.append(previous_objective)
 
     for _ in range(int(settings["max_outer_iterations"])):
-        b_updated = _solve_b_update(design_matrix, fitted_predictions, gamma_matrix, settings)
+        b_updated = _solve_b_update(
+            design_matrix,
+            fitted_predictions,
+            gamma_matrix,
+            settings,
+            b_update_cache=b_update_cache,
+        )
         driver_matrix = design_matrix @ b_updated.T
 
         gamma_candidate, gamma_update_metadata = _solve_gamma_update(
@@ -546,6 +620,188 @@ def _compute_constraint_max_abs(
     return float(np.max(np.abs(residual)))
 
 
+def _satisfies_qp_constraints(
+    predicted_state: np.ndarray,
+    reference_state: np.ndarray,
+    invariant_matrix: np.ndarray,
+    *,
+    nonnegativity_tolerance: float,
+    constraint_tolerance: float,
+) -> bool:
+    min_component = float(np.min(predicted_state))
+    constraint_max_abs = _compute_constraint_max_abs(predicted_state, reference_state, invariant_matrix)
+    return bool(min_component >= -nonnegativity_tolerance and constraint_max_abs <= constraint_tolerance)
+
+
+def _resolve_parallel_workers(requested_workers: int, sample_count: int) -> int:
+    if sample_count <= 1:
+        return 1
+
+    available_workers = os.cpu_count() or 1
+    if requested_workers == 0:
+        requested_workers = max(available_workers - 1, 1)
+
+    return min(max(requested_workers, 1), available_workers, sample_count)
+
+
+def _build_deployment_lp_template(
+    invariant_matrix: np.ndarray,
+    n_outputs: int,
+) -> dict[str, Any]:
+    identity_matrix = np.eye(n_outputs, dtype=float)
+    inequality_matrix = np.vstack(
+        [
+            np.hstack([identity_matrix, -identity_matrix]),
+            np.hstack([-identity_matrix, -identity_matrix]),
+        ]
+    )
+    equality_matrix = None
+    if invariant_matrix.shape[0] > 0:
+        zero_matrix = np.zeros((invariant_matrix.shape[0], n_outputs), dtype=float)
+        equality_matrix = np.hstack([invariant_matrix, zero_matrix])
+
+    return {
+        "objective": np.concatenate([np.zeros(n_outputs, dtype=float), np.ones(n_outputs, dtype=float)]),
+        "A_ub": inequality_matrix,
+        "A_eq": equality_matrix,
+        "bounds": [(0.0, None)] * (2 * n_outputs),
+        "n_outputs": n_outputs,
+    }
+
+
+def _run_highs_deployment_lp(
+    affine_point: np.ndarray,
+    constraint_reference: np.ndarray,
+    invariant_matrix: np.ndarray,
+    lp_template: Mapping[str, Any],
+    *,
+    highs_presolve: bool,
+    highs_max_iter: int,
+    highs_verbose: bool,
+):
+    b_eq = None
+    if invariant_matrix.shape[0] > 0:
+        b_eq = invariant_matrix @ np.asarray(constraint_reference, dtype=float)
+
+    options = {
+        "presolve": bool(highs_presolve),
+        "disp": bool(highs_verbose),
+        "maxiter": int(highs_max_iter),
+    }
+    affine_array = np.asarray(affine_point, dtype=float)
+    b_ub = np.concatenate([affine_array, -affine_array])
+
+    return linprog(
+        c=np.asarray(lp_template["objective"], dtype=float),
+        A_ub=np.asarray(lp_template["A_ub"], dtype=float),
+        b_ub=np.asarray(b_ub, dtype=float),
+        A_eq=None if lp_template["A_eq"] is None else np.asarray(lp_template["A_eq"], dtype=float),
+        b_eq=None if b_eq is None else np.asarray(b_eq, dtype=float),
+        bounds=list(lp_template["bounds"]),
+        method="highs",
+        options=options,
+    )
+
+
+def _solve_single_deployment_lp(
+    raw_state: np.ndarray,
+    influent_state: np.ndarray,
+    invariant_matrix: np.ndarray,
+    lp_template: Mapping[str, Any],
+    settings: Mapping[str, Any],
+) -> dict[str, Any]:
+    nonnegativity_tolerance = float(settings["nonnegativity_tolerance"])
+    constraint_tolerance = float(settings["constraint_tolerance"])
+
+    raw_state_array = np.asarray(raw_state, dtype=float)
+    influent_state_array = np.asarray(influent_state, dtype=float)
+    raw_constraint_max_abs = _compute_constraint_max_abs(raw_state_array, influent_state_array, invariant_matrix)
+    raw_min_component = float(np.min(raw_state_array))
+    raw_feasible = bool(
+        raw_min_component >= -nonnegativity_tolerance and raw_constraint_max_abs <= constraint_tolerance
+    )
+
+    if raw_feasible:
+        projected_state = raw_state_array.copy()
+        projected_state[(projected_state < 0.0) & (projected_state >= -nonnegativity_tolerance)] = 0.0
+        return {
+            "projected_state": projected_state,
+            "projection_stage": "raw_feasible",
+            "raw_feasible": True,
+            "lp_active": False,
+            "solver_status": "skipped_raw_feasible",
+            "solver_iterations": 0,
+            "raw_constraint_max_abs": raw_constraint_max_abs,
+            "raw_min_component": raw_min_component,
+        }
+
+    presolve_attempts = [bool(settings["highs_presolve"])]
+    if bool(settings["highs_presolve"]) and bool(settings["highs_retry_without_presolve"]):
+        presolve_attempts.append(False)
+
+    fallback_state = influent_state_array.copy()
+    last_status = "fallback_influent_state"
+    last_iterations = 0
+
+    for attempt_index, attempt_presolve in enumerate(presolve_attempts):
+        result = _run_highs_deployment_lp(
+            raw_state_array,
+            influent_state_array,
+            invariant_matrix,
+            lp_template,
+            highs_presolve=attempt_presolve,
+            highs_max_iter=int(settings["highs_max_iter"]),
+            highs_verbose=bool(settings["highs_verbose"]),
+        )
+        last_iterations = int(getattr(result, "nit", 0) or 0)
+        message = str(getattr(result, "message", "")).strip()
+
+        if bool(getattr(result, "success", False)) and result.x is not None:
+            candidate_state = np.asarray(result.x[: int(lp_template["n_outputs"])], dtype=float)
+            if _satisfies_qp_constraints(
+                candidate_state,
+                influent_state_array,
+                invariant_matrix,
+                nonnegativity_tolerance=nonnegativity_tolerance,
+                constraint_tolerance=constraint_tolerance,
+            ):
+                candidate_state = candidate_state.copy()
+                candidate_state[
+                    (candidate_state < 0.0) & (candidate_state >= -nonnegativity_tolerance)
+                ] = 0.0
+                if attempt_index > 0 and not attempt_presolve:
+                    solver_status = "optimal_retry_without_presolve"
+                elif attempt_presolve:
+                    solver_status = "optimal"
+                else:
+                    solver_status = "optimal_no_presolve"
+                return {
+                    "projected_state": candidate_state,
+                    "projection_stage": "lp_corrected",
+                    "raw_feasible": False,
+                    "lp_active": True,
+                    "solver_status": solver_status,
+                    "solver_iterations": last_iterations,
+                    "raw_constraint_max_abs": raw_constraint_max_abs,
+                    "raw_min_component": raw_min_component,
+                }
+            last_status = "constraint_violation_after_highs"
+        else:
+            status_code = getattr(result, "status", "unknown")
+            last_status = f"highs_failed(status={status_code}, presolve={attempt_presolve}): {message or 'no message'}"
+
+    return {
+        "projected_state": fallback_state,
+        "projection_stage": "lp_corrected",
+        "raw_feasible": False,
+        "lp_active": True,
+        "solver_status": last_status,
+        "solver_iterations": last_iterations,
+        "raw_constraint_max_abs": raw_constraint_max_abs,
+        "raw_min_component": raw_min_component,
+    }
+
+
 def _solve_deployment_qp_batch(
     driver_matrix: np.ndarray,
     influent_matrix: np.ndarray,
@@ -554,28 +810,10 @@ def _solve_deployment_qp_batch(
     settings: Mapping[str, Any],
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     n_samples, n_outputs = driver_matrix.shape
-    lambda_pred = float(settings["lambda_pred"])
-    nonnegativity_tolerance = float(settings["nonnegativity_tolerance"])
-    constraint_tolerance = float(settings["constraint_tolerance"])
-
-    at_a_matrix = invariant_matrix.T @ invariant_matrix
-    rt_r_matrix = coupled_matrix.T @ coupled_matrix
-    quadratic_matrix = 2.0 * (rt_r_matrix + lambda_pred * at_a_matrix)
-
-    constraint_matrix = np.eye(n_outputs, dtype=float)
-    lower_bounds = np.zeros(n_outputs, dtype=float)
-    upper_bounds = np.full(n_outputs, np.inf, dtype=float)
-    solver = _make_osqp_solver(
-        quadratic_matrix,
-        np.zeros(n_outputs, dtype=float),
-        constraint_matrix,
-        lower_bounds,
-        upper_bounds,
-        settings,
-    )
-
     raw_predictions = _solve_linear_coupled_response(coupled_matrix, driver_matrix)
     projected_predictions = np.zeros_like(raw_predictions)
+    lp_template = _build_deployment_lp_template(invariant_matrix, n_outputs)
+    worker_count = _resolve_parallel_workers(int(settings["parallel_workers"]), n_samples)
 
     projection_details = {
         "projection_stage": [],
@@ -592,42 +830,35 @@ def _solve_deployment_qp_batch(
         "projected_min_component": [],
     }
 
-    rt_driver_matrix = driver_matrix @ coupled_matrix
-    at_a_influents = influent_matrix @ at_a_matrix.T
-
-    for sample_index in range(n_samples):
-        raw_state = raw_predictions[sample_index]
-        influent_state = influent_matrix[sample_index]
-
-        raw_constraint_max_abs = _compute_constraint_max_abs(raw_state, influent_state, invariant_matrix)
-        raw_min_component = float(np.min(raw_state))
-        raw_feasible = bool(
-            raw_min_component >= -nonnegativity_tolerance and raw_constraint_max_abs <= constraint_tolerance
-        )
-
-        if raw_feasible:
-            projected_state = raw_state.copy()
-            solver_status = "skipped_raw_feasible"
-            solver_iterations = 0
-            stage = "raw_feasible"
-            lp_active = False
-        else:
-            linear_vector = -2.0 * (
-                rt_driver_matrix[sample_index] + lambda_pred * at_a_influents[sample_index]
+    if worker_count == 1:
+        sample_results = [
+            _solve_single_deployment_lp(
+                raw_predictions[sample_index],
+                influent_matrix[sample_index],
+                invariant_matrix,
+                lp_template,
+                settings,
             )
-            solver.update(q=np.asarray(linear_vector, dtype=float))
-            if bool(settings["warm_start"]):
-                solver.warm_start(x=np.maximum(raw_state, 0.0))
-            result = solver.solve()
-            solver_status = str(result.info.status)
-            solver_iterations = int(result.info.iter)
-            if _is_osqp_solved(solver_status) and result.x is not None:
-                projected_state = np.maximum(np.asarray(result.x, dtype=float), 0.0)
-            else:
-                projected_state = np.maximum(raw_state, 0.0)
-            stage = "lp_corrected"
-            lp_active = True
+            for sample_index in range(n_samples)
+        ]
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [
+                executor.submit(
+                    _solve_single_deployment_lp,
+                    raw_predictions[sample_index],
+                    influent_matrix[sample_index],
+                    invariant_matrix,
+                    lp_template,
+                    settings,
+                )
+                for sample_index in range(n_samples)
+            ]
+            sample_results = [future.result() for future in futures]
 
+    for sample_index, sample_result in enumerate(sample_results):
+        projected_state = np.asarray(sample_result["projected_state"], dtype=float)
+        influent_state = influent_matrix[sample_index]
         projected_predictions[sample_index] = projected_state
 
         projected_constraint_max_abs = _compute_constraint_max_abs(
@@ -635,17 +866,17 @@ def _solve_deployment_qp_batch(
             influent_state,
             invariant_matrix,
         )
-        projection_details["projection_stage"].append(stage)
-        projection_details["raw_feasible_mask"].append(raw_feasible)
-        projection_details["affine_feasible_mask"].append(raw_feasible)
-        projection_details["lp_active_mask"].append(lp_active)
-        projection_details["solver_status"].append(solver_status)
-        projection_details["solver_iterations"].append(solver_iterations)
-        projection_details["raw_constraint_max_abs"].append(raw_constraint_max_abs)
-        projection_details["affine_constraint_max_abs"].append(raw_constraint_max_abs)
+        projection_details["projection_stage"].append(sample_result["projection_stage"])
+        projection_details["raw_feasible_mask"].append(bool(sample_result["raw_feasible"]))
+        projection_details["affine_feasible_mask"].append(bool(sample_result["raw_feasible"]))
+        projection_details["lp_active_mask"].append(bool(sample_result["lp_active"]))
+        projection_details["solver_status"].append(sample_result["solver_status"])
+        projection_details["solver_iterations"].append(int(sample_result["solver_iterations"]))
+        projection_details["raw_constraint_max_abs"].append(float(sample_result["raw_constraint_max_abs"]))
+        projection_details["affine_constraint_max_abs"].append(float(sample_result["raw_constraint_max_abs"]))
         projection_details["projected_constraint_max_abs"].append(projected_constraint_max_abs)
-        projection_details["raw_min_component"].append(raw_min_component)
-        projection_details["affine_min_component"].append(raw_min_component)
+        projection_details["raw_min_component"].append(float(sample_result["raw_min_component"]))
+        projection_details["affine_min_component"].append(float(sample_result["raw_min_component"]))
         projection_details["projected_min_component"].append(float(np.min(projected_state)))
 
     return raw_predictions, projected_predictions, {

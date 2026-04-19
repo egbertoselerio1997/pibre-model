@@ -1093,7 +1093,6 @@
       "lambda_sys": 1.0,
       "lambda_B": 0.0001,
       "lambda_gamma": 0.0001,
-      "lambda_pred": 1.0,
       "gamma_abs_bound": 0.5,
       "max_outer_iterations": 50,
       "n_restarts": 3,
@@ -1105,7 +1104,14 @@
       "osqp_max_iter": 20000,
       "osqp_polish": false,
       "osqp_verbose": false,
-      "warm_start": true
+      "warm_start": true,
+      "nonnegativity_tolerance": 1e-10,
+      "constraint_tolerance": 1e-8,
+      "highs_presolve": true,
+      "highs_max_iter": 10000,
+      "highs_verbose": false,
+      "highs_retry_without_presolve": true,
+      "parallel_workers": 12
     },
     "search_space": {},
     "artifact_options": {
