@@ -73,6 +73,21 @@ def _ensure_columns_exist(frame: pd.DataFrame, required_columns: Iterable[str]) 
 		raise KeyError(f"Dataset is missing required columns: {missing_display}")
 
 
+def _select_named_columns(frame: pd.DataFrame, required_columns: Iterable[str]) -> pd.DataFrame:
+	required_column_list = list(required_columns)
+	_ensure_columns_exist(frame, required_column_list)
+	first_positions: dict[str, int] = {}
+	for position, column_name in enumerate(frame.columns):
+		resolved_name = str(column_name)
+		if resolved_name not in first_positions:
+			first_positions[resolved_name] = int(position)
+
+	selected_positions = [first_positions[str(column_name)] for column_name in required_column_list]
+	selected_frame = frame.iloc[:, selected_positions].copy()
+	selected_frame.columns = required_column_list
+	return selected_frame
+
+
 def compute_measured_composites(
 	dataset: pd.DataFrame,
 	state_columns: list[str],
@@ -85,7 +100,6 @@ def compute_measured_composites(
 	"""Map state columns into measured composite space with the provided composition matrix."""
 
 	prefixed_state_columns = [f"{state_prefix}{state_name}" for state_name in state_columns]
-	_ensure_columns_exist(dataset, prefixed_state_columns)
 	composition_array = np.asarray(composition_matrix, dtype=float)
 	expected_shape = (len(measured_output_columns), len(state_columns))
 	if composition_array.shape != expected_shape:
@@ -93,11 +107,47 @@ def compute_measured_composites(
 			"composition_matrix shape must match measured_output_columns x state_columns for measured composite mapping."
 		)
 
-	state_values = dataset.loc[:, prefixed_state_columns].to_numpy(dtype=float)
+	state_values = _select_named_columns(dataset, prefixed_state_columns).to_numpy(dtype=float)
 	composite_values = state_values @ composition_array.T
 	output_columns = [f"{output_prefix}{column_name}" for column_name in measured_output_columns]
 
 	return pd.DataFrame(composite_values, index=dataset.index, columns=output_columns)
+
+
+def collapse_fractional_states_to_measured_outputs(
+	values: pd.DataFrame | np.ndarray,
+	state_columns: list[str],
+	composition_matrix: np.ndarray,
+	measured_output_columns: list[str],
+	*,
+	state_prefix: str = "",
+	output_prefix: str = "",
+	index: pd.Index | None = None,
+) -> pd.DataFrame:
+	"""Collapse fractional ASM state values into measured composite outputs."""
+
+	composition_array = np.asarray(composition_matrix, dtype=float)
+	expected_shape = (len(measured_output_columns), len(state_columns))
+	if composition_array.shape != expected_shape:
+		raise ValueError(
+			"composition_matrix shape must match measured_output_columns x state_columns for external collapse."
+		)
+
+	if isinstance(values, pd.DataFrame):
+		input_columns = [f"{state_prefix}{state_name}" for state_name in state_columns]
+		state_values = _select_named_columns(values, input_columns).to_numpy(dtype=float)
+		result_index = values.index
+	else:
+		state_values = np.asarray(values, dtype=float)
+		if state_values.ndim != 2:
+			raise ValueError("values must be a two-dimensional array or dataframe for external collapse.")
+		if state_values.shape[1] != len(state_columns):
+			raise ValueError("values width must match the number of ASM state columns for external collapse.")
+		result_index = index
+
+	composite_values = state_values @ composition_array.T
+	output_columns = [f"{output_prefix}{column_name}" for column_name in measured_output_columns]
+	return pd.DataFrame(composite_values, index=result_index, columns=output_columns)
 
 
 def has_active_projection(A_matrix: np.ndarray) -> bool:
@@ -205,48 +255,35 @@ def _compute_feasibility_diagnostics(
 
 def _build_reduced_lp_projection_template(
 	null_space_basis: np.ndarray,
-	composition_matrix: np.ndarray,
 	*,
 	measured_deviation_weight: float,
 	component_deviation_weight: float,
 	tradeoff_parameter: float,
 ) -> dict[str, Any]:
 	null_basis = np.asarray(null_space_basis, dtype=float)
-	composition_array = np.asarray(composition_matrix, dtype=float)
 	state_dimension = int(null_basis.shape[0])
 	null_space_dimension = int(null_basis.shape[1])
-	output_dimension = int(composition_array.shape[0])
-	if composition_array.ndim != 2:
-		raise ValueError("composition_matrix must be two-dimensional.")
-	if composition_array.shape[1] != state_dimension:
-		raise ValueError("composition_matrix column count must match the prediction dimension.")
+	del measured_deviation_weight
 
-	variable_count = null_space_dimension + output_dimension + state_dimension
+	variable_count = null_space_dimension + state_dimension
 	objective = np.zeros(variable_count, dtype=float)
-	objective[null_space_dimension : null_space_dimension + output_dimension] = float(measured_deviation_weight)
-	objective[null_space_dimension + output_dimension :] = (
+	objective[null_space_dimension:] = (
 		float(tradeoff_parameter) * float(component_deviation_weight)
 	)
 
-	zero_state_output = np.zeros((state_dimension, output_dimension), dtype=float)
-	zero_output_state = np.zeros((output_dimension, state_dimension), dtype=float)
-	composed_basis = composition_array @ null_basis
 	upper_bound_matrix = np.vstack(
 		[
-			np.hstack([-null_basis, zero_state_output, np.zeros((state_dimension, state_dimension), dtype=float)]),
-			np.hstack([composed_basis, -np.eye(output_dimension, dtype=float), zero_output_state]),
-			np.hstack([-composed_basis, -np.eye(output_dimension, dtype=float), zero_output_state]),
-			np.hstack([null_basis, zero_state_output, -np.eye(state_dimension, dtype=float)]),
-			np.hstack([-null_basis, zero_state_output, -np.eye(state_dimension, dtype=float)]),
+			np.hstack([-null_basis, np.zeros((state_dimension, state_dimension), dtype=float)]),
+			np.hstack([null_basis, -np.eye(state_dimension, dtype=float)]),
+			np.hstack([-null_basis, -np.eye(state_dimension, dtype=float)]),
 		]
 	)
-	bounds = [(None, None)] * null_space_dimension + [(0.0, None)] * (output_dimension + state_dimension)
+	bounds = [(None, None)] * null_space_dimension + [(0.0, None)] * state_dimension
 	return {
 		"objective": objective,
 		"A_ub": upper_bound_matrix,
 		"bounds": bounds,
 		"null_space_dimension": null_space_dimension,
-		"output_dimension": output_dimension,
 		"state_dimension": state_dimension,
 	}
 
@@ -260,11 +297,10 @@ def _run_highs_lp_projection(
 	highs_verbose: bool,
 ):
 	state_dimension = int(lp_template["state_dimension"])
-	output_dimension = int(lp_template["output_dimension"])
 	b_ub = np.concatenate(
 		[
 			np.asarray(affine_point, dtype=float),
-			np.zeros(2 * output_dimension + 2 * state_dimension, dtype=float),
+			np.zeros(2 * state_dimension, dtype=float),
 		]
 	)
 	options = {
@@ -287,7 +323,6 @@ def _solve_reduced_nonnegative_lp_projection(
 	constraint_reference: np.ndarray,
 	constraint_matrix: np.ndarray,
 	null_space_basis: np.ndarray,
-	composition_matrix: np.ndarray,
 	*,
 	lp_template: dict[str, Any],
 	highs_presolve: bool,
@@ -388,11 +423,7 @@ def project_to_nonnegative_feasible_set(
 	reference_array = _as_two_dimensional_array(constraint_reference, name="constraint_reference")
 	if raw_array.shape != reference_array.shape:
 		raise ValueError("raw_predictions and constraint_reference must share the same shape.")
-	composition_array = np.asarray(composition_matrix, dtype=float)
-	if composition_array.ndim != 2:
-		raise ValueError("composition_matrix must be two-dimensional.")
-	if composition_array.shape[1] != raw_array.shape[1]:
-		raise ValueError("composition_matrix column count must match the prediction dimension.")
+	del composition_matrix
 
 	constraint_matrix = np.asarray(A_matrix, dtype=float)
 	if constraint_matrix.ndim != 2:
@@ -451,7 +482,6 @@ def project_to_nonnegative_feasible_set(
 		null_space_basis = build_null_space_basis(constraint_matrix)
 		lp_template = _build_reduced_lp_projection_template(
 			null_space_basis,
-			composition_array,
 			measured_deviation_weight=measured_deviation_weight,
 			component_deviation_weight=component_deviation_weight,
 			tradeoff_parameter=tradeoff_parameter,
@@ -462,7 +492,6 @@ def project_to_nonnegative_feasible_set(
 				reference_array[row_index, :],
 				constraint_matrix,
 				null_space_basis,
-				composition_array,
 				lp_template=lp_template,
 				highs_presolve=highs_presolve,
 				highs_max_iter=highs_max_iter,
@@ -529,8 +558,8 @@ def build_measured_supervised_dataset(
 		output_prefix="In_",
 	)
 	constraint_reference = influent_measured.rename(columns=lambda column_name: column_name.replace("In_", "", 1))
-	targets = dataset.loc[:, target_columns].copy()
-	features = pd.concat([dataset.loc[:, operational_columns].copy(), influent_measured], axis=1)
+	targets = _select_named_columns(dataset, target_columns)
+	features = pd.concat([_select_named_columns(dataset, operational_columns), influent_measured], axis=1)
 
 	return SupervisedDatasetFrames(
 		features=features,
@@ -538,50 +567,64 @@ def build_measured_supervised_dataset(
 		constraint_reference=constraint_reference,
 	)
 
-def build_fractional_input_measured_output_dataset(
+def build_fractional_input_fractional_output_dataset(
 	dataset: pd.DataFrame,
 	metadata: dict[str, Any],
 	composition_matrix: np.ndarray,
 ) -> SupervisedDatasetFrames:
-	"""Build the icsor-aligned classical benchmark dataset.
+	"""Build the benchmark dataset with fractional ASM inputs and fractional ASM outputs.
 
 	Features stay in the operational-plus-fractional influent basis so the classical
-	regressors consume the same inputs as icsor, while the constraint reference
-	remains in measured composite space for post-projection diagnostics.
+	regressors consume the same inputs as icsor, while targets and constraint
+	references remain in ASM component space. Measured composites are derived
+	externally through the composition matrix when reporting is needed.
 	"""
 
 	state_columns = list(metadata["state_columns"])
 	measured_output_columns = list(metadata["measured_output_columns"])
 	operational_columns = list(metadata["operational_columns"])
 	influent_state_columns = [f"In_{column_name}" for column_name in state_columns]
-	target_columns = [f"Out_{column_name}" for column_name in measured_output_columns]
+	target_columns = [f"Out_{column_name}" for column_name in state_columns]
 
 	_ensure_columns_exist(dataset, operational_columns)
 	_ensure_columns_exist(dataset, influent_state_columns)
 	_ensure_columns_exist(dataset, target_columns)
 
-	influent_measured = compute_measured_composites(
-		dataset,
-		state_columns,
-		composition_matrix,
-		measured_output_columns,
-		state_prefix="In_",
-		output_prefix="In_",
-	)
 	features = pd.concat(
 		[
-			dataset.loc[:, operational_columns].copy(),
-			dataset.loc[:, influent_state_columns].copy(),
+			_select_named_columns(dataset, operational_columns),
+			_select_named_columns(dataset, influent_state_columns),
 		],
 		axis=1,
 	)
-	targets = dataset.loc[:, target_columns].copy()
-	constraint_reference = influent_measured.rename(columns=lambda column_name: column_name.replace("In_", "", 1))
+	targets = _select_named_columns(dataset, target_columns)
+	constraint_reference = _select_named_columns(dataset, influent_state_columns).rename(
+		columns=lambda column_name: column_name.replace("In_", "", 1)
+	)
+
+	if np.asarray(composition_matrix, dtype=float).shape != (len(measured_output_columns), len(state_columns)):
+		raise ValueError(
+			"composition_matrix shape must match measured_output_columns x state_columns for the fractional benchmark contract."
+		)
 
 	return SupervisedDatasetFrames(
 		features=features,
 		targets=targets,
 		constraint_reference=constraint_reference,
+	)
+
+
+def build_fractional_input_measured_output_dataset(
+	dataset: pd.DataFrame,
+	metadata: dict[str, Any],
+	composition_matrix: np.ndarray,
+) -> SupervisedDatasetFrames:
+	"""Legacy alias for the fractional benchmark dataset contract."""
+
+	return build_fractional_input_fractional_output_dataset(
+		dataset,
+		metadata,
+		composition_matrix,
 	)
 
 
@@ -590,39 +633,12 @@ def build_icsor_supervised_dataset(
 	metadata: dict[str, Any],
 	composition_matrix: np.ndarray,
 ) -> SupervisedDatasetFrames:
-	"""Build the strict icsor dataset with fractional influent states and measured effluent targets."""
+	"""Build the strict icsor dataset with fractional ASM inputs and fractional effluent targets."""
 
-	state_columns = list(metadata["state_columns"])
-	measured_output_columns = list(metadata["measured_output_columns"])
-	operational_columns = list(metadata["operational_columns"])
-	influent_state_columns = [f"In_{column_name}" for column_name in state_columns]
-	target_columns = [f"Out_{column_name}" for column_name in measured_output_columns]
-
-	_ensure_columns_exist(dataset, operational_columns)
-	_ensure_columns_exist(dataset, influent_state_columns)
-	_ensure_columns_exist(dataset, target_columns)
-
-	features = pd.concat(
-		[
-			dataset.loc[:, operational_columns].copy(),
-			dataset.loc[:, influent_state_columns].copy(),
-		],
-		axis=1,
-	)
-	constraint_reference = dataset.loc[:, influent_state_columns].copy().rename(
-		columns=lambda column_name: column_name.replace("In_", "", 1)
-	)
-	targets = dataset.loc[:, target_columns].copy()
-
-	if np.asarray(composition_matrix, dtype=float).shape != (len(measured_output_columns), len(state_columns)):
-		raise ValueError(
-			"composition_matrix shape must match measured_output_columns x state_columns for the icsor contract."
-		)
-
-	return SupervisedDatasetFrames(
-		features=features,
-		targets=targets,
-		constraint_reference=constraint_reference,
+	return build_fractional_input_fractional_output_dataset(
+		dataset,
+		metadata,
+		composition_matrix,
 	)
 
 
@@ -894,9 +910,11 @@ __all__ = [
 	"TrainTestDatasetSplits",
 	"build_null_space_basis",
 	"build_projection_operator",
+	"build_fractional_input_fractional_output_dataset",
 	"build_icsor_supervised_dataset",
 	"build_measured_supervised_dataset",
 	"combine_dataset_splits",
+	"collapse_fractional_states_to_measured_outputs",
 	"compute_measured_composites",
 	"fit_scalers",
 	"has_active_projection",

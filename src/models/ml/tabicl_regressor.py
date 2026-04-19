@@ -1,4 +1,4 @@
-"""Measured-space TabICL regression pipeline."""
+"""Fractional-space TabICL regression pipeline."""
 
 from __future__ import annotations
 
@@ -82,6 +82,8 @@ def run_tabicl_regressor_pipeline(
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
     *,
+    composition_matrix: np.ndarray | None = None,
+    measured_output_columns: list[str] | None = None,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
@@ -99,6 +101,8 @@ def run_tabicl_regressor_pipeline(
         training_split,
         test_split,
         A_matrix,
+        composition_matrix=composition_matrix,
+        measured_output_columns=measured_output_columns,
         repo_root=repo_root,
         model_params=params,
         model_hyperparameters=model_hyperparameters,

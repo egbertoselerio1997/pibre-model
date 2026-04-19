@@ -13,7 +13,7 @@ from .metrics import (
     compute_regression_metrics,
     summarize_mass_balance_residuals,
 )
-from .process import has_active_projection
+from .process import collapse_fractional_states_to_measured_outputs, has_active_projection
 
 
 def _build_report_metadata_frame(
@@ -192,6 +192,41 @@ def build_prediction_frame(
     return pd.DataFrame(np.asarray(values, dtype=float), index=index, columns=columns)
 
 
+def _resolve_external_measured_output_columns(
+    target_columns: Iterable[str],
+    composition_matrix: np.ndarray,
+    *,
+    measured_output_columns: Iterable[str] | None = None,
+) -> list[str]:
+    """Resolve measured-output labels for external collapse and reporting.
+
+    When no explicit labels are provided, this falls back to target-derived labels
+    only when their width matches the composition matrix row count.
+    """
+
+    composition_array = np.asarray(composition_matrix, dtype=float)
+    if composition_array.ndim != 2:
+        raise ValueError("composition_matrix must be two-dimensional for external measured-output evaluation.")
+
+    measured_count = int(composition_array.shape[0])
+    if measured_output_columns is not None:
+        resolved_columns = [str(column_name) for column_name in measured_output_columns]
+        if len(resolved_columns) != measured_count:
+            raise ValueError(
+                "measured_output_columns length must match composition_matrix row count for external evaluation."
+            )
+        return resolved_columns
+
+    target_derived_columns = [
+        str(column_name).replace("Out_", "", 1) if str(column_name).startswith("Out_") else str(column_name)
+        for column_name in target_columns
+    ]
+    if len(target_derived_columns) == measured_count:
+        return target_derived_columns
+
+    return [f"Measured_{column_index + 1}" for column_index in range(measured_count)]
+
+
 def evaluate_prediction_bundle(
     y_true: np.ndarray,
     raw_predictions: np.ndarray,
@@ -201,51 +236,139 @@ def evaluate_prediction_bundle(
     target_columns: Iterable[str],
     *,
     index: pd.Index | None = None,
+    composition_matrix: np.ndarray | None = None,
+    state_columns: Iterable[str] | None = None,
+    measured_output_columns: Iterable[str] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Assemble aggregate, per-target, and residual reports for raw and projected predictions."""
+    """Assemble native prediction diagnostics and optional external measured comparisons."""
 
     target_column_list = list(target_columns)
     projection_active = has_active_projection(A_matrix)
-    raw_metrics = compute_regression_metrics(y_true, raw_predictions)
-    aggregate_rows = [{"prediction_type": "raw", **raw_metrics}]
-    if projection_active:
-        projected_metrics = compute_regression_metrics(y_true, projected_predictions)
-        aggregate_rows.append({"prediction_type": "projected", **projected_metrics})
-    aggregate_report = pd.DataFrame(aggregate_rows)
+    y_true_array = np.asarray(y_true, dtype=float)
+    raw_prediction_array = np.asarray(raw_predictions, dtype=float)
+    projected_prediction_array = np.asarray(projected_predictions, dtype=float)
 
-    raw_per_target = compute_per_target_metrics(y_true, raw_predictions, target_column_list).rename(
-        columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
+    comparison_y_true = y_true_array
+    comparison_raw_predictions = raw_prediction_array
+    comparison_projected_predictions = projected_prediction_array
+    comparison_target_columns = target_column_list
+    report_metadata = _build_report_metadata_frame(
+        native_prediction_space="measured",
+        comparison_target_space="measured",
+        constraint_space="measured",
+        direct_comparison_scope="measured_output_metrics_only",
+        diagnostic_scope=(
+            "model_native_measured_space_diagnostics"
+            if projection_active
+            else "projection_inactive_trivial_measured_null_space"
+        ),
+        projection_active=projection_active,
+        constraint_status=("active" if projection_active else "inactive_trivial_null_space"),
     )
-    per_target_report = raw_per_target
-    report: dict[str, pd.DataFrame] = {
-        "report_metadata": _build_report_metadata_frame(
-            native_prediction_space="measured",
-            comparison_target_space="measured",
-            constraint_space="measured",
-            direct_comparison_scope="measured_output_metrics_only",
+    report: dict[str, pd.DataFrame]
+    if composition_matrix is not None and state_columns is not None:
+        state_column_list = list(state_columns)
+        resolved_measured_output_columns = _resolve_external_measured_output_columns(
+            target_column_list,
+            np.asarray(composition_matrix, dtype=float),
+            measured_output_columns=measured_output_columns,
+        )
+        comparison_target_columns = [f"Out_{column_name}" for column_name in resolved_measured_output_columns]
+        comparison_y_true = collapse_fractional_states_to_measured_outputs(
+            y_true_array,
+            state_column_list,
+            np.asarray(composition_matrix, dtype=float),
+            resolved_measured_output_columns,
+            output_prefix="Out_",
+            index=index,
+        ).to_numpy(dtype=float)
+        comparison_raw_predictions = collapse_fractional_states_to_measured_outputs(
+            raw_prediction_array,
+            state_column_list,
+            np.asarray(composition_matrix, dtype=float),
+            resolved_measured_output_columns,
+            output_prefix="Out_",
+            index=index,
+        ).to_numpy(dtype=float)
+        comparison_projected_predictions = collapse_fractional_states_to_measured_outputs(
+            projected_prediction_array,
+            state_column_list,
+            np.asarray(composition_matrix, dtype=float),
+            resolved_measured_output_columns,
+            output_prefix="Out_",
+            index=index,
+        ).to_numpy(dtype=float)
+        report_metadata = _build_report_metadata_frame(
+            native_prediction_space="fractional",
+            comparison_target_space="external_measured_output",
+            constraint_space="fractional",
+            direct_comparison_scope="externally_collapsed_measured_output_metrics",
             diagnostic_scope=(
-                "model_native_measured_space_diagnostics"
+                "model_native_fractional_space_diagnostics"
                 if projection_active
-                else "projection_inactive_trivial_measured_null_space"
+                else "projection_inactive_trivial_fractional_null_space"
             ),
             projection_active=projection_active,
             constraint_status=("active" if projection_active else "inactive_trivial_null_space"),
-        ),
+        )
+
+    raw_metrics = compute_regression_metrics(comparison_y_true, comparison_raw_predictions)
+    aggregate_rows = [{"prediction_type": "raw", **raw_metrics}]
+    if projection_active:
+        projected_metrics = compute_regression_metrics(comparison_y_true, comparison_projected_predictions)
+        aggregate_rows.append({"prediction_type": "projected", **projected_metrics})
+    aggregate_report = pd.DataFrame(aggregate_rows)
+
+    raw_per_target = compute_per_target_metrics(
+        comparison_y_true,
+        comparison_raw_predictions,
+        comparison_target_columns,
+    ).rename(
+        columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
+    )
+    per_target_report = raw_per_target
+    report = {
+        "report_metadata": report_metadata,
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,
-        "raw_predictions": build_prediction_frame(raw_predictions, target_column_list, index=index, prefix="Raw_"),
+        "raw_predictions": build_prediction_frame(
+            comparison_raw_predictions,
+            comparison_target_columns,
+            index=index,
+            prefix="Raw_",
+        ),
     }
+
+    if composition_matrix is not None and state_columns is not None:
+        report["fractional_aggregate_metrics"] = pd.DataFrame(
+            [{"prediction_type": "raw", **compute_regression_metrics(y_true_array, raw_prediction_array)}]
+        )
+        report["fractional_per_target_metrics"] = compute_per_target_metrics(
+            y_true_array,
+            raw_prediction_array,
+            target_column_list,
+        ).rename(columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
+        report["raw_fractional_predictions"] = build_prediction_frame(
+            raw_prediction_array,
+            list(state_columns),
+            index=index,
+            prefix="RawFractional_",
+        )
 
     if not projection_active:
         return report
 
-    projected_per_target = compute_per_target_metrics(y_true, projected_predictions, target_column_list).rename(
+    projected_per_target = compute_per_target_metrics(
+        comparison_y_true,
+        comparison_projected_predictions,
+        comparison_target_columns,
+    ).rename(
         columns={metric_name: f"projected_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
     )
     report["per_target_metrics"] = raw_per_target.merge(projected_per_target, on="target", how="inner")
 
-    raw_residuals = compute_mass_balance_residuals(raw_predictions, constraint_reference, A_matrix)
-    projected_residuals = compute_mass_balance_residuals(projected_predictions, constraint_reference, A_matrix)
+    raw_residuals = compute_mass_balance_residuals(raw_prediction_array, constraint_reference, A_matrix)
+    projected_residuals = compute_mass_balance_residuals(projected_prediction_array, constraint_reference, A_matrix)
     residual_report = pd.DataFrame(
         {
             "raw_constraint_l2": np.linalg.norm(raw_residuals, axis=1),
@@ -254,35 +377,69 @@ def evaluate_prediction_bundle(
         index=index,
     )
     projection_adjustments = _compute_projection_adjustment_frame(
-        raw_predictions,
-        projected_predictions,
+        comparison_raw_predictions,
+        comparison_projected_predictions,
         index=index,
-        prefix="measured",
+        prefix=("measured" if composition_matrix is not None and state_columns is not None else "native"),
     )
     diagnostic_summary = pd.concat(
         [
             _build_constraint_diagnostic_summary(
-                raw_predictions,
-                projected_predictions,
+                raw_prediction_array,
+                projected_prediction_array,
                 constraint_reference,
                 A_matrix,
-                diagnostic_name="measured_constraint_residual",
+                diagnostic_name=(
+                    "fractional_constraint_residual"
+                    if composition_matrix is not None and state_columns is not None
+                    else "measured_constraint_residual"
+                ),
             ),
             _summarize_projection_adjustments(
-                raw_predictions,
-                projected_predictions,
-                diagnostic_name="measured_projection_adjustment",
+                comparison_raw_predictions,
+                comparison_projected_predictions,
+                diagnostic_name=(
+                    "measured_projection_adjustment"
+                    if composition_matrix is not None and state_columns is not None
+                    else "native_projection_adjustment"
+                ),
             ),
         ],
         ignore_index=True,
     )
 
     report["projected_predictions"] = build_prediction_frame(
-        projected_predictions,
-        target_column_list,
+        comparison_projected_predictions,
+        comparison_target_columns,
         index=index,
         prefix="Projected_",
     )
+    if composition_matrix is not None and state_columns is not None:
+        report["fractional_aggregate_metrics"] = pd.DataFrame(
+            [
+                {"prediction_type": "raw", **compute_regression_metrics(y_true_array, raw_prediction_array)},
+                {"prediction_type": "projected", **compute_regression_metrics(y_true_array, projected_prediction_array)},
+            ]
+        )
+        report["fractional_per_target_metrics"] = compute_per_target_metrics(
+            y_true_array,
+            raw_prediction_array,
+            target_column_list,
+        ).rename(columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}).merge(
+            compute_per_target_metrics(
+                y_true_array,
+                projected_prediction_array,
+                target_column_list,
+            ).rename(columns={metric_name: f"projected_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}),
+            on="target",
+            how="inner",
+        )
+        report["projected_fractional_predictions"] = build_prediction_frame(
+            projected_prediction_array,
+            list(state_columns),
+            index=index,
+            prefix="ProjectedFractional_",
+        )
     report["diagnostic_summary"] = diagnostic_summary
     report["projection_diagnostics"] = projection_adjustments
     report["constraint_residuals"] = residual_report
@@ -290,7 +447,7 @@ def evaluate_prediction_bundle(
 
 
 def evaluate_icsor_prediction_bundle(
-    y_true_measured: np.ndarray,
+    y_true_fractional: np.ndarray,
     raw_fractional_predictions: np.ndarray,
     affine_fractional_predictions: np.ndarray,
     projected_fractional_predictions: np.ndarray,
@@ -299,22 +456,58 @@ def evaluate_icsor_prediction_bundle(
     composition_matrix: np.ndarray,
     target_columns: Iterable[str],
     state_columns: Iterable[str],
+    measured_output_columns: Iterable[str] | None = None,
     *,
     index: pd.Index | None = None,
     prediction_uncertainty: dict[str, Any] | None = None,
     projection_details: Mapping[str, Any] | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Assemble icsor reports with measured-space metrics and fractional-space constraints."""
+    """Assemble ICSOR reports with native fractional diagnostics and external measured comparisons."""
 
     target_column_list = list(target_columns)
     state_column_list = list(state_columns)
-    composition_array = np.asarray(composition_matrix, dtype=float)
+    resolved_measured_output_columns = _resolve_external_measured_output_columns(
+        target_column_list,
+        np.asarray(composition_matrix, dtype=float),
+        measured_output_columns=measured_output_columns,
+    )
+    measured_target_columns = [f"Out_{column_name}" for column_name in resolved_measured_output_columns]
+    y_true_fractional_array = np.asarray(y_true_fractional, dtype=float)
     raw_fractional_array = np.asarray(raw_fractional_predictions, dtype=float)
     affine_fractional_array = np.asarray(affine_fractional_predictions, dtype=float)
     projected_fractional_array = np.asarray(projected_fractional_predictions, dtype=float)
-    raw_measured_predictions = raw_fractional_array @ composition_array.T
-    affine_measured_predictions = affine_fractional_array @ composition_array.T
-    projected_measured_predictions = projected_fractional_array @ composition_array.T
+    y_true_measured = collapse_fractional_states_to_measured_outputs(
+        y_true_fractional_array,
+        state_column_list,
+        np.asarray(composition_matrix, dtype=float),
+        resolved_measured_output_columns,
+        output_prefix="Out_",
+        index=index,
+    ).to_numpy(dtype=float)
+    raw_measured_predictions = collapse_fractional_states_to_measured_outputs(
+        raw_fractional_array,
+        state_column_list,
+        np.asarray(composition_matrix, dtype=float),
+        resolved_measured_output_columns,
+        output_prefix="Out_",
+        index=index,
+    ).to_numpy(dtype=float)
+    affine_measured_predictions = collapse_fractional_states_to_measured_outputs(
+        affine_fractional_array,
+        state_column_list,
+        np.asarray(composition_matrix, dtype=float),
+        resolved_measured_output_columns,
+        output_prefix="Out_",
+        index=index,
+    ).to_numpy(dtype=float)
+    projected_measured_predictions = collapse_fractional_states_to_measured_outputs(
+        projected_fractional_array,
+        state_column_list,
+        np.asarray(composition_matrix, dtype=float),
+        resolved_measured_output_columns,
+        output_prefix="Out_",
+        index=index,
+    ).to_numpy(dtype=float)
 
     raw_metrics = compute_regression_metrics(y_true_measured, raw_measured_predictions)
     affine_metrics = compute_regression_metrics(y_true_measured, affine_measured_predictions)
@@ -331,22 +524,59 @@ def evaluate_icsor_prediction_bundle(
     raw_per_target = compute_per_target_metrics(
         y_true_measured,
         raw_measured_predictions,
-        target_column_list,
+        measured_target_columns,
     ).rename(columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
     affine_per_target = compute_per_target_metrics(
         y_true_measured,
         affine_measured_predictions,
-        target_column_list,
+        measured_target_columns,
     ).rename(columns={metric_name: f"affine_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
     projected_per_target = compute_per_target_metrics(
         y_true_measured,
         projected_measured_predictions,
-        target_column_list,
+        measured_target_columns,
     ).rename(
         columns={metric_name: f"projected_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
     )
     per_target_report = raw_per_target.merge(affine_per_target, on="target", how="inner").merge(
         projected_per_target,
+        on="target",
+        how="inner",
+    )
+
+    fractional_aggregate_report = pd.DataFrame(
+        [
+            {"prediction_type": "raw", **compute_regression_metrics(y_true_fractional_array, raw_fractional_array)},
+            {"prediction_type": "affine", **compute_regression_metrics(y_true_fractional_array, affine_fractional_array)},
+            {
+                "prediction_type": "projected",
+                **compute_regression_metrics(y_true_fractional_array, projected_fractional_array),
+            },
+        ]
+    )
+    fractional_raw_per_target = compute_per_target_metrics(
+        y_true_fractional_array,
+        raw_fractional_array,
+        target_column_list,
+    ).rename(columns={metric_name: f"raw_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
+    fractional_affine_per_target = compute_per_target_metrics(
+        y_true_fractional_array,
+        affine_fractional_array,
+        target_column_list,
+    ).rename(columns={metric_name: f"affine_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]})
+    fractional_projected_per_target = compute_per_target_metrics(
+        y_true_fractional_array,
+        projected_fractional_array,
+        target_column_list,
+    ).rename(
+        columns={metric_name: f"projected_{metric_name}" for metric_name in ["R2", "MSE", "RMSE", "MAE", "MAPE"]}
+    )
+    fractional_per_target_report = fractional_raw_per_target.merge(
+        fractional_affine_per_target,
+        on="target",
+        how="inner",
+    ).merge(
+        fractional_projected_per_target,
         on="target",
         how="inner",
     )
@@ -468,30 +698,32 @@ def evaluate_icsor_prediction_bundle(
     report = {
         "report_metadata": _build_report_metadata_frame(
             native_prediction_space="fractional",
-            comparison_target_space="measured",
+            comparison_target_space="external_measured_output",
             constraint_space="fractional",
-            direct_comparison_scope="measured_output_metrics_only",
+            direct_comparison_scope="externally_collapsed_measured_output_metrics",
             diagnostic_scope="model_native_fractional_space_nonnegative_lp_diagnostics",
             projection_active=True,
             constraint_status="active_nonnegative_lp",
         ),
         "aggregate_metrics": aggregate_report,
         "per_target_metrics": per_target_report,
+        "fractional_aggregate_metrics": fractional_aggregate_report,
+        "fractional_per_target_metrics": fractional_per_target_report,
         "raw_predictions": build_prediction_frame(
             raw_measured_predictions,
-            target_column_list,
+            measured_target_columns,
             index=index,
             prefix="Raw_",
         ),
         "affine_predictions": build_prediction_frame(
             affine_measured_predictions,
-            target_column_list,
+            measured_target_columns,
             index=index,
             prefix="Affine_",
         ),
         "projected_predictions": build_prediction_frame(
             projected_measured_predictions,
-            target_column_list,
+            measured_target_columns,
             index=index,
             prefix="Projected_",
         ),
