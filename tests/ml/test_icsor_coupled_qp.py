@@ -12,8 +12,10 @@ from scipy.linalg import null_space
 
 from src.models.ml.icsor import build_icsor_design_frame
 from src.models.ml.icsor_coupled_qp import (
+    _build_deployment_lp_template,
     _run_coupled_qp_restart,
     _resolve_coupled_qp_settings,
+    _solve_single_deployment_lp,
     _solve_chat_update,
     _solve_gamma_update,
     load_icsor_coupled_qp_params,
@@ -438,6 +440,127 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
         self.assertGreater(active_qp_count, 0)
         self.assertEqual(int(chat_metadata["warm_start_used_count"]), active_qp_count)
         self.assertEqual(int(chat_metadata["warm_start_skipped_invalid_count"]), 0)
+
+    def test_single_deployment_lp_skips_when_raw_is_feasible(self) -> None:
+        settings = _resolve_coupled_qp_settings(
+            {
+                "nonnegativity_tolerance": 1e-10,
+                "constraint_tolerance": 1e-8,
+                "highs_max_iter": 500,
+                "highs_presolve": True,
+                "highs_retry_without_presolve": True,
+            }
+        )
+        invariant_matrix = np.zeros((0, 2), dtype=float)
+        projection_operator = np.zeros((2, 2), dtype=float)
+        projection_complement = np.eye(2, dtype=float)
+        lp_template = _build_deployment_lp_template(invariant_matrix, n_outputs=2)
+
+        sample_result = _solve_single_deployment_lp(
+            np.array([0.3, 0.7], dtype=float),
+            np.array([0.1, 0.9], dtype=float),
+            invariant_matrix,
+            lp_template,
+            projection_operator,
+            projection_complement,
+            settings,
+        )
+
+        self.assertEqual(str(sample_result["projection_stage"]), "raw_feasible")
+        self.assertTrue(bool(sample_result["raw_feasible"]))
+        self.assertTrue(bool(sample_result["affine_feasible"]))
+        self.assertFalse(bool(sample_result["lp_active"]))
+        self.assertEqual(str(sample_result["solver_status"]), "skipped_raw_feasible")
+        np.testing.assert_allclose(
+            np.asarray(sample_result["projected_state"], dtype=float),
+            np.array([0.3, 0.7], dtype=float),
+            atol=1e-10,
+            rtol=1e-10,
+        )
+
+    def test_single_deployment_lp_skips_when_affine_is_feasible(self) -> None:
+        settings = _resolve_coupled_qp_settings(
+            {
+                "nonnegativity_tolerance": 1e-10,
+                "constraint_tolerance": 1e-8,
+                "highs_max_iter": 500,
+                "highs_presolve": True,
+                "highs_retry_without_presolve": True,
+            }
+        )
+        invariant_matrix = np.eye(2, dtype=float)
+        projection_operator = np.eye(2, dtype=float)
+        projection_complement = np.zeros((2, 2), dtype=float)
+        lp_template = _build_deployment_lp_template(invariant_matrix, n_outputs=2)
+
+        sample_result = _solve_single_deployment_lp(
+            np.array([-0.3, 0.5], dtype=float),
+            np.array([0.2, 0.8], dtype=float),
+            invariant_matrix,
+            lp_template,
+            projection_operator,
+            projection_complement,
+            settings,
+        )
+
+        self.assertEqual(str(sample_result["projection_stage"]), "affine_feasible")
+        self.assertFalse(bool(sample_result["raw_feasible"]))
+        self.assertTrue(bool(sample_result["affine_feasible"]))
+        self.assertFalse(bool(sample_result["lp_active"]))
+        self.assertEqual(str(sample_result["solver_status"]), "skipped_affine_feasible")
+        np.testing.assert_allclose(
+            np.asarray(sample_result["affine_state"], dtype=float),
+            np.array([0.2, 0.8], dtype=float),
+            atol=1e-10,
+            rtol=1e-10,
+        )
+        np.testing.assert_allclose(
+            np.asarray(sample_result["projected_state"], dtype=float),
+            np.array([0.2, 0.8], dtype=float),
+            atol=1e-10,
+            rtol=1e-10,
+        )
+
+    def test_single_deployment_lp_runs_highs_when_affine_is_negative(self) -> None:
+        settings = _resolve_coupled_qp_settings(
+            {
+                "nonnegativity_tolerance": 1e-10,
+                "constraint_tolerance": 1e-8,
+                "highs_max_iter": 1000,
+                "highs_presolve": True,
+                "highs_retry_without_presolve": True,
+            }
+        )
+        invariant_matrix = np.array([[1.0, 1.0]], dtype=float)
+        projection_operator = 0.5 * np.array([[1.0, 1.0], [1.0, 1.0]], dtype=float)
+        projection_complement = np.eye(2, dtype=float) - projection_operator
+        lp_template = _build_deployment_lp_template(invariant_matrix, n_outputs=2)
+
+        sample_result = _solve_single_deployment_lp(
+            np.array([-0.6, 0.1], dtype=float),
+            np.array([0.2, 0.0], dtype=float),
+            invariant_matrix,
+            lp_template,
+            projection_operator,
+            projection_complement,
+            settings,
+        )
+
+        projected_state = np.asarray(sample_result["projected_state"], dtype=float)
+        self.assertEqual(str(sample_result["projection_stage"]), "lp_corrected")
+        self.assertFalse(bool(sample_result["raw_feasible"]))
+        self.assertFalse(bool(sample_result["affine_feasible"]))
+        self.assertTrue(bool(sample_result["lp_active"]))
+        self.assertGreaterEqual(float(np.min(projected_state)), -1e-9)
+        self.assertLessEqual(
+            _compute_invariant_max_abs(
+                projected_state.reshape(1, -1),
+                np.array([[0.2, 0.0]], dtype=float),
+                invariant_matrix,
+            ),
+            1e-8,
+        )
+        self.assertTrue(str(sample_result["solver_status"]).startswith("optimal"))
 
     def test_default_params_enable_recursive_qp_training(self) -> None:
         params = load_icsor_coupled_qp_params()

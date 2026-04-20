@@ -20,6 +20,7 @@ from src.utils.process import (
     DatasetSplit,
     ScalingBundle,
     TrainTestDatasetSplits,
+    build_projection_operator,
     build_icsor_supervised_dataset,
     fit_scalers,
     transform_dataset_split,
@@ -1205,6 +1206,8 @@ def _solve_single_deployment_lp(
     influent_state: np.ndarray,
     invariant_matrix: np.ndarray,
     lp_template: Mapping[str, Any],
+    projection_operator: np.ndarray,
+    projection_complement: np.ndarray,
     settings: Mapping[str, Any],
 ) -> dict[str, Any]:
     nonnegativity_tolerance = float(settings["nonnegativity_tolerance"])
@@ -1212,24 +1215,55 @@ def _solve_single_deployment_lp(
 
     raw_state_array = np.asarray(raw_state, dtype=float)
     influent_state_array = np.asarray(influent_state, dtype=float)
+    affine_state_array = (
+        raw_state_array @ np.asarray(projection_complement, dtype=float).T
+        + influent_state_array @ np.asarray(projection_operator, dtype=float).T
+    )
     raw_constraint_max_abs = _compute_constraint_max_abs(raw_state_array, influent_state_array, invariant_matrix)
+    affine_constraint_max_abs = _compute_constraint_max_abs(affine_state_array, influent_state_array, invariant_matrix)
     raw_min_component = float(np.min(raw_state_array))
+    affine_min_component = float(np.min(affine_state_array))
     raw_feasible = bool(
         raw_min_component >= -nonnegativity_tolerance and raw_constraint_max_abs <= constraint_tolerance
+    )
+    affine_feasible = bool(
+        affine_min_component >= -nonnegativity_tolerance and affine_constraint_max_abs <= constraint_tolerance
     )
 
     if raw_feasible:
         projected_state = raw_state_array.copy()
         projected_state[(projected_state < 0.0) & (projected_state >= -nonnegativity_tolerance)] = 0.0
         return {
+            "affine_state": affine_state_array,
             "projected_state": projected_state,
             "projection_stage": "raw_feasible",
             "raw_feasible": True,
+            "affine_feasible": True,
             "lp_active": False,
             "solver_status": "skipped_raw_feasible",
             "solver_iterations": 0,
             "raw_constraint_max_abs": raw_constraint_max_abs,
+            "affine_constraint_max_abs": affine_constraint_max_abs,
             "raw_min_component": raw_min_component,
+            "affine_min_component": affine_min_component,
+        }
+
+    if affine_feasible:
+        projected_state = affine_state_array.copy()
+        projected_state[(projected_state < 0.0) & (projected_state >= -nonnegativity_tolerance)] = 0.0
+        return {
+            "affine_state": affine_state_array,
+            "projected_state": projected_state,
+            "projection_stage": "affine_feasible",
+            "raw_feasible": False,
+            "affine_feasible": True,
+            "lp_active": False,
+            "solver_status": "skipped_affine_feasible",
+            "solver_iterations": 0,
+            "raw_constraint_max_abs": raw_constraint_max_abs,
+            "affine_constraint_max_abs": affine_constraint_max_abs,
+            "raw_min_component": raw_min_component,
+            "affine_min_component": affine_min_component,
         }
 
     presolve_attempts = [bool(settings["highs_presolve"])]
@@ -1242,7 +1276,7 @@ def _solve_single_deployment_lp(
 
     for attempt_index, attempt_presolve in enumerate(presolve_attempts):
         result = _run_highs_deployment_lp(
-            raw_state_array,
+            affine_state_array,
             influent_state_array,
             invariant_matrix,
             lp_template,
@@ -1273,14 +1307,18 @@ def _solve_single_deployment_lp(
                 else:
                     solver_status = "optimal_no_presolve"
                 return {
+                    "affine_state": affine_state_array,
                     "projected_state": candidate_state,
                     "projection_stage": "lp_corrected",
                     "raw_feasible": False,
+                    "affine_feasible": False,
                     "lp_active": True,
                     "solver_status": solver_status,
                     "solver_iterations": last_iterations,
                     "raw_constraint_max_abs": raw_constraint_max_abs,
+                    "affine_constraint_max_abs": affine_constraint_max_abs,
                     "raw_min_component": raw_min_component,
+                    "affine_min_component": affine_min_component,
                 }
             last_status = "constraint_violation_after_highs"
         else:
@@ -1288,14 +1326,18 @@ def _solve_single_deployment_lp(
             last_status = f"highs_failed(status={status_code}, presolve={attempt_presolve}): {message or 'no message'}"
 
     return {
+        "affine_state": affine_state_array,
         "projected_state": fallback_state,
         "projection_stage": "lp_corrected",
         "raw_feasible": False,
+        "affine_feasible": False,
         "lp_active": True,
         "solver_status": last_status,
         "solver_iterations": last_iterations,
         "raw_constraint_max_abs": raw_constraint_max_abs,
+        "affine_constraint_max_abs": affine_constraint_max_abs,
         "raw_min_component": raw_min_component,
+        "affine_min_component": affine_min_component,
     }
 
 
@@ -1305,9 +1347,12 @@ def _solve_deployment_qp_batch(
     coupled_matrix: np.ndarray,
     invariant_matrix: np.ndarray,
     settings: Mapping[str, Any],
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
     n_samples, n_outputs = driver_matrix.shape
     raw_predictions = _solve_linear_coupled_response(coupled_matrix, driver_matrix)
+    projection_operator = build_projection_operator(invariant_matrix)
+    projection_complement = np.eye(n_outputs, dtype=float) - projection_operator
+    affine_predictions = raw_predictions @ projection_complement.T + influent_matrix @ projection_operator.T
     projected_predictions = np.zeros_like(raw_predictions)
     lp_template = _build_deployment_lp_template(invariant_matrix, n_outputs)
     worker_count = _resolve_parallel_workers(int(settings["parallel_workers"]), n_samples)
@@ -1334,6 +1379,8 @@ def _solve_deployment_qp_batch(
                 influent_matrix[sample_index],
                 invariant_matrix,
                 lp_template,
+                projection_operator,
+                projection_complement,
                 settings,
             )
             for sample_index in range(n_samples)
@@ -1347,6 +1394,8 @@ def _solve_deployment_qp_batch(
                     influent_matrix[sample_index],
                     invariant_matrix,
                     lp_template,
+                    projection_operator,
+                    projection_complement,
                     settings,
                 )
                 for sample_index in range(n_samples)
@@ -1354,8 +1403,10 @@ def _solve_deployment_qp_batch(
             sample_results = [future.result() for future in futures]
 
     for sample_index, sample_result in enumerate(sample_results):
+        affine_state = np.asarray(sample_result["affine_state"], dtype=float)
         projected_state = np.asarray(sample_result["projected_state"], dtype=float)
         influent_state = influent_matrix[sample_index]
+        affine_predictions[sample_index] = affine_state
         projected_predictions[sample_index] = projected_state
 
         projected_constraint_max_abs = _compute_constraint_max_abs(
@@ -1365,18 +1416,18 @@ def _solve_deployment_qp_batch(
         )
         projection_details["projection_stage"].append(sample_result["projection_stage"])
         projection_details["raw_feasible_mask"].append(bool(sample_result["raw_feasible"]))
-        projection_details["affine_feasible_mask"].append(bool(sample_result["raw_feasible"]))
+        projection_details["affine_feasible_mask"].append(bool(sample_result["affine_feasible"]))
         projection_details["lp_active_mask"].append(bool(sample_result["lp_active"]))
         projection_details["solver_status"].append(sample_result["solver_status"])
         projection_details["solver_iterations"].append(int(sample_result["solver_iterations"]))
         projection_details["raw_constraint_max_abs"].append(float(sample_result["raw_constraint_max_abs"]))
-        projection_details["affine_constraint_max_abs"].append(float(sample_result["raw_constraint_max_abs"]))
+        projection_details["affine_constraint_max_abs"].append(float(sample_result["affine_constraint_max_abs"]))
         projection_details["projected_constraint_max_abs"].append(projected_constraint_max_abs)
         projection_details["raw_min_component"].append(float(sample_result["raw_min_component"]))
-        projection_details["affine_min_component"].append(float(sample_result["raw_min_component"]))
+        projection_details["affine_min_component"].append(float(sample_result["affine_min_component"]))
         projection_details["projected_min_component"].append(float(np.min(projected_state)))
 
-    return raw_predictions, projected_predictions, {
+    return raw_predictions, affine_predictions, projected_predictions, {
         key: np.asarray(values)
         for key, values in projection_details.items()
     }
@@ -1454,7 +1505,12 @@ def _predict_from_bundle(
         model_bundle.get("coupled_qp_settings", _resolve_coupled_qp_settings(model_bundle["model_hyperparameters"]))
     )
     driver_matrix = design_frame.to_numpy(dtype=float) @ np.asarray(model_bundle["B_matrix"], dtype=float).T
-    raw_fractional_predictions, projected_fractional_predictions, projection_details = _solve_deployment_qp_batch(
+    (
+        raw_fractional_predictions,
+        affine_fractional_predictions,
+        projected_fractional_predictions,
+        projection_details,
+    ) = _solve_deployment_qp_batch(
         driver_matrix,
         selected_constraint_reference.to_numpy(dtype=float),
         np.asarray(model_bundle["R_matrix"], dtype=float),
@@ -1465,7 +1521,7 @@ def _predict_from_bundle(
     return {
         "design_frame": design_frame,
         "raw_fractional_predictions": raw_fractional_predictions,
-        "affine_fractional_predictions": raw_fractional_predictions.copy(),
+        "affine_fractional_predictions": affine_fractional_predictions,
         "projected_fractional_predictions": projected_fractional_predictions,
         "constraint_reference": selected_constraint_reference,
         "projection_details": projection_details,
@@ -1604,7 +1660,12 @@ def train_icsor_coupled_qp_model(
 
     coupled_matrix = np.eye(best_gamma_matrix.shape[0], dtype=float) - best_gamma_matrix
     training_driver_matrix = design_matrix @ best_b_matrix.T
-    training_raw_predictions, training_projected_predictions, training_projection_details = _solve_deployment_qp_batch(
+    (
+        training_raw_predictions,
+        training_affine_predictions,
+        training_projected_predictions,
+        training_projection_details,
+    ) = _solve_deployment_qp_batch(
         training_driver_matrix,
         influent_matrix,
         coupled_matrix,
@@ -1624,7 +1685,7 @@ def train_icsor_coupled_qp_model(
             columns=target_frame.columns,
         ),
         "training_affine_predictions": pd.DataFrame(
-            training_raw_predictions,
+            training_affine_predictions,
             index=target_frame.index,
             columns=target_frame.columns,
         ),
@@ -1639,7 +1700,7 @@ def train_icsor_coupled_qp_model(
             columns=constraint_frame.columns,
         ),
         "training_affine_fractional_predictions": pd.DataFrame(
-            training_raw_predictions,
+            training_affine_predictions,
             index=constraint_frame.index,
             columns=constraint_frame.columns,
         ),
