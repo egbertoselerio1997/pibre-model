@@ -18,6 +18,7 @@ from .process import (
     TrainTestDatasetSplits,
     build_fractional_input_measured_output_dataset,
     build_measured_supervised_dataset,
+    collapse_fractional_states_to_measured_outputs,
     fit_scalers,
     has_active_projection,
     inverse_transform_targets,
@@ -34,17 +35,60 @@ TabularEstimatorFactory = Callable[[Mapping[str, Any]], Any]
 def infer_tabular_feature_space(dataset_split: DatasetSplit) -> str:
     """Infer the feature basis used by one classical training split."""
 
-    influent_feature_columns = [
-        str(column_name).replace("In_", "", 1)
-        for column_name in dataset_split.features.columns
-        if str(column_name).startswith("In_")
+    if any(str(column_name).startswith("In_") for column_name in dataset_split.features.columns):
+        return "fractional_input"
+    return "measured_composite"
+
+
+def _resolve_external_measured_output_columns(
+    target_columns: list[str],
+    *,
+    composition_matrix: np.ndarray,
+    measured_output_columns: list[str] | None = None,
+) -> list[str]:
+    composition_array = np.asarray(composition_matrix, dtype=float)
+    if composition_array.ndim != 2:
+        raise ValueError("composition_matrix must be two-dimensional for external collapse.")
+
+    measured_count = int(composition_array.shape[0])
+    if measured_output_columns is not None:
+        resolved_columns = [str(column_name) for column_name in measured_output_columns]
+        if len(resolved_columns) != measured_count:
+            raise ValueError(
+                "measured_output_columns length must match composition_matrix row count for external collapse."
+            )
+        return resolved_columns
+
+    target_derived_columns = [
+        str(column_name).replace("Out_", "", 1) if str(column_name).startswith("Out_") else str(column_name)
+        for column_name in target_columns
     ]
-    constraint_columns = [str(column_name) for column_name in dataset_split.constraint_reference.columns]
+    if len(target_derived_columns) == measured_count:
+        return target_derived_columns
 
-    if influent_feature_columns == constraint_columns:
-        return "measured_composite"
+    return [f"Measured_{column_index + 1}" for column_index in range(measured_count)]
 
-    return "fractional_input"
+
+def _collapse_fractional_outputs_for_comparison(
+    values: np.ndarray,
+    *,
+    target_columns: list[str],
+    state_columns: list[str],
+    composition_matrix: np.ndarray,
+    measured_output_columns: list[str] | None = None,
+) -> np.ndarray:
+    resolved_measured_output_columns = _resolve_external_measured_output_columns(
+        target_columns,
+        composition_matrix=np.asarray(composition_matrix, dtype=float),
+        measured_output_columns=measured_output_columns,
+    )
+    return collapse_fractional_states_to_measured_outputs(
+        np.asarray(values, dtype=float),
+        state_columns,
+        np.asarray(composition_matrix, dtype=float),
+        resolved_measured_output_columns,
+        output_prefix="Out_",
+    ).to_numpy(dtype=float)
 
 
 def prepare_tabular_prediction_dataset(
@@ -282,6 +326,8 @@ def tune_tabular_regressor_hyperparameters(
     tuning_test_split: DatasetSplit,
     *,
     A_matrix: np.ndarray,
+    composition_matrix: np.ndarray | None = None,
+    measured_output_columns: list[str] | None = None,
     model_params: Mapping[str, Any],
     n_trials: int,
     timeout: int | None = None,
@@ -308,7 +354,9 @@ def tune_tabular_regressor_hyperparameters(
 
     def objective(trial: Any) -> float:
         hyperparameters = dict(base_hyperparameters)
-        hyperparameters.update(suggest_parameters(trial, model_params["search_space"]))
+        hyperparameters.update(
+            suggest_parameters(trial, model_params["search_space"], context=hyperparameters)
+        )
         training_result = train_tabular_regressor(
             {
                 "features": scaled_tuning_train_split.features,
@@ -326,6 +374,23 @@ def tune_tabular_regressor_hyperparameters(
         )
         tuning_targets = inverse_transform_targets(scaled_tuning_test_split.targets, scaling_bundle)
         tuned_predictions = projected_predictions if has_active_projection(A_matrix) else raw_predictions
+        if composition_matrix is not None:
+            state_columns = list(tuning_test_split.constraint_reference.columns)
+            target_columns = list(tuning_test_split.targets.columns)
+            tuning_targets = _collapse_fractional_outputs_for_comparison(
+                tuning_targets,
+                target_columns=target_columns,
+                state_columns=state_columns,
+                composition_matrix=np.asarray(composition_matrix, dtype=float),
+                measured_output_columns=measured_output_columns,
+            )
+            tuned_predictions = _collapse_fractional_outputs_for_comparison(
+                tuned_predictions,
+                target_columns=target_columns,
+                state_columns=state_columns,
+                composition_matrix=np.asarray(composition_matrix, dtype=float),
+                measured_output_columns=measured_output_columns,
+            )
         return float(mean_squared_error(tuning_targets, tuned_predictions))
 
     optimize_study(
@@ -341,33 +406,49 @@ def tune_tabular_regressor_hyperparameters(
     return best_hyperparameters, make_study_summary(study)
 
 
+def _extract_projected_validation_mse(report: Mapping[str, pd.DataFrame]) -> float:
+    """Extract the projected-prediction MSE from one evaluation report."""
+
+    aggregate_metrics = report["aggregate_metrics"]
+    projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
+    return float(projected_row["MSE"])
+
+
+def _resolve_icsor_optuna_objective_label(hyperparameters: Mapping[str, Any]) -> str:
+    estimator_name = str(hyperparameters.get("affine_estimator", "ols")).strip().lower()
+    return f"projected_{estimator_name}"
+
+
+def _resolve_coupled_qp_training_method(hyperparameters: Mapping[str, Any]) -> str:
+    return str(hyperparameters.get("training_method", "recursive_qp")).strip().lower()
+
+
+def _resolve_coupled_qp_optuna_objective_label(hyperparameters: Mapping[str, Any]) -> str:
+    return _resolve_coupled_qp_training_method(hyperparameters)
+
+
 def tune_icsor_hyperparameters(
     tuning_train_split: DatasetSplit,
     tuning_test_split: DatasetSplit,
     *,
     A_matrix: np.ndarray,
     composition_matrix: np.ndarray,
+    measured_output_columns: list[str] | None = None,
     model_params: Mapping[str, Any],
     model_hyperparameters: Mapping[str, Any] | None = None,
     n_trials: int,
     timeout: int | None = None,
     show_progress_bar: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Tune the ICSOR ridge regularization strength with notebook-managed splits."""
+    """Tune ICSOR hyperparameters with notebook-managed Optuna splits."""
 
     from src.models.ml.icsor import run_icsor_pipeline
 
-    base_hyperparameters = resolve_model_hyperparameters(model_params, model_hyperparameters)
-    if str(base_hyperparameters.get("affine_estimator", "ols")).strip().lower() != "ridge":
-        raise ValueError(
-            "tune_icsor_hyperparameters requires affine_estimator='ridge'; Optuna does not choose the ICSOR solver family."
-        )
-
     if not model_params.get("search_space"):
-        raise ValueError("icsor search_space must be defined in config/params.json to tune ridge_alpha.")
+        raise ValueError("icsor search_space must be defined in config/params.json for Optuna tuning.")
 
-    base_hyperparameters = dict(base_hyperparameters)
-    base_hyperparameters["objective"] = "projected_ridge"
+    base_hyperparameters = dict(resolve_model_hyperparameters(model_params, model_hyperparameters))
+    base_hyperparameters["objective"] = _resolve_icsor_optuna_objective_label(base_hyperparameters)
     seed = int(model_params["hyperparameters"]["random_seed"])
     study = create_optuna_study(
         "icsor",
@@ -377,21 +458,23 @@ def tune_icsor_hyperparameters(
 
     def objective(trial: Any) -> float:
         hyperparameters = dict(base_hyperparameters)
-        hyperparameters.update(suggest_parameters(trial, model_params["search_space"]))
+        hyperparameters.update(
+            suggest_parameters(trial, model_params["search_space"], context=hyperparameters)
+        )
+        hyperparameters["objective"] = _resolve_icsor_optuna_objective_label(hyperparameters)
         hyperparameters["uncertainty_method"] = "none"
         tuning_result = run_icsor_pipeline(
             tuning_train_split,
             tuning_test_split,
             np.asarray(A_matrix, dtype=float),
             composition_matrix=np.asarray(composition_matrix, dtype=float),
+            measured_output_columns=measured_output_columns,
             model_params=model_params,
             model_hyperparameters=hyperparameters,
             show_progress=False,
             persist_artifacts=False,
         )
-        aggregate_metrics = tuning_result["test_report"]["aggregate_metrics"]
-        projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
-        return float(projected_row["MSE"])
+        return _extract_projected_validation_mse(tuning_result["test_report"])
 
     optimize_study(
         study,
@@ -404,6 +487,78 @@ def tune_icsor_hyperparameters(
 
     best_hyperparameters = dict(base_hyperparameters)
     best_hyperparameters.update(study.best_trial.params)
+    best_hyperparameters["objective"] = _resolve_icsor_optuna_objective_label(best_hyperparameters)
+    return best_hyperparameters, make_study_summary(study)
+
+
+def tune_icsor_coupled_qp_hyperparameters(
+    tuning_train_split: DatasetSplit,
+    tuning_test_split: DatasetSplit,
+    *,
+    A_matrix: np.ndarray,
+    composition_matrix: np.ndarray,
+    measured_output_columns: list[str] | None = None,
+    model_params: Mapping[str, Any],
+    model_hyperparameters: Mapping[str, Any] | None = None,
+    n_trials: int,
+    timeout: int | None = None,
+    show_progress_bar: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Tune coupled-QP ICSOR hyperparameters with notebook-managed Optuna splits.
+
+    The coupled-QP training_method is intentionally NOT optimized by Optuna and must
+    be selected manually through model_hyperparameters/training_defaults.
+    """
+
+    from src.models.ml.icsor_coupled_qp import run_icsor_coupled_qp_pipeline
+
+    if not model_params.get("search_space"):
+        raise ValueError("icsor_coupled_qp search_space must be defined in config/params.json for Optuna tuning.")
+
+    base_hyperparameters = dict(resolve_model_hyperparameters(model_params, model_hyperparameters))
+    selected_training_method = _resolve_coupled_qp_training_method(base_hyperparameters)
+    base_hyperparameters["training_method"] = selected_training_method
+    base_hyperparameters["objective"] = selected_training_method
+    seed = int(model_params["hyperparameters"]["random_seed"])
+    study = create_optuna_study(
+        "icsor_coupled_qp",
+        seed=seed,
+        pruner_config=model_params.get("pruner"),
+    )
+
+    def objective(trial: Any) -> float:
+        hyperparameters = dict(base_hyperparameters)
+        hyperparameters.update(
+            suggest_parameters(trial, model_params["search_space"], context=hyperparameters)
+        )
+        hyperparameters["training_method"] = selected_training_method
+        hyperparameters["objective"] = selected_training_method
+        tuning_result = run_icsor_coupled_qp_pipeline(
+            tuning_train_split,
+            tuning_test_split,
+            np.asarray(A_matrix, dtype=float),
+            composition_matrix=np.asarray(composition_matrix, dtype=float),
+            measured_output_columns=measured_output_columns,
+            model_params=model_params,
+            model_hyperparameters=hyperparameters,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+        return _extract_projected_validation_mse(tuning_result["test_report"])
+
+    optimize_study(
+        study,
+        objective,
+        n_trials=int(n_trials),
+        timeout=timeout,
+        show_progress_bar=show_progress_bar,
+        objective_name="validation_mse",
+    )
+
+    best_hyperparameters = dict(base_hyperparameters)
+    best_hyperparameters.update(study.best_trial.params)
+    best_hyperparameters["training_method"] = selected_training_method
+    best_hyperparameters["objective"] = selected_training_method
     return best_hyperparameters, make_study_summary(study)
 
 
@@ -416,6 +571,8 @@ def build_tabular_model_bundle(
     target_columns: list[str],
     constraint_columns: list[str],
     A_matrix: np.ndarray,
+    composition_matrix: np.ndarray | None,
+    measured_output_columns: list[str] | None,
     model_hyperparameters: Mapping[str, Any],
     feature_space: str,
     target_space: str,
@@ -430,13 +587,23 @@ def build_tabular_model_bundle(
         "target_columns": target_columns,
         "constraint_columns": constraint_columns,
         "A_matrix": np.asarray(A_matrix, dtype=float),
+        "composition_matrix": None if composition_matrix is None else np.asarray(composition_matrix, dtype=float),
+        "measured_output_columns": None if measured_output_columns is None else list(measured_output_columns),
         "projection_active": has_active_projection(A_matrix),
         "scaling_bundle": scaling_bundle,
         "model_hyperparameters": dict(model_hyperparameters),
         "feature_space": str(feature_space),
         "target_space": str(target_space),
         "constraint_space": str(constraint_space),
-        "direct_comparison_scope": "measured_output_metrics_only",
+        "native_prediction_space": str(target_space),
+        "comparison_target_space": (
+            "external_measured_output" if composition_matrix is not None else str(target_space)
+        ),
+        "direct_comparison_scope": (
+            "externally_collapsed_measured_output_metrics"
+            if composition_matrix is not None
+            else "native_prediction_metrics_only"
+        ),
     }
 
 
@@ -459,7 +626,7 @@ def predict_tabular_regressor_model(
             test_dataset,
             metadata=dict(metadata),
             composition_matrix=np.asarray(composition_matrix, dtype=float),
-            feature_space=str(model_bundle.get("feature_space", "measured_composite")),
+            feature_space=str(model_bundle.get("feature_space", "fractional_input")),
         )
         feature_frame = prepared_dataset.features
         constraint_reference = prepared_dataset.constraint_reference
@@ -508,6 +675,8 @@ def run_tabular_regressor_pipeline(
     test_split: DatasetSplit,
     A_matrix: np.ndarray,
     *,
+    composition_matrix: np.ndarray | None = None,
+    measured_output_columns: list[str] | None = None,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
     model_hyperparameters: Mapping[str, Any] | None = None,
@@ -569,6 +738,9 @@ def run_tabular_regressor_pipeline(
             np.asarray(A_matrix, dtype=float),
             training_split.targets.columns,
             index=training_split.targets.index,
+            composition_matrix=None if composition_matrix is None else np.asarray(composition_matrix, dtype=float),
+            state_columns=training_split.constraint_reference.columns,
+            measured_output_columns=measured_output_columns,
         )
         progress_bar.update(1)
 
@@ -587,6 +759,9 @@ def run_tabular_regressor_pipeline(
             np.asarray(A_matrix, dtype=float),
             test_split.targets.columns,
             index=test_split.targets.index,
+            composition_matrix=None if composition_matrix is None else np.asarray(composition_matrix, dtype=float),
+            state_columns=test_split.constraint_reference.columns,
+            measured_output_columns=measured_output_columns,
         )
         progress_bar.update(1)
 
@@ -598,10 +773,12 @@ def run_tabular_regressor_pipeline(
             target_columns=list(training_split.targets.columns),
             constraint_columns=list(training_split.constraint_reference.columns),
             A_matrix=np.asarray(A_matrix, dtype=float),
+            composition_matrix=None if composition_matrix is None else np.asarray(composition_matrix, dtype=float),
+            measured_output_columns=measured_output_columns,
             model_hyperparameters=selected_hyperparameters,
             feature_space=infer_tabular_feature_space(training_split),
-            target_space="measured_output",
-            constraint_space="measured",
+            target_space="fractional_component",
+            constraint_space="fractional_component",
         )
 
         dataset_splits = TrainTestDatasetSplits(train=training_split, test=test_split)
@@ -663,6 +840,7 @@ __all__ = [
     "run_tabular_regressor_pipeline",
     "serialize_report_frames",
     "train_tabular_regressor",
+    "tune_icsor_coupled_qp_hyperparameters",
     "transform_feature_frame",
     "tune_icsor_hyperparameters",
     "tune_tabular_regressor_hyperparameters",

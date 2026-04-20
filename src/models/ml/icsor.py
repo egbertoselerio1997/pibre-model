@@ -1,9 +1,9 @@
-"""icsor solved in fractional space with a collapsed measured-output affine core and LP projection."""
+"""icsor solved natively in ASM component space with component-space LP projection."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -64,8 +64,8 @@ RIDGE_ANALYTIC_INFERENCE_NOTE = (
     "nonnegative deployment correction."
 )
 AFFINE_CORE_PREDICTION_UNCERTAINTY_NOTE = (
-    "Prediction uncertainty describes the affine measured-space core only and is not an exact "
-    "interval for the final nonnegative deployed predictor when the LP correction is active."
+    "Prediction uncertainty describes the raw component-space surrogate only and is not an exact "
+    "interval for the affine or final nonnegative deployed predictor when the correction stages are active."
 )
 
 
@@ -133,21 +133,21 @@ def _validate_scaling_configuration(hyperparameters: Mapping[str, Any]) -> None:
         raise ValueError("icsor requires scale_features=False so fractional influent states remain physical.")
     if bool(hyperparameters.get("scale_targets", False)):
         raise ValueError(
-            "icsor requires scale_targets=False because the collapsed affine-core target lives in measured-output space."
+            "icsor requires scale_targets=False because effluent ASM component-fraction targets must remain physical."
         )
 
 
 def _validate_composition_shape(
     composition_matrix: np.ndarray,
     *,
-    target_columns: list[str],
     constraint_columns: list[str],
 ) -> np.ndarray:
     composition_array = np.asarray(composition_matrix, dtype=float)
-    expected_shape = (len(target_columns), len(constraint_columns))
-    if composition_array.shape != expected_shape:
+    if composition_array.ndim != 2:
+        raise ValueError("icsor requires composition_matrix to be two-dimensional.")
+    if composition_array.shape[1] != len(constraint_columns):
         raise ValueError(
-            "icsor requires composition_matrix shape to match target_columns x constraint_columns."
+            "icsor requires composition_matrix column count to match the ASM constraint dimension."
         )
     return composition_array
 
@@ -628,7 +628,7 @@ def _compute_parameter_inference(
     inference_result["confidence_level"] = float(confidence_level)
     inference_result["design_dimension"] = design_dimension
     inference_result["design_rank"] = int(design_rank)
-    inference_result["coefficient_target"] = "identifiable_measured_space_operator"
+    inference_result["coefficient_target"] = "component_space_operator"
     inference_result["rank_deficient"] = rank_deficient
     inference_result["requested_method"] = uncertainty_method
     inference_result["affine_estimator"] = affine_estimator
@@ -656,8 +656,8 @@ def _compute_prediction_uncertainty_from_bundle(
         return None
 
     design_matrix = design_frame.to_numpy(dtype=float)
-    effective_parameter_matrix = np.asarray(model_bundle["effective_parameter_matrix"], dtype=float)
-    affine_core_predictions = design_matrix @ effective_parameter_matrix
+    raw_parameter_matrix = np.asarray(model_bundle["raw_parameter_matrix"], dtype=float)
+    raw_component_predictions = design_matrix @ raw_parameter_matrix
     confidence_level = float(coefficient_inference["confidence_level"])
     lower_quantile = 0.5 * (1.0 - confidence_level)
     upper_quantile = 1.0 - lower_quantile
@@ -676,23 +676,18 @@ def _compute_prediction_uncertainty_from_bundle(
         mean_standard_errors = np.sqrt(np.outer(leverage, output_variances))
         prediction_standard_errors = np.sqrt(np.outer(1.0 + leverage, output_variances))
         mean_ci_lower, mean_ci_upper = _compute_interval_bounds(
-            affine_core_predictions,
+            raw_component_predictions,
             mean_standard_errors,
             critical_value=critical_value,
         )
         prediction_interval_lower, prediction_interval_upper = _compute_interval_bounds(
-            affine_core_predictions,
+            raw_component_predictions,
             prediction_standard_errors,
             critical_value=critical_value,
         )
     else:
         identifiable_parameter_samples = np.asarray(coefficient_inference["bootstrap_parameter_samples"], dtype=float)
-        effective_parameter_samples = _build_effective_parameter_samples(
-            identifiable_parameter_samples,
-            model_bundle["design_schema"],
-            np.asarray(model_bundle["pass_through_operator"], dtype=float),
-        )
-        predicted_mean_samples = np.einsum("nd,bdk->nbk", design_matrix, effective_parameter_samples)
+        predicted_mean_samples = np.einsum("nd,bdk->nbk", design_matrix, identifiable_parameter_samples)
         mean_standard_errors = np.std(predicted_mean_samples, axis=1, ddof=1)
         mean_ci_lower = np.quantile(predicted_mean_samples, lower_quantile, axis=1)
         mean_ci_upper = np.quantile(predicted_mean_samples, upper_quantile, axis=1)
@@ -712,7 +707,7 @@ def _compute_prediction_uncertainty_from_bundle(
             "requested_method": coefficient_inference.get("requested_method", method_name),
             "confidence_level": confidence_level,
             "coefficient_target": str(coefficient_inference["coefficient_target"]),
-            "prediction_target": "affine_core_measured_prediction",
+            "prediction_target": "raw_component_prediction",
             "affine_estimator": coefficient_inference.get("affine_estimator", "ols"),
             "ridge_alpha": coefficient_inference.get("ridge_alpha"),
             "rank_deficient": bool(coefficient_inference["rank_deficient"]),
@@ -853,6 +848,7 @@ def _solve_projected_affine_core(
     collapse_operator: np.ndarray,
     model_hyperparameters: Mapping[str, Any],
 ) -> dict[str, Any]:
+    del collapse_operator
     affine_estimator = _resolve_affine_estimator(model_hyperparameters)
     requested_backend = _resolve_ols_backend(model_hyperparameters) if affine_estimator == "ols" else "numpy_ridge_closed_form"
     transformed_parameter_result = _solve_identifiable_affine_parameters(
@@ -861,29 +857,24 @@ def _solve_projected_affine_core(
         design_schema=design_schema,
         model_hyperparameters=model_hyperparameters,
     )
-    raw_parameter_result = _solve_with_numpy_lstsq(
-        collapse_operator,
-        transformed_parameter_result["solution_matrix"].T,
-        rcond_value=model_hyperparameters.get("lstsq_rcond"),
-    )
-    raw_parameter_matrix = np.asarray(raw_parameter_result["solution_matrix"], dtype=float).T
-    fit_residual_matrix = transformed_target_matrix - design_matrix @ raw_parameter_matrix @ collapse_operator.T
+    raw_parameter_matrix = np.asarray(transformed_parameter_result["solution_matrix"], dtype=float)
+    fit_residual_matrix = transformed_target_matrix - design_matrix @ raw_parameter_matrix
 
     return {
         "parameter_matrix": raw_parameter_matrix,
-        "transformed_parameter_matrix": np.asarray(transformed_parameter_result["solution_matrix"], dtype=float),
+        "transformed_parameter_matrix": raw_parameter_matrix.copy(),
         "fit_residual_matrix": fit_residual_matrix,
         "design_residuals": np.asarray(transformed_parameter_result["residuals"], dtype=float),
         "design_rank": int(transformed_parameter_result["rank"]),
         "design_singular_values": np.asarray(transformed_parameter_result["singular_values"], dtype=float),
-        "collapse_residuals": np.asarray(raw_parameter_result["residuals"], dtype=float),
-        "collapse_rank": int(raw_parameter_result["rank"]),
-        "collapse_singular_values": np.asarray(raw_parameter_result["singular_values"], dtype=float),
+        "collapse_residuals": np.zeros(0, dtype=float),
+        "collapse_rank": int(raw_parameter_matrix.shape[1]),
+        "collapse_singular_values": np.ones(raw_parameter_matrix.shape[1], dtype=float),
         "estimation_metadata": {
             "affine_estimator": affine_estimator,
             "requested_backend": requested_backend,
             "backend_used": str(transformed_parameter_result["backend_used"]),
-            "collapse_backend_used": str(raw_parameter_result["backend_used"]),
+            "collapse_backend_used": "not_applicable_component_space_fit",
             "device_label": "cpu",
             "ridge_alpha": transformed_parameter_result.get("ridge_alpha"),
             "ridge_effective_degrees_of_freedom": transformed_parameter_result.get("effective_degrees_of_freedom"),
@@ -901,18 +892,22 @@ def _build_model_bundle(
     constraint_columns: list[str],
     A_matrix: np.ndarray,
     composition_matrix: np.ndarray,
+    measured_output_columns: list[str] | None,
     composition_source: Mapping[str, Any] | None,
     model_hyperparameters: Mapping[str, Any],
     training_options: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
-        "model_bundle_schema_version": 4,
+        "model_bundle_schema_version": 5,
         "model_name": MODEL_NAME,
         "feature_columns": feature_columns,
         "target_columns": target_columns,
         "constraint_columns": constraint_columns,
+        "native_prediction_space": "fractional_component",
+        "comparison_target_space": "external_measured_output",
         "A_matrix": np.asarray(A_matrix, dtype=float),
         "composition_matrix": np.asarray(composition_matrix, dtype=float),
+        "measured_output_columns": None if measured_output_columns is None else list(measured_output_columns),
         "composition_source": dict(composition_source or {}),
         "projection_matrix": np.asarray(training_result["projection_matrix"], dtype=float),
         "projection_complement": np.asarray(training_result["projection_complement"], dtype=float),
@@ -922,10 +917,13 @@ def _build_model_bundle(
         "design_schema": dict(training_result["design_schema"]),
         "raw_parameter_matrix": np.asarray(training_result["raw_parameter_matrix"], dtype=float),
         "identifiable_parameter_matrix": np.asarray(training_result["identifiable_parameter_matrix"], dtype=float),
-        "raw_measured_parameter_matrix": np.asarray(training_result["raw_measured_parameter_matrix"], dtype=float),
+        "raw_measured_parameter_matrix": None
+        if training_result.get("raw_measured_parameter_matrix") is None
+        else np.asarray(training_result["raw_measured_parameter_matrix"], dtype=float),
         "effective_parameter_matrix": np.asarray(training_result["effective_parameter_matrix"], dtype=float),
         "affine_core_parameter_matrix": np.asarray(training_result["effective_parameter_matrix"], dtype=float),
         "raw_coefficients": dict(training_result["raw_coefficients"]),
+        "component_coefficients": dict(training_result["raw_coefficients"]),
         "identifiable_coefficients": dict(training_result["identifiable_coefficients"]),
         "effective_coefficients": dict(training_result["effective_coefficients"]),
         "affine_core_coefficients": dict(training_result["effective_coefficients"]),
@@ -933,6 +931,9 @@ def _build_model_bundle(
         if training_result["coefficient_inference"] is None
         else dict(training_result["coefficient_inference"]),
         "identifiable_coefficient_uncertainty": None
+        if training_result["identifiable_coefficient_uncertainty"] is None
+        else dict(training_result["identifiable_coefficient_uncertainty"]),
+        "component_coefficient_uncertainty": None
         if training_result["identifiable_coefficient_uncertainty"] is None
         else dict(training_result["identifiable_coefficient_uncertainty"]),
         "effective_coefficient_uncertainty": None
@@ -984,17 +985,8 @@ def _predict_from_bundle(
     )
     affine_fractional_predictions = np.asarray(projection_details["affine_predictions"], dtype=float)
     projected_fractional_predictions = np.asarray(projection_details["projected_predictions"], dtype=float)
-    raw_measured_predictions = raw_fractional_predictions @ np.asarray(model_bundle["composition_matrix"], dtype=float).T
-    affine_measured_predictions = affine_fractional_predictions @ np.asarray(model_bundle["composition_matrix"], dtype=float).T
-    projected_measured_predictions = projected_fractional_predictions @ np.asarray(
-        model_bundle["composition_matrix"],
-        dtype=float,
-    ).T
     prediction_result = {
         "design_frame": design_frame,
-        "raw_measured_predictions": raw_measured_predictions,
-        "affine_measured_predictions": affine_measured_predictions,
-        "projected_measured_predictions": projected_measured_predictions,
         "raw_fractional_predictions": raw_fractional_predictions,
         "affine_fractional_predictions": affine_fractional_predictions,
         "projected_fractional_predictions": projected_fractional_predictions,
@@ -1019,7 +1011,7 @@ def train_icsor_model(
     composition_matrix: np.ndarray,
     training_options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fit the strict icsor estimator on notebook-prepared fractional features and measured targets."""
+    """Fit the strict icsor estimator on notebook-prepared fractional ASM features and targets."""
 
     _validate_scaling_configuration(model_hyperparameters)
     confidence_level = _resolve_confidence_level(model_hyperparameters)
@@ -1031,14 +1023,17 @@ def train_icsor_model(
     constraint_frame = pd.DataFrame(training_dataset["constraint_reference"])
     composition_array = _validate_composition_shape(
         composition_matrix,
-        target_columns=list(target_frame.columns),
         constraint_columns=list(constraint_frame.columns),
     )
+    if target_frame.shape[1] != constraint_frame.shape[1]:
+        raise ValueError(
+            "icsor requires effluent ASM component targets to match the ASM constraint dimension in width."
+        )
 
     options = _resolve_training_options(training_options, objective_name=objective_label)
     projection_matrix, projection_complement = _compute_projection_matrices(np.asarray(A_matrix, dtype=float))
-    collapse_operator = composition_array @ projection_complement
-    pass_through_operator = composition_array @ projection_matrix
+    collapse_operator = np.eye(target_frame.shape[1], dtype=float)
+    pass_through_operator = np.zeros((target_frame.shape[1], target_frame.shape[1]), dtype=float)
 
     design_frame, design_schema = build_icsor_design_frame(
         feature_frame,
@@ -1053,8 +1048,8 @@ def train_icsor_model(
         unit="stage",
     )
     try:
-        progress_bar.set_postfix(stage="project_target", objective=str(options["objective_name"]))
-        transformed_target_values = target_frame.to_numpy(dtype=float) - constraint_frame.to_numpy(dtype=float) @ pass_through_operator.T
+        progress_bar.set_postfix(stage="prepare_target", objective=str(options["objective_name"]))
+        transformed_target_values = target_frame.to_numpy(dtype=float)
         design_matrix = design_frame.to_numpy(dtype=float)
         progress_bar.update(1)
 
@@ -1072,18 +1067,13 @@ def train_icsor_model(
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="assemble", objective=str(options["objective_name"]))
-        raw_measured_parameter_matrix = raw_parameter_matrix @ composition_array.T
-        effective_parameter_matrix = _build_effective_parameter_matrix(
-            raw_parameter_matrix,
-            design_schema,
-            collapse_operator,
-            pass_through_operator,
-        )
+        raw_measured_parameter_matrix = None
+        effective_parameter_matrix = raw_parameter_matrix.copy()
         raw_coefficients = _unpack_parameter_blocks(raw_parameter_matrix, design_schema)
-        identifiable_coefficients = _unpack_parameter_blocks(identifiable_parameter_matrix, design_schema)
-        effective_coefficients = _unpack_parameter_blocks(effective_parameter_matrix, design_schema)
+        identifiable_coefficients = dict(raw_coefficients)
+        effective_coefficients = dict(raw_coefficients)
         coefficient_inference = _compute_parameter_inference(
-            identifiable_parameter_matrix,
+            raw_parameter_matrix,
             design_matrix=design_matrix,
             design_schema=design_schema,
             fit_residual_matrix=fit_residual_matrix,
@@ -1101,26 +1091,7 @@ def train_icsor_model(
                 confidence_interval_lower=np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
                 confidence_interval_upper=np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
             )
-            effective_coefficient_uncertainty = _build_block_uncertainty_payload(
-                design_schema,
-                standard_error_matrix=np.asarray(coefficient_inference["standard_error_matrix"], dtype=float),
-                confidence_interval_lower=np.asarray(
-                    _add_pass_through_to_parameter_matrix(
-                        np.asarray(coefficient_inference["confidence_interval_lower"], dtype=float),
-                        design_schema,
-                        pass_through_operator,
-                    ),
-                    dtype=float,
-                ),
-                confidence_interval_upper=np.asarray(
-                    _add_pass_through_to_parameter_matrix(
-                        np.asarray(coefficient_inference["confidence_interval_upper"], dtype=float),
-                        design_schema,
-                        pass_through_operator,
-                    ),
-                    dtype=float,
-                ),
-            )
+            effective_coefficient_uncertainty = dict(identifiable_coefficient_uncertainty)
         progress_bar.update(1)
 
         progress_bar.set_postfix(stage="predict", objective=str(options["objective_name"]))
@@ -1142,11 +1113,11 @@ def train_icsor_model(
             training_projection_details["projected_predictions"],
             dtype=float,
         )
-        training_raw_predictions = training_raw_fractional_predictions @ composition_array.T
-        training_affine_predictions = training_affine_fractional_predictions @ composition_array.T
-        training_projected_predictions = training_projected_fractional_predictions @ composition_array.T
-        train_affine_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_affine_predictions) ** 2))
-        train_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_projected_predictions) ** 2))
+        training_raw_predictions = training_raw_fractional_predictions.copy()
+        training_affine_predictions = training_affine_fractional_predictions.copy()
+        training_projected_predictions = training_projected_fractional_predictions.copy()
+        train_affine_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_affine_fractional_predictions) ** 2))
+        train_mse = float(np.mean((target_frame.to_numpy(dtype=float) - training_projected_fractional_predictions) ** 2))
         progress_bar.set_postfix(
             stage="predict",
             objective=str(options["objective_name"]),
@@ -1164,7 +1135,7 @@ def train_icsor_model(
         "pass_through_operator": pass_through_operator,
         "projection_settings": projection_settings,
         "raw_parameter_matrix": raw_parameter_matrix,
-        "identifiable_parameter_matrix": identifiable_parameter_matrix,
+        "identifiable_parameter_matrix": raw_parameter_matrix.copy(),
         "raw_measured_parameter_matrix": raw_measured_parameter_matrix,
         "effective_parameter_matrix": effective_parameter_matrix,
         "raw_coefficients": raw_coefficients,
@@ -1225,7 +1196,7 @@ def predict_icsor_model(
     metadata: Mapping[str, Any] | None = None,
     composition_matrix: np.ndarray | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Load a persisted icsor bundle and generate aligned measured and fractional predictions."""
+    """Load a persisted icsor bundle and generate aligned fractional ASM predictions."""
 
     model_bundle = load_model_bundle(model_path)
     scaling_bundle: ScalingBundle = model_bundle["scaling_bundle"]
@@ -1267,17 +1238,17 @@ def predict_icsor_model(
 
     result = {
         "raw_predictions": pd.DataFrame(
-            prediction_payload["raw_measured_predictions"],
+            prediction_payload["raw_fractional_predictions"],
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
         "affine_predictions": pd.DataFrame(
-            prediction_payload["affine_measured_predictions"],
+            prediction_payload["affine_fractional_predictions"],
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
         "projected_predictions": pd.DataFrame(
-            prediction_payload["projected_measured_predictions"],
+            prediction_payload["projected_fractional_predictions"],
             index=feature_frame.index,
             columns=model_bundle["target_columns"],
         ),
@@ -1352,6 +1323,7 @@ def run_icsor_pipeline(
     A_matrix: np.ndarray,
     *,
     composition_matrix: np.ndarray,
+    measured_output_columns: Iterable[str] | None = None,
     composition_source: Mapping[str, Any] | None = None,
     repo_root: str | Path | None = None,
     model_params: Mapping[str, Any] | None = None,
@@ -1369,6 +1341,11 @@ def run_icsor_pipeline(
     selected_hyperparameters["objective"] = _resolve_icsor_objective_label(selected_hyperparameters)
     _validate_scaling_configuration({**split_params, **selected_hyperparameters})
     objective_label = str(selected_hyperparameters["objective"])
+    resolved_measured_output_columns = (
+        None
+        if measured_output_columns is None
+        else [str(column_name) for column_name in measured_output_columns]
+    )
 
     progress_bar = create_progress_bar(
         total=5,
@@ -1414,6 +1391,7 @@ def run_icsor_pipeline(
             constraint_columns=list(training_split.constraint_reference.columns),
             A_matrix=np.asarray(A_matrix, dtype=float),
             composition_matrix=np.asarray(composition_matrix, dtype=float),
+            measured_output_columns=resolved_measured_output_columns,
             composition_source=composition_source,
             model_hyperparameters=selected_hyperparameters,
             training_options={
@@ -1448,6 +1426,7 @@ def run_icsor_pipeline(
             np.asarray(composition_matrix, dtype=float),
             training_split.targets.columns,
             training_split.constraint_reference.columns,
+            measured_output_columns=resolved_measured_output_columns,
             index=training_split.targets.index,
             prediction_uncertainty=train_prediction_payload.get("prediction_uncertainty"),
             projection_details=train_prediction_payload.get("projection_details"),
@@ -1462,6 +1441,7 @@ def run_icsor_pipeline(
             np.asarray(composition_matrix, dtype=float),
             test_split.targets.columns,
             test_split.constraint_reference.columns,
+            measured_output_columns=resolved_measured_output_columns,
             index=test_split.targets.index,
             prediction_uncertainty=test_prediction_payload.get("prediction_uncertainty"),
             projection_details=test_prediction_payload.get("projection_details"),

@@ -17,7 +17,12 @@ from src.models.simulation.asm2d_tsn_simulation import (
 )
 
 from .io import load_dataframe_csv, save_dataframe_csv, select_latest_timestamped_file_bundle
-from .process import DatasetSplit, SupervisedDatasetFrames, make_train_test_split
+from .process import (
+	DatasetSplit,
+	SupervisedDatasetFrames,
+	collapse_fractional_states_to_measured_outputs,
+	make_train_test_split,
+)
 from .simulation import (
 	load_ml_orchestration_params,
 	load_params_config,
@@ -767,6 +772,197 @@ def load_icsor_response_surface_defaults(repo_root: str | Path | None = None) ->
 	}
 
 
+def _build_component_response_surface_prediction_data(
+	model_path: str | Path,
+	*,
+	predictor: Callable[..., dict[str, pd.DataFrame]],
+	metadata: Mapping[str, Any] | None = None,
+	repo_root: str | Path | None = None,
+	grid_points_per_axis: int | None = None,
+	operational_extension_fraction: float | None = None,
+	fixed_influent_profile: str | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+	"""Build a component-model response surface over HRT and Aeration with a fixed influent profile."""
+
+	defaults = load_icsor_response_surface_defaults(repo_root)
+	selected_grid_points = int(
+		grid_points_per_axis
+		if grid_points_per_axis is not None
+		else defaults["grid_points_per_axis"]
+	)
+	selected_extension_fraction = float(
+		operational_extension_fraction
+		if operational_extension_fraction is not None
+		else defaults["operational_extension_fraction"]
+	)
+	selected_profile = (
+		fixed_influent_profile
+		if fixed_influent_profile is not None
+		else defaults["fixed_influent_profile"]
+	)
+
+	if selected_grid_points < 2:
+		raise ValueError("grid_points_per_axis must be at least 2.")
+
+	resolved_metadata = _resolve_response_surface_metadata(metadata, repo_root=repo_root)
+	operational_columns = list(resolved_metadata["operational_columns"])
+	state_columns = list(resolved_metadata["state_columns"])
+	measured_output_columns = list(resolved_metadata["measured_output_columns"])
+	composition_matrix = np.asarray(resolved_metadata["composition_matrix"], dtype=float)
+	training_domain, extended_domain = _resolve_operational_domain(
+		operational_columns,
+		operational_extension_fraction=selected_extension_fraction,
+		repo_root=repo_root,
+	)
+	resolved_influent_profile = _resolve_fixed_influent_profile(
+		state_columns,
+		selected_profile,
+		repo_root=repo_root,
+	)
+
+	hrt_axis = np.linspace(
+		extended_domain["HRT"]["min"],
+		extended_domain["HRT"]["max"],
+		selected_grid_points,
+		dtype=float,
+	)
+	aeration_axis = np.linspace(
+		extended_domain["Aeration"]["min"],
+		extended_domain["Aeration"]["max"],
+		selected_grid_points,
+		dtype=float,
+	)
+	hrt_mesh, aeration_mesh = np.meshgrid(hrt_axis, aeration_axis)
+	row_count = int(hrt_mesh.size)
+
+	feature_columns = {
+		"HRT": hrt_mesh.reshape(-1),
+		"Aeration": aeration_mesh.reshape(-1),
+	}
+	for state_column in state_columns:
+		feature_columns[f"In_{state_column}"] = np.full(
+			row_count,
+			resolved_influent_profile[state_column],
+			dtype=float,
+		)
+	feature_frame = pd.DataFrame(feature_columns)
+	constraint_reference = pd.DataFrame(
+		{
+			state_column: np.full(row_count, resolved_influent_profile[state_column], dtype=float)
+			for state_column in state_columns
+		}
+	)
+
+	prediction_result = predictor(
+		{
+			"features": feature_frame,
+			"constraint_reference": constraint_reference,
+		},
+		model_path,
+	)
+	affine_fractional_predictions = prediction_result.get("affine_fractional_predictions")
+	projected_fractional_predictions = prediction_result.get(
+		"projected_fractional_predictions",
+		prediction_result["projected_predictions"],
+	).copy()
+	affine_predictions = None
+	if affine_fractional_predictions is not None:
+		affine_predictions = collapse_fractional_states_to_measured_outputs(
+			affine_fractional_predictions,
+			state_columns,
+			composition_matrix,
+			measured_output_columns,
+			output_prefix="Out_",
+		)
+	projected_predictions = collapse_fractional_states_to_measured_outputs(
+		projected_fractional_predictions,
+		state_columns,
+		composition_matrix,
+		measured_output_columns,
+		output_prefix="Out_",
+	)
+	affine_core_prediction_standard_errors = prediction_result.get("affine_core_prediction_standard_errors")
+	affine_core_prediction_interval_lower = prediction_result.get("affine_core_prediction_interval_lower")
+	affine_core_prediction_interval_upper = prediction_result.get("affine_core_prediction_interval_upper")
+	per_target_surfaces = {
+		target_name: projected_predictions[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
+		for target_name in projected_predictions.columns
+	}
+	frame_parts = [feature_frame, constraint_reference.add_prefix("ConstraintReference_")]
+	if affine_predictions is not None:
+		frame_parts.append(affine_predictions.add_prefix("Affine_"))
+	frame_parts.append(projected_predictions.add_prefix("Projected_"))
+	projection_stage_diagnostics = prediction_result.get("projection_stage_diagnostics")
+	if projection_stage_diagnostics is not None:
+		frame_parts.append(projection_stage_diagnostics)
+	prediction_table = pd.concat(frame_parts, axis=1)
+	if affine_core_prediction_standard_errors is not None:
+		prediction_table = pd.concat(
+			[
+				prediction_table,
+				affine_core_prediction_standard_errors.add_prefix("AffineCoreSE_"),
+			],
+			axis=1,
+		)
+	if affine_core_prediction_interval_lower is not None and affine_core_prediction_interval_upper is not None:
+		prediction_table = pd.concat(
+			[
+				prediction_table,
+				affine_core_prediction_interval_lower.add_prefix("AffineCorePI95Lower_"),
+				affine_core_prediction_interval_upper.add_prefix("AffineCorePI95Upper_"),
+			],
+			axis=1,
+		)
+
+	result = {
+		"response_surface_config": {
+			"grid_points_per_axis": selected_grid_points,
+			"operational_extension_fraction": selected_extension_fraction,
+			"fixed_influent_profile": "explicit" if isinstance(selected_profile, Mapping) else str(selected_profile),
+		},
+		"fixed_influent_profile": pd.Series(resolved_influent_profile, name="value"),
+		"operational_axes": {
+			"HRT": hrt_axis,
+			"Aeration": aeration_axis,
+		},
+		"operational_meshes": {
+			"HRT": hrt_mesh,
+			"Aeration": aeration_mesh,
+		},
+		"training_domain": training_domain,
+		"extended_domain": extended_domain,
+		"feature_grid": feature_frame,
+		"constraint_reference": constraint_reference,
+		"projected_fractional_predictions": projected_fractional_predictions,
+		"projected_predictions": projected_predictions,
+		"prediction_table": prediction_table,
+		"per_target_surfaces": per_target_surfaces,
+	}
+	if affine_predictions is not None:
+		result["affine_predictions"] = affine_predictions.copy()
+		result["affine_fractional_predictions"] = affine_fractional_predictions.copy()
+	if projection_stage_diagnostics is not None:
+		result["projection_stage_diagnostics"] = projection_stage_diagnostics.copy()
+	if "projection_stage_summary" in prediction_result:
+		result["projection_stage_summary"] = prediction_result["projection_stage_summary"].copy()
+	if affine_core_prediction_standard_errors is not None:
+		result["affine_core_prediction_standard_errors"] = affine_core_prediction_standard_errors.copy()
+		result["per_target_standard_error_surfaces"] = {
+			target_name: affine_core_prediction_standard_errors[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
+			for target_name in affine_core_prediction_standard_errors.columns
+		}
+	if affine_core_prediction_interval_lower is not None:
+		result["affine_core_prediction_interval_lower"] = affine_core_prediction_interval_lower.copy()
+	if affine_core_prediction_interval_upper is not None:
+		result["affine_core_prediction_interval_upper"] = affine_core_prediction_interval_upper.copy()
+	if "prediction_uncertainty_metadata" in prediction_result:
+		result["prediction_uncertainty_metadata"] = dict(prediction_result["prediction_uncertainty_metadata"])
+	if "prediction_uncertainty_summary" in prediction_result:
+		result["prediction_uncertainty_summary"] = prediction_result["prediction_uncertainty_summary"].copy()
+
+	return result
+
+
 def _resolve_response_surface_metadata(
 	metadata: Mapping[str, Any] | None,
 	*,
@@ -776,12 +972,10 @@ def _resolve_response_surface_metadata(
 	simulation_params = dict(params["asm2d_tsn_simulation"])
 	workbook_params = dict(simulation_params.get("workbook", {}))
 	resolved_metadata = dict(metadata or {})
-	matrix_bundle = None
-	if "measured_output_columns" not in resolved_metadata:
-		matrix_bundle = get_asm2d_tsn_matrices(
-			load_asm2d_tsn_simulation_params(repo_root),
-			repo_root=repo_root,
-		)
+	matrix_bundle = get_asm2d_tsn_matrices(
+		load_asm2d_tsn_simulation_params(repo_root),
+		repo_root=repo_root,
+	)
 
 	operational_columns = list(
 		resolved_metadata.get("operational_columns", simulation_params.get("operational_columns", []))
@@ -810,6 +1004,7 @@ def _resolve_response_surface_metadata(
 		"operational_columns": operational_columns,
 		"state_columns": state_columns,
 		"measured_output_columns": measured_output_columns,
+		"composition_matrix": np.asarray(matrix_bundle["composition_matrix"], dtype=float),
 	}
 
 
@@ -897,160 +1092,342 @@ def build_icsor_response_surface_prediction_data(
 
 	from src.models.ml import predict_icsor_model
 
-	defaults = load_icsor_response_surface_defaults(repo_root)
-	selected_grid_points = int(
-		grid_points_per_axis
-		if grid_points_per_axis is not None
-		else defaults["grid_points_per_axis"]
-	)
-	selected_extension_fraction = float(
-		operational_extension_fraction
-		if operational_extension_fraction is not None
-		else defaults["operational_extension_fraction"]
-	)
-	selected_profile = (
-		fixed_influent_profile
-		if fixed_influent_profile is not None
-		else defaults["fixed_influent_profile"]
-	)
-
-	if selected_grid_points < 2:
-		raise ValueError("grid_points_per_axis must be at least 2.")
-
-	resolved_metadata = _resolve_response_surface_metadata(metadata, repo_root=repo_root)
-	operational_columns = list(resolved_metadata["operational_columns"])
-	state_columns = list(resolved_metadata["state_columns"])
-	training_domain, extended_domain = _resolve_operational_domain(
-		operational_columns,
-		operational_extension_fraction=selected_extension_fraction,
-		repo_root=repo_root,
-	)
-	resolved_influent_profile = _resolve_fixed_influent_profile(
-		state_columns,
-		selected_profile,
-		repo_root=repo_root,
-	)
-
-	hrt_axis = np.linspace(
-		extended_domain["HRT"]["min"],
-		extended_domain["HRT"]["max"],
-		selected_grid_points,
-		dtype=float,
-	)
-	aeration_axis = np.linspace(
-		extended_domain["Aeration"]["min"],
-		extended_domain["Aeration"]["max"],
-		selected_grid_points,
-		dtype=float,
-	)
-	hrt_mesh, aeration_mesh = np.meshgrid(hrt_axis, aeration_axis)
-	row_count = int(hrt_mesh.size)
-
-	feature_columns = {
-		"HRT": hrt_mesh.reshape(-1),
-		"Aeration": aeration_mesh.reshape(-1),
-	}
-	for state_column in state_columns:
-		feature_columns[f"In_{state_column}"] = np.full(
-			row_count,
-			resolved_influent_profile[state_column],
-			dtype=float,
-		)
-	feature_frame = pd.DataFrame(feature_columns)
-	constraint_reference = pd.DataFrame(
-		{
-			state_column: np.full(row_count, resolved_influent_profile[state_column], dtype=float)
-			for state_column in state_columns
-		}
-	)
-
-	prediction_result = predict_icsor_model(
-		{
-			"features": feature_frame,
-			"constraint_reference": constraint_reference,
-		},
+	return _build_component_response_surface_prediction_data(
 		model_path,
+		predictor=predict_icsor_model,
+		metadata=metadata,
+		repo_root=repo_root,
+		grid_points_per_axis=grid_points_per_axis,
+		operational_extension_fraction=operational_extension_fraction,
+		fixed_influent_profile=fixed_influent_profile,
 	)
-	affine_predictions = prediction_result.get("affine_predictions")
-	projected_predictions = prediction_result["projected_predictions"].copy()
-	affine_core_prediction_standard_errors = prediction_result.get("affine_core_prediction_standard_errors")
-	affine_core_prediction_interval_lower = prediction_result.get("affine_core_prediction_interval_lower")
-	affine_core_prediction_interval_upper = prediction_result.get("affine_core_prediction_interval_upper")
-	per_target_surfaces = {
-		target_name: projected_predictions[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
-		for target_name in projected_predictions.columns
+
+
+def build_icsor_coupled_qp_response_surface_prediction_data(
+	model_path: str | Path,
+	*,
+	metadata: Mapping[str, Any] | None = None,
+	repo_root: str | Path | None = None,
+	grid_points_per_axis: int | None = None,
+	operational_extension_fraction: float | None = None,
+	fixed_influent_profile: str | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+	"""Build a coupled-QP response surface over HRT and Aeration with a fixed influent profile."""
+
+	from src.models.ml import predict_icsor_coupled_qp_model
+
+	return _build_component_response_surface_prediction_data(
+		model_path,
+		predictor=predict_icsor_coupled_qp_model,
+		metadata=metadata,
+		repo_root=repo_root,
+		grid_points_per_axis=grid_points_per_axis,
+		operational_extension_fraction=operational_extension_fraction,
+		fixed_influent_profile=fixed_influent_profile,
+	)
+
+
+def build_icsor_coupled_qp_coefficient_frames(
+	model_bundle: Mapping[str, Any],
+) -> dict[str, pd.DataFrame]:
+	"""Build labeled coefficient matrices for the coupled-QP bundle."""
+
+	resolved_bundle = dict(model_bundle)
+	design_schema = dict(resolved_bundle.get("design_schema", {}))
+	design_columns = [str(column_name) for column_name in design_schema.get("design_columns", [])]
+	output_labels = [str(column_name).removeprefix("Out_") for column_name in resolved_bundle.get("target_columns", [])]
+	constraint_labels = [str(column_name) for column_name in resolved_bundle.get("constraint_columns", [])]
+
+	b_matrix = np.asarray(resolved_bundle["B_matrix"], dtype=float)
+	gamma_matrix = np.asarray(resolved_bundle["Gamma_matrix"], dtype=float)
+	r_matrix = np.asarray(resolved_bundle["R_matrix"], dtype=float)
+
+	if not design_columns:
+		design_columns = [f"design_{column_index}" for column_index in range(b_matrix.shape[1])]
+	if not output_labels:
+		output_labels = [f"output_{row_index}" for row_index in range(b_matrix.shape[0])]
+	if not constraint_labels:
+		constraint_labels = [f"state_{row_index}" for row_index in range(gamma_matrix.shape[0])]
+
+	return {
+		"B_matrix": pd.DataFrame(b_matrix, index=output_labels, columns=design_columns),
+		"Gamma_matrix": pd.DataFrame(gamma_matrix, index=constraint_labels, columns=constraint_labels),
+		"R_matrix": pd.DataFrame(r_matrix, index=constraint_labels, columns=constraint_labels),
 	}
-	frame_parts = [feature_frame, constraint_reference.add_prefix("ConstraintReference_")]
-	if affine_predictions is not None:
-		frame_parts.append(affine_predictions.add_prefix("Affine_"))
-	frame_parts.append(projected_predictions.add_prefix("Projected_"))
-	projection_stage_diagnostics = prediction_result.get("projection_stage_diagnostics")
-	if projection_stage_diagnostics is not None:
-		frame_parts.append(projection_stage_diagnostics)
-	prediction_table = pd.concat(frame_parts, axis=1)
-	if affine_core_prediction_standard_errors is not None:
-		prediction_table = pd.concat(
+
+
+def build_icsor_coupled_qp_b_matrix_block_frames(
+	model_bundle: Mapping[str, Any],
+) -> dict[str, pd.DataFrame]:
+	"""Return B-matrix column blocks split by the persisted design-schema partition."""
+
+	coefficient_frames = build_icsor_coupled_qp_coefficient_frames(model_bundle)
+	b_frame = coefficient_frames["B_matrix"]
+	resolved_bundle = dict(model_bundle)
+	design_schema = dict(resolved_bundle.get("design_schema", {}))
+	block_ranges = dict(design_schema.get("block_ranges", {}))
+	if not block_ranges:
+		return {"full": b_frame.copy()}
+
+	b_columns = list(b_frame.columns)
+	b_block_frames: dict[str, pd.DataFrame] = {}
+	for block_name, block_range in block_ranges.items():
+		start_index = int(block_range.get("start", 0))
+		stop_index = int(block_range.get("stop", start_index))
+		if stop_index <= start_index:
+			continue
+		if start_index < 0 or stop_index > len(b_columns):
+			raise ValueError(
+				f"Invalid design-schema block range for '{block_name}': [{start_index}, {stop_index}) "
+				f"outside B-matrix width {len(b_columns)}."
+			)
+		selected_columns = b_columns[start_index:stop_index]
+		b_block_frames[str(block_name)] = b_frame.loc[:, selected_columns].copy()
+
+	if not b_block_frames:
+		return {"full": b_frame.copy()}
+
+	return b_block_frames
+
+
+def build_icsor_coupled_qp_b_matrix_block_metadata(
+	model_bundle: Mapping[str, Any],
+) -> pd.DataFrame:
+	"""Summarize B-matrix design-schema blocks for notebook reporting and validation."""
+
+	resolved_bundle = dict(model_bundle)
+	design_schema = dict(resolved_bundle.get("design_schema", {}))
+	block_ranges = dict(design_schema.get("block_ranges", {}))
+	b_width = int(np.asarray(resolved_bundle["B_matrix"], dtype=float).shape[1])
+	if not block_ranges:
+		return pd.DataFrame(
 			[
-				prediction_table,
-				affine_core_prediction_standard_errors.add_prefix("AffineCoreSE_"),
-			],
-			axis=1,
-		)
-	if affine_core_prediction_interval_lower is not None and affine_core_prediction_interval_upper is not None:
-		prediction_table = pd.concat(
-			[
-				prediction_table,
-				affine_core_prediction_interval_lower.add_prefix("AffineCorePI95Lower_"),
-				affine_core_prediction_interval_upper.add_prefix("AffineCorePI95Upper_"),
-			],
-			axis=1,
+				{
+					"block_name": "full",
+					"start": 0,
+					"stop": b_width,
+					"width": b_width,
+				}
+			]
 		)
 
-	result = {
-		"response_surface_config": {
-			"grid_points_per_axis": selected_grid_points,
-			"operational_extension_fraction": selected_extension_fraction,
-			"fixed_influent_profile": "explicit" if isinstance(selected_profile, Mapping) else str(selected_profile),
-		},
-		"fixed_influent_profile": pd.Series(resolved_influent_profile, name="value"),
-		"operational_axes": {
-			"HRT": hrt_axis,
-			"Aeration": aeration_axis,
-		},
-		"operational_meshes": {
-			"HRT": hrt_mesh,
-			"Aeration": aeration_mesh,
-		},
-		"training_domain": training_domain,
-		"extended_domain": extended_domain,
-		"feature_grid": feature_frame,
-		"constraint_reference": constraint_reference,
-		"projected_predictions": projected_predictions,
-		"prediction_table": prediction_table,
-		"per_target_surfaces": per_target_surfaces,
-	}
-	if affine_predictions is not None:
-		result["affine_predictions"] = affine_predictions.copy()
-	if projection_stage_diagnostics is not None:
-		result["projection_stage_diagnostics"] = projection_stage_diagnostics.copy()
-	if "projection_stage_summary" in prediction_result:
-		result["projection_stage_summary"] = prediction_result["projection_stage_summary"].copy()
-	if affine_core_prediction_standard_errors is not None:
-		result["affine_core_prediction_standard_errors"] = affine_core_prediction_standard_errors.copy()
-		result["per_target_standard_error_surfaces"] = {
-			target_name: affine_core_prediction_standard_errors[target_name].to_numpy(dtype=float).reshape(hrt_mesh.shape)
-			for target_name in affine_core_prediction_standard_errors.columns
-		}
-	if affine_core_prediction_interval_lower is not None:
-		result["affine_core_prediction_interval_lower"] = affine_core_prediction_interval_lower.copy()
-	if affine_core_prediction_interval_upper is not None:
-		result["affine_core_prediction_interval_upper"] = affine_core_prediction_interval_upper.copy()
-	if "prediction_uncertainty_metadata" in prediction_result:
-		result["prediction_uncertainty_metadata"] = dict(prediction_result["prediction_uncertainty_metadata"])
-	if "prediction_uncertainty_summary" in prediction_result:
-		result["prediction_uncertainty_summary"] = prediction_result["prediction_uncertainty_summary"].copy()
+	block_rows: list[dict[str, Any]] = []
+	for block_name, block_range in block_ranges.items():
+		start_index = int(block_range.get("start", 0))
+		stop_index = int(block_range.get("stop", start_index))
+		width = max(0, stop_index - start_index)
+		block_rows.append(
+			{
+				"block_name": str(block_name),
+				"start": start_index,
+				"stop": stop_index,
+				"width": width,
+			}
+		)
 
-	return result
+	metadata_frame = pd.DataFrame(block_rows).sort_values("start").reset_index(drop=True)
+	return metadata_frame
+
+
+def build_icsor_coupled_qp_b_matrix_block_interpretation_table(
+	model_bundle: Mapping[str, Any],
+) -> pd.DataFrame:
+	"""Map persisted design-schema B-matrix blocks to driver-level interpretations."""
+
+	block_metadata = build_icsor_coupled_qp_b_matrix_block_metadata(model_bundle)
+	label_map: dict[str, dict[str, str]] = {
+		"bias": {
+			"conceptual_block": "baseline_driver",
+			"driver_term": "b",
+			"interpretation": "Constant baseline driver term before operational and influent effects.",
+		},
+		"linear_operational": {
+			"conceptual_block": "linear_operational",
+			"driver_term": "W_u u",
+			"interpretation": "First-order operating-condition contribution to the feature-driven driver.",
+		},
+		"linear_influent": {
+			"conceptual_block": "linear_influent",
+			"driver_term": "W_in c_in",
+			"interpretation": "First-order influent ASM-state contribution to the feature-driven driver.",
+		},
+		"quadratic_operational": {
+			"conceptual_block": "quadratic_operational",
+			"driver_term": "Theta_uu(u kron u)",
+			"interpretation": "Second-order curvature and interactions within operational variables.",
+		},
+		"quadratic_influent": {
+			"conceptual_block": "quadratic_influent",
+			"driver_term": "Theta_cc(c_in kron c_in)",
+			"interpretation": "Second-order curvature and interactions within influent ASM states.",
+		},
+		"interaction_operational_influent": {
+			"conceptual_block": "interaction_operational_influent",
+			"driver_term": "Theta_uc(u kron c_in)",
+			"interpretation": "Cross interactions between operating conditions and influent ASM states.",
+		},
+	}
+
+	block_rows: list[dict[str, Any]] = []
+	for metadata_row in block_metadata.itertuples(index=False):
+		block_name = str(metadata_row.block_name)
+		resolved_label = label_map.get(
+			block_name,
+			{
+				"conceptual_block": "custom_design_block",
+				"driver_term": "custom",
+				"interpretation": "User-defined design-schema partition retained from persisted training metadata.",
+			},
+		)
+		block_rows.append(
+			{
+				"block_name": block_name,
+				"start": int(metadata_row.start),
+				"stop": int(metadata_row.stop),
+				"width": int(metadata_row.width),
+				"conceptual_block": str(resolved_label["conceptual_block"]),
+				"driver_term": str(resolved_label["driver_term"]),
+				"interpretation": str(resolved_label["interpretation"]),
+			}
+		)
+
+	return pd.DataFrame(block_rows)
+
+
+def build_icsor_coupled_qp_coefficient_metadata(
+	model_bundle: Mapping[str, Any],
+) -> pd.DataFrame:
+	"""Summarize coupled-QP coefficient-estimation metadata for notebook reporting."""
+
+	resolved_bundle = dict(model_bundle)
+	design_schema = dict(resolved_bundle.get("design_schema", {}))
+	best_restart_summary = dict(resolved_bundle.get("best_restart_summary", {}))
+	training_diagnostics = dict(resolved_bundle.get("training_diagnostics", {}))
+	coupled_qp_settings = dict(resolved_bundle.get("coupled_qp_settings", {}))
+	training_options = dict(resolved_bundle.get("training_options", {}))
+
+	metadata_row = {
+		"training_method": resolved_bundle.get("training_method"),
+		"objective": training_options.get("objective_name"),
+		"include_bias_term": design_schema.get("include_bias_term"),
+		"design_dimension": design_schema.get("dimensions", {}).get("design"),
+		"operational_dimension": design_schema.get("dimensions", {}).get("operational"),
+		"influent_dimension": design_schema.get("dimensions", {}).get("influent"),
+		"output_dimension": len(resolved_bundle.get("target_columns", [])),
+		"constraint_dimension": len(resolved_bundle.get("constraint_columns", [])),
+		"gamma_abs_bound": coupled_qp_settings.get("gamma_abs_bound"),
+		"conditioning": best_restart_summary.get("conditioning"),
+		"shrink_factor": best_restart_summary.get("shrink_factor"),
+		"best_iteration": best_restart_summary.get("best_iteration"),
+		"n_iterations": best_restart_summary.get("n_iterations"),
+		"n_restarts_requested": coupled_qp_settings.get("n_restarts"),
+		"n_restarts_completed": len(training_diagnostics.get("restart_summaries", [])),
+		"chat_update_steps": len(training_diagnostics.get("chat_update_history", [])),
+		"gamma_update_steps": len(training_diagnostics.get("gamma_update_history", [])),
+		"convergence_steps": len(training_diagnostics.get("convergence_history", [])),
+	}
+	return pd.DataFrame([metadata_row])
+
+
+def build_icsor_coupled_qp_coefficient_contract_table(
+	model_bundle: Mapping[str, Any],
+) -> pd.DataFrame:
+	"""Summarize coefficient roles and where hard constraints are enforced."""
+
+	resolved_bundle = dict(model_bundle)
+	training_options = dict(resolved_bundle.get("training_options", {}))
+
+	return pd.DataFrame(
+		[
+			{
+				"training_method": resolved_bundle.get("training_method"),
+				"objective": training_options.get("objective_name"),
+				"driver_matrix": "B_matrix",
+				"driver_sign_constraint": "Unrestricted (mixed-sign coefficients allowed).",
+				"coupling_matrix": "Gamma_matrix",
+				"system_matrix": "R_matrix",
+				"system_matrix_definition": "R = I - Gamma",
+				"training_nonnegativity_enforcement": "Hard constraints on fitted predictions in optimization.",
+				"deployment_nonnegativity_enforcement": "Hard constraints in deployment inference LP.",
+				"training_invariant_handling": "Penalty term on invariant residuals.",
+				"deployment_invariant_handling": "Hard equality constraints A c = A c_in.",
+			}
+		]
+	)
+
+
+def build_icsor_coupled_qp_coefficient_density_tables(
+	model_bundle: Mapping[str, Any],
+	*,
+	retention_fraction: float = 1e-4,
+) -> dict[str, pd.DataFrame]:
+	"""Build block-level and per-output coefficient-density summaries for coupled-QP bundles."""
+
+	if retention_fraction <= 0.0:
+		raise ValueError("retention_fraction must be positive.")
+
+	coefficient_frames = build_icsor_coupled_qp_coefficient_frames(model_bundle)
+	block_specs = [
+		("B_matrix", "Driver matrix", False),
+		("Gamma_matrix", "Coupling matrix", True),
+		("R_matrix", "System matrix", False),
+	]
+	block_rows: list[dict[str, Any]] = []
+	per_output_rows: list[dict[str, Any]] = []
+
+	for block_name, block_label, exclude_diagonal in block_specs:
+		block_frame = coefficient_frames[block_name]
+		block_array = np.asarray(block_frame, dtype=float)
+		selectable_mask = np.ones(block_array.shape, dtype=bool)
+		if exclude_diagonal and block_array.shape[0] == block_array.shape[1]:
+			np.fill_diagonal(selectable_mask, False)
+
+		selectable_count = int(selectable_mask.sum())
+		retained_count = 0
+		absolute_values = np.abs(block_array)
+
+		for row_index, row_label in enumerate(block_frame.index):
+			row_mask = selectable_mask[row_index]
+			row_selectable_count = int(row_mask.sum())
+			if row_selectable_count == 0:
+				threshold_value = 0.0
+				row_retained_count = 0
+			else:
+				row_max_abs = float(np.max(absolute_values[row_index, row_mask]))
+				threshold_value = retention_fraction * row_max_abs
+				row_retained_count = int(np.sum(absolute_values[row_index, row_mask] >= threshold_value))
+
+			retained_count += row_retained_count
+			per_output_rows.append(
+				{
+					"block_name": block_name,
+					"block_label": block_label,
+					"row_label": str(row_label),
+					"retention_fraction": float(retention_fraction),
+					"absolute_threshold": float(threshold_value),
+					"selectable_coefficients": row_selectable_count,
+					"retained_coefficients": row_retained_count,
+					"retained_fraction_pct": (
+						0.0 if row_selectable_count == 0 else 100.0 * row_retained_count / row_selectable_count
+					),
+				}
+			)
+
+		block_rows.append(
+			{
+				"block_name": block_name,
+				"block_label": block_label,
+				"retention_fraction": float(retention_fraction),
+				"selectable_coefficients": selectable_count,
+				"retained_coefficients": retained_count,
+				"retained_fraction_pct": 0.0 if selectable_count == 0 else 100.0 * retained_count / selectable_count,
+			}
+		)
+
+	return {
+		"summary": pd.DataFrame(block_rows),
+		"per_output_thresholds": pd.DataFrame(per_output_rows),
+	}
 
 
 def build_dataset_size_schedule(
@@ -2056,6 +2433,14 @@ __all__ = [
 	"COMPARISON_METRIC_BASENAMES",
 	"COMPARISON_METRIC_DIRECTIONS",
 	"add_effective_metric_columns",
+	"build_icsor_coupled_qp_b_matrix_block_frames",
+	"build_icsor_coupled_qp_b_matrix_block_interpretation_table",
+	"build_icsor_coupled_qp_b_matrix_block_metadata",
+	"build_icsor_coupled_qp_coefficient_contract_table",
+	"build_icsor_coupled_qp_coefficient_density_tables",
+	"build_icsor_coupled_qp_coefficient_frames",
+	"build_icsor_coupled_qp_coefficient_metadata",
+	"build_icsor_coupled_qp_response_surface_prediction_data",
 	"build_notebook_table_recorder",
 	"build_effective_aggregate_metrics",
 	"build_train_test_gap_summary",

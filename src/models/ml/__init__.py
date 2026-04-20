@@ -31,6 +31,12 @@ from .icsor import (
 	run_icsor_pipeline,
 	train_icsor_model,
 )
+from .icsor_coupled_qp import (
+	load_icsor_coupled_qp_params,
+	predict_icsor_coupled_qp_model,
+	run_icsor_coupled_qp_pipeline,
+	train_icsor_coupled_qp_model,
+)
 from .lightgbm_regressor import (
 	load_lightgbm_regressor_params,
 	predict_lightgbm_regressor_model,
@@ -58,6 +64,7 @@ __all__ = [
 	"load_ann_shallow_regressor_params",
 	"load_adaboost_regressor_params",
 	"load_catboost_regressor_params",
+	"load_icsor_coupled_qp_params",
 	"load_icsor_params",
 	"load_knn_regressor_params",
 	"load_lightgbm_regressor_params",
@@ -72,6 +79,7 @@ __all__ = [
 	"predict_ann_shallow_regressor_model",
 	"predict_adaboost_regressor_model",
 	"predict_catboost_regressor_model",
+	"predict_icsor_coupled_qp_model",
 	"predict_icsor_model",
 	"predict_knn_regressor_model",
 	"predict_lightgbm_regressor_model",
@@ -86,6 +94,7 @@ __all__ = [
 	"run_ann_shallow_regressor_pipeline",
 	"run_adaboost_regressor_pipeline",
 	"run_catboost_regressor_pipeline",
+	"run_icsor_coupled_qp_pipeline",
 	"run_icsor_pipeline",
 	"run_knn_regressor_pipeline",
 	"run_lightgbm_regressor_pipeline",
@@ -95,6 +104,7 @@ __all__ = [
 	"run_tabicl_regressor_pipeline",
 	"run_tabpfn_regressor_pipeline",
 	"run_xgboost_regressor_pipeline",
+	"train_icsor_coupled_qp_model",
 	"train_icsor_model",
 ]
 

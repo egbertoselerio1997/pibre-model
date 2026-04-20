@@ -1067,11 +1067,257 @@
       "confidence_level": 0.95
     },
     "search_space": {
+      "affine_estimator": {
+        "type": "categorical",
+        "choices": [
+          "ols",
+          "ridge"
+        ]
+      },
+      "include_bias_term": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
+      },
       "ridge_alpha": {
         "type": "float",
         "low": 1e-8,
         "high": 10.0,
+        "log": true,
+        "condition": {
+          "parameter": "affine_estimator",
+          "equals": "ridge"
+        }
+      },
+      "measured_deviation_weight": {
+        "type": "float",
+        "low": 0.01,
+        "high": 100.0,
         "log": true
+      },
+      "component_deviation_weight": {
+        "type": "float",
+        "low": 0.01,
+        "high": 100.0,
+        "log": true
+      },
+      "tradeoff_parameter": {
+        "type": "float",
+        "low": 1e-9,
+        "high": 1.0,
+        "log": true
+      }
+    },
+    "artifact_options": {
+      "persist_model": true,
+      "persist_metrics": true,
+      "persist_optuna": true
+    }
+  },
+  "icsor_coupled_qp": {
+    "hyperparameters": {
+      "random_seed": 42,
+      "scale_features": false,
+      "scale_targets": false
+    },
+    "training_defaults": {
+      "objective": "recursive_qp",
+      "training_method": "recursive_qp",
+      "include_bias_term": true,
+      "lambda_inv": 0.008683486803600385,
+      "lambda_sys": 0.0012668014667081356,
+      "lambda_B": 6.088498416548708e-05,
+      "lambda_gamma": 0.000655385962439312,
+      "lasso_lambda_B": 0.0005,
+      "lasso_lambda_gamma": 0.0005,
+      "gamma_abs_bound": 0.3680342084965297,
+      "max_outer_iterations": 60,
+      "n_restarts": 1,
+      "objective_regression_window": 12,
+      "objective_regression_slope_tolerance": 2.849691821925099e-07,
+      "conditioning_max": 100000000.0,
+      "adam_epochs": 10000,
+      "adam_learning_rate": 0.001,
+      "adam_beta1": 0.9,
+      "adam_beta2": 0.999,
+      "adam_epsilon": 1e-8,
+      "adam_clip_grad_norm": 1.0,
+      "adam_log_interval": 25,
+      "adam_foreach": null,
+      "osqp_eps_abs": 1e-6,
+      "osqp_eps_rel": 1e-6,
+      "osqp_max_iter": 10000,
+      "osqp_polish": false,
+      "osqp_verbose": false,
+      "enable_training_warm_start": true,
+      "enable_gamma_warm_start": true,
+      "enable_c_hat_warm_start": true,
+      "warm_start_clip_tolerance": 1e-10,
+      "nonnegativity_tolerance": 1e-10,
+      "constraint_tolerance": 1e-8,
+      "highs_presolve": true,
+      "highs_max_iter": 10000,
+      "highs_verbose": false,
+      "highs_retry_without_presolve": true,
+      "parallel_workers": 12
+    },
+    "search_space": {
+      "include_bias_term": {
+        "type": "categorical",
+        "choices": [
+          true,
+          false
+        ]
+      },
+      "lambda_inv": {
+        "type": "float",
+        "low": 0.001,
+        "high": 10.0,
+        "log": true
+      },
+      "lambda_sys": {
+        "type": "float",
+        "low": 0.001,
+        "high": 10.0,
+        "log": true
+      },
+      "gamma_abs_bound": {
+        "type": "float",
+        "low": 0.05,
+        "high": 1.0,
+        "log": false
+      },
+      "lambda_B": {
+        "type": "float",
+        "low": 1e-6,
+        "high": 0.1,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "recursive_qp"
+        }
+      },
+      "lambda_gamma": {
+        "type": "float",
+        "low": 1e-6,
+        "high": 0.1,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "recursive_qp"
+        }
+      },
+      "max_outer_iterations": {
+        "type": "int",
+        "low": 10,
+        "high": 60,
+        "log": false,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "recursive_qp"
+        }
+      },
+      "n_restarts": {
+        "type": "int",
+        "low": 1,
+        "high": 5,
+        "log": false,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "recursive_qp"
+        }
+      },
+      "objective_regression_window": {
+        "type": "int",
+        "low": 4,
+        "high": 20,
+        "log": false,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "recursive_qp"
+        }
+      },
+      "objective_regression_slope_tolerance": {
+        "type": "float",
+        "low": 1e-8,
+        "high": 0.0001,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "recursive_qp"
+        }
+      },
+      "lasso_lambda_B": {
+        "type": "float",
+        "low": 1e-6,
+        "high": 0.01,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
+      },
+      "lasso_lambda_gamma": {
+        "type": "float",
+        "low": 1e-6,
+        "high": 0.01,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
+      },
+      "adam_epochs": {
+        "type": "int",
+        "low": 500,
+        "high": 10000,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
+      },
+      "adam_learning_rate": {
+        "type": "float",
+        "low": 0.0001,
+        "high": 0.05,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
+      },
+      "adam_beta1": {
+        "type": "float",
+        "low": 0.8,
+        "high": 0.99,
+        "log": false,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
+      },
+      "adam_beta2": {
+        "type": "float",
+        "low": 0.9,
+        "high": 0.9999,
+        "log": false,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
+      },
+      "adam_clip_grad_norm": {
+        "type": "float",
+        "low": 0.1,
+        "high": 10.0,
+        "log": true,
+        "condition": {
+          "parameter": "training_method",
+          "equals": "adam_lasso"
+        }
       }
     },
     "artifact_options": {

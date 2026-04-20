@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 from scipy.linalg import null_space
+from sklearn.metrics import r2_score
 
 from src.models.ml.icsor import (
     build_icsor_design_frame,
@@ -111,24 +112,56 @@ class icsorModelTests(unittest.TestCase):
             -1e-10,
         )
 
-        projection_matrix = np.asarray(result["model_bundle"]["projection_matrix"], dtype=float)
-        projection_complement = np.asarray(result["model_bundle"]["projection_complement"], dtype=float)
-        collapse_operator = self.composition_matrix @ projection_complement
-        pass_through_operator = self.composition_matrix @ projection_matrix
         raw_w_u = np.asarray(result["model_bundle"]["raw_coefficients"]["W_u"], dtype=float)
         raw_w_in = np.asarray(result["model_bundle"]["raw_coefficients"]["W_in"], dtype=float)
         raw_b = np.asarray(result["model_bundle"]["raw_coefficients"]["b"], dtype=float)
         effective_w_u = np.asarray(result["model_bundle"]["effective_coefficients"]["W_u"], dtype=float)
         effective_w_in = np.asarray(result["model_bundle"]["effective_coefficients"]["W_in"], dtype=float)
         effective_b = np.asarray(result["model_bundle"]["effective_coefficients"]["b"], dtype=float)
-        np.testing.assert_allclose(effective_w_u, collapse_operator @ raw_w_u, atol=1e-10, rtol=1e-10)
-        np.testing.assert_allclose(
-            effective_w_in,
-            collapse_operator @ raw_w_in + pass_through_operator,
-            atol=1e-10,
-            rtol=1e-10,
+        np.testing.assert_allclose(effective_w_u, raw_w_u, atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(effective_w_in, raw_w_in, atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(effective_b, raw_b, atol=1e-10, rtol=1e-10)
+        self.assertEqual(result["model_bundle"]["native_prediction_space"], "fractional_component")
+        self.assertEqual(result["model_bundle"]["comparison_target_space"], "external_measured_output")
+
+    def test_fractional_projected_per_target_r2_matches_recomputed_values(self) -> None:
+        params = self._tiny_params()
+        dataset_splits = make_train_test_split(
+            self.icsor_dataset,
+            test_fraction=0.2,
+            random_seed=11,
         )
-        np.testing.assert_allclose(effective_b, collapse_operator @ raw_b, atol=1e-10, rtol=1e-10)
+
+        result = run_icsor_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        true_fractional = dataset_splits.test.targets.astype(float)
+        predicted_fractional = (
+            result["test_report"]["projected_fractional_predictions"]
+            .rename(columns=lambda name: str(name).removeprefix("ProjectedFractional_"))
+            .rename(columns=lambda name: f"Out_{name}")
+            .loc[:, true_fractional.columns]
+            .astype(float)
+        )
+        reported_per_target = result["test_report"]["fractional_per_target_metrics"].set_index("target")
+
+        self.assertIn("Out_X_S", reported_per_target.index)
+        self.assertIn("Out_X_H", reported_per_target.index)
+
+        for target_name in true_fractional.columns:
+            recomputed_r2 = r2_score(
+                true_fractional[target_name].to_numpy(dtype=float),
+                predicted_fractional[target_name].to_numpy(dtype=float),
+            )
+            reported_r2 = float(reported_per_target.loc[target_name, "projected_R2"])
+            self.assertAlmostEqual(recomputed_r2, reported_r2, places=12)
 
     def test_predict_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()
@@ -157,7 +190,7 @@ class icsorModelTests(unittest.TestCase):
                 composition_matrix=self.composition_matrix,
             )
 
-        expected_output_dim = len(self.metadata["measured_output_columns"])
+        expected_output_dim = len(self.metadata["state_columns"])
         self.assertEqual(prediction_result["projected_predictions"].shape, (8, expected_output_dim))
         self.assertIn("affine_predictions", prediction_result)
         self.assertIn("projection_stage_diagnostics", prediction_result)
@@ -238,7 +271,7 @@ class icsorModelTests(unittest.TestCase):
         prediction_metadata = result["test_report"]["uncertainty_metadata"].iloc[0].to_dict()
         self.assertEqual(prediction_metadata["method"], "analytic")
         self.assertEqual(prediction_metadata["note"], coefficient_inference["note"])
-        self.assertEqual(prediction_metadata["prediction_target"], "affine_core_measured_prediction")
+        self.assertEqual(prediction_metadata["prediction_target"], "raw_component_prediction")
 
         effective_uncertainty = result["model_bundle"]["effective_coefficient_uncertainty"]
         self.assertIn("W_u", effective_uncertainty)
@@ -275,7 +308,7 @@ class icsorModelTests(unittest.TestCase):
         prediction_metadata = result["test_report"]["uncertainty_metadata"].iloc[0].to_dict()
         self.assertEqual(prediction_metadata["method"], "analytic")
         self.assertEqual(prediction_metadata["note"], coefficient_inference["note"])
-        self.assertEqual(prediction_metadata["prediction_target"], "affine_core_measured_prediction")
+        self.assertEqual(prediction_metadata["prediction_target"], "raw_component_prediction")
         self.assertIn("affine_core_prediction_standard_errors", result["test_report"])
         self.assertIn("prediction_uncertainty_summary", result["test_report"])
 
@@ -299,7 +332,7 @@ class icsorModelTests(unittest.TestCase):
         self.assertGreater(int(coefficient_inference["degrees_of_freedom"]), 0)
 
         uncertainty_frame = result["test_report"]["affine_core_prediction_standard_errors"]
-        self.assertEqual(list(uncertainty_frame.columns), ["AffineCoreSE_Out_Y1", "AffineCoreSE_Out_Y2"])
+        self.assertEqual(list(uncertainty_frame.columns), ["AffineCoreSE_Out_S1"])
         self.assertTrue((uncertainty_frame.to_numpy(dtype=float) >= 0.0).all())
 
         affine_predictions = result["test_report"]["affine_predictions"]
@@ -390,7 +423,7 @@ class icsorModelTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(projection_result["affine_predictions"], raw_predictions, atol=1e-10, rtol=1e-10)
-        np.testing.assert_allclose(projection_result["projected_predictions"], [[0.0, 20.0, 5.0]], atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(projection_result["projected_predictions"], [[0.0, 22.0, 5.0]], atol=1e-10, rtol=1e-10)
         self.assertTrue(bool(projection_result["lp_active_mask"][0]))
         self.assertEqual(str(projection_result["projection_stage"][0]), "lp_corrected")
 
@@ -420,22 +453,10 @@ class icsorModelTests(unittest.TestCase):
             list(train_split.constraint_reference.columns),
             include_bias_term=True,
         )
-        projection_matrix = build_projection_operator(self.a_matrix)
-        projection_complement = np.eye(projection_matrix.shape[0], dtype=float) - projection_matrix
-
-        collapse_operator = self.composition_matrix @ projection_complement
-        pass_through_operator = self.composition_matrix @ projection_matrix
-        y_tilde = train_split.targets.to_numpy(dtype=float) - train_split.constraint_reference.to_numpy(dtype=float) @ pass_through_operator.T
-        z_matrix = np.kron(collapse_operator, design_frame.to_numpy(dtype=float))
-        beta, *_ = np.linalg.lstsq(
-            z_matrix,
-            y_tilde.reshape(-1, order="F"),
+        explicit_raw, *_ = np.linalg.lstsq(
+            design_frame.to_numpy(dtype=float),
+            train_split.targets.to_numpy(dtype=float),
             rcond=None,
-        )
-        explicit_raw = beta.reshape(
-            design_frame.shape[1],
-            projection_complement.shape[0],
-            order="F",
         )
 
         np.testing.assert_allclose(
@@ -650,17 +671,17 @@ class icsorModelTests(unittest.TestCase):
             }
         )
         constraint_reference = features.loc[:, ["In_S1"]].rename(columns={"In_S1": "S1"})
-        composition_matrix = np.asarray([[1.0], [1.75]], dtype=float)
+        composition_matrix = np.asarray([[1.0]], dtype=float)
         a_matrix = np.zeros((0, 1), dtype=float)
         design_frame, _ = build_icsor_design_frame(
             features,
             list(constraint_reference.columns),
             include_bias_term=True,
         )
-        coefficient_matrix = random_generator.normal(loc=0.0, scale=0.2, size=(design_frame.shape[1], 2))
+        coefficient_matrix = random_generator.normal(loc=0.0, scale=0.2, size=(design_frame.shape[1], 1))
         targets = pd.DataFrame(
-            design_frame.to_numpy(dtype=float) @ coefficient_matrix + random_generator.normal(0.0, 0.01, size=(row_count, 2)),
-            columns=["Out_Y1", "Out_Y2"],
+            design_frame.to_numpy(dtype=float) @ coefficient_matrix + random_generator.normal(0.0, 0.01, size=(row_count, 1)),
+            columns=["Out_S1"],
         )
 
         train_indices = features.index[:32]
