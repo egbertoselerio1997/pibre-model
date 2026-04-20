@@ -10,6 +10,7 @@ from typing import Any, Mapping
 import numpy as np
 import osqp
 import pandas as pd
+import torch
 from scipy import sparse as sp
 from scipy.optimize import linprog
 
@@ -30,9 +31,11 @@ from src.utils.test import (
     evaluate_icsor_prediction_bundle,
 )
 from src.utils.train import (
+    get_training_device,
     load_model_bundle,
     persist_training_artifacts,
     resolve_model_hyperparameters,
+    resolve_torch_adam_options,
     serialize_report_frames,
     transform_feature_frame,
 )
@@ -40,7 +43,17 @@ from src.utils.train import (
 
 MODEL_NAME = "icsor_coupled_qp"
 
+TRAINING_METHOD_RECURSIVE_QP = "recursive_qp"
+TRAINING_METHOD_ADAM_LASSO = "adam_lasso"
+REGULARIZATION_RIDGE = "ridge"
+REGULARIZATION_LASSO = "lasso"
+SUPPORTED_TRAINING_METHODS = {
+    TRAINING_METHOD_RECURSIVE_QP,
+    TRAINING_METHOD_ADAM_LASSO,
+}
+
 DEFAULT_INCLUDE_BIAS_TERM = True
+DEFAULT_TRAINING_METHOD = TRAINING_METHOD_ADAM_LASSO
 DEFAULT_LAMBDA_INV = 1.0
 DEFAULT_LAMBDA_SYS = 1.0
 DEFAULT_LAMBDA_B = 1e-4
@@ -68,6 +81,13 @@ DEFAULT_HIGHS_MAX_ITER = 10000
 DEFAULT_HIGHS_VERBOSE = False
 DEFAULT_HIGHS_RETRY_WITHOUT_PRESOLVE = True
 DEFAULT_PREDICTION_PARALLEL_WORKERS = 0
+DEFAULT_ADAM_EPOCHS = 300
+DEFAULT_ADAM_LEARNING_RATE = 1e-2
+DEFAULT_ADAM_BETA1 = 0.9
+DEFAULT_ADAM_BETA2 = 0.999
+DEFAULT_ADAM_EPSILON = 1e-8
+DEFAULT_ADAM_CLIP_GRAD_NORM = 1.0
+DEFAULT_ADAM_LOG_INTERVAL = 25
 
 
 def load_icsor_coupled_qp_params(repo_root: str | Path | None = None) -> dict[str, Any]:
@@ -99,12 +119,26 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
     enable_training_warm_start = bool(
         model_hyperparameters.get("enable_training_warm_start", DEFAULT_ENABLE_TRAINING_WARM_START)
     )
+    training_method = str(model_hyperparameters.get("training_method", DEFAULT_TRAINING_METHOD)).strip().lower()
     settings = {
+        "training_method": training_method,
         "include_bias_term": bool(model_hyperparameters.get("include_bias_term", DEFAULT_INCLUDE_BIAS_TERM)),
         "lambda_inv": float(model_hyperparameters.get("lambda_inv", DEFAULT_LAMBDA_INV)),
         "lambda_sys": float(model_hyperparameters.get("lambda_sys", DEFAULT_LAMBDA_SYS)),
         "lambda_B": float(model_hyperparameters.get("lambda_B", DEFAULT_LAMBDA_B)),
         "lambda_gamma": float(model_hyperparameters.get("lambda_gamma", DEFAULT_LAMBDA_GAMMA)),
+        "lasso_lambda_B": float(
+            model_hyperparameters.get(
+                "lasso_lambda_B",
+                model_hyperparameters.get("lambda_B", DEFAULT_LAMBDA_B),
+            )
+        ),
+        "lasso_lambda_gamma": float(
+            model_hyperparameters.get(
+                "lasso_lambda_gamma",
+                model_hyperparameters.get("lambda_gamma", DEFAULT_LAMBDA_GAMMA),
+            )
+        ),
         "gamma_abs_bound": float(model_hyperparameters.get("gamma_abs_bound", DEFAULT_GAMMA_ABS_BOUND)),
         "max_outer_iterations": int(model_hyperparameters.get("max_outer_iterations", DEFAULT_MAX_OUTER_ITERATIONS)),
         "n_restarts": int(model_hyperparameters.get("n_restarts", DEFAULT_N_RESTARTS)),
@@ -145,10 +179,22 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
                 DEFAULT_HIGHS_RETRY_WITHOUT_PRESOLVE,
             )
         ),
+        "adam_epochs": int(model_hyperparameters.get("adam_epochs", DEFAULT_ADAM_EPOCHS)),
+        "adam_learning_rate": float(model_hyperparameters.get("adam_learning_rate", DEFAULT_ADAM_LEARNING_RATE)),
+        "adam_beta1": float(model_hyperparameters.get("adam_beta1", DEFAULT_ADAM_BETA1)),
+        "adam_beta2": float(model_hyperparameters.get("adam_beta2", DEFAULT_ADAM_BETA2)),
+        "adam_epsilon": float(model_hyperparameters.get("adam_epsilon", DEFAULT_ADAM_EPSILON)),
+        "adam_clip_grad_norm": float(model_hyperparameters.get("adam_clip_grad_norm", DEFAULT_ADAM_CLIP_GRAD_NORM)),
+        "adam_log_interval": int(model_hyperparameters.get("adam_log_interval", DEFAULT_ADAM_LOG_INTERVAL)),
+        "adam_foreach": model_hyperparameters.get("adam_foreach", None),
         "parallel_workers": int(
             model_hyperparameters.get("parallel_workers", DEFAULT_PREDICTION_PARALLEL_WORKERS)
         ),
     }
+
+    if settings["training_method"] not in SUPPORTED_TRAINING_METHODS:
+        supported_methods = ", ".join(sorted(SUPPORTED_TRAINING_METHODS))
+        raise ValueError(f"icsor_coupled_qp training_method must be one of: {supported_methods}.")
 
     if settings["lambda_inv"] < 0.0:
         raise ValueError("icsor_coupled_qp lambda_inv must be nonnegative.")
@@ -158,6 +204,10 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         raise ValueError("icsor_coupled_qp lambda_B must be nonnegative.")
     if settings["lambda_gamma"] < 0.0:
         raise ValueError("icsor_coupled_qp lambda_gamma must be nonnegative.")
+    if settings["lasso_lambda_B"] < 0.0:
+        raise ValueError("icsor_coupled_qp lasso_lambda_B must be nonnegative.")
+    if settings["lasso_lambda_gamma"] < 0.0:
+        raise ValueError("icsor_coupled_qp lasso_lambda_gamma must be nonnegative.")
     if settings["gamma_abs_bound"] <= 0.0:
         raise ValueError("icsor_coupled_qp gamma_abs_bound must be positive.")
     if settings["max_outer_iterations"] < 1:
@@ -184,6 +234,20 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         raise ValueError("icsor_coupled_qp constraint_tolerance must be positive.")
     if settings["highs_max_iter"] < 1:
         raise ValueError("icsor_coupled_qp highs_max_iter must be at least 1.")
+    if settings["adam_epochs"] < 1:
+        raise ValueError("icsor_coupled_qp adam_epochs must be at least 1.")
+    if settings["adam_learning_rate"] <= 0.0:
+        raise ValueError("icsor_coupled_qp adam_learning_rate must be positive.")
+    if not (0.0 <= settings["adam_beta1"] < 1.0):
+        raise ValueError("icsor_coupled_qp adam_beta1 must be in [0, 1).")
+    if not (0.0 <= settings["adam_beta2"] < 1.0):
+        raise ValueError("icsor_coupled_qp adam_beta2 must be in [0, 1).")
+    if settings["adam_epsilon"] <= 0.0:
+        raise ValueError("icsor_coupled_qp adam_epsilon must be positive.")
+    if settings["adam_clip_grad_norm"] < 0.0:
+        raise ValueError("icsor_coupled_qp adam_clip_grad_norm must be nonnegative.")
+    if settings["adam_log_interval"] < 1:
+        raise ValueError("icsor_coupled_qp adam_log_interval must be at least 1.")
     if settings["parallel_workers"] < 0:
         raise ValueError("icsor_coupled_qp parallel_workers must be greater than or equal to 0.")
 
@@ -577,11 +641,37 @@ def _compute_training_objective(
     gamma_matrix: np.ndarray,
     fitted_predictions: np.ndarray,
     settings: Mapping[str, Any],
+    *,
+    regularization_mode: str = REGULARIZATION_RIDGE,
 ) -> float:
+    objective_terms = _compute_training_objective_terms(
+        target_matrix,
+        influent_matrix,
+        invariant_matrix,
+        design_matrix,
+        b_matrix,
+        gamma_matrix,
+        fitted_predictions,
+        settings,
+        regularization_mode=regularization_mode,
+    )
+    return float(objective_terms["objective"])
+
+
+def _compute_training_objective_terms(
+    target_matrix: np.ndarray,
+    influent_matrix: np.ndarray,
+    invariant_matrix: np.ndarray,
+    design_matrix: np.ndarray,
+    b_matrix: np.ndarray,
+    gamma_matrix: np.ndarray,
+    fitted_predictions: np.ndarray,
+    settings: Mapping[str, Any],
+    *,
+    regularization_mode: str = REGULARIZATION_RIDGE,
+) -> dict[str, float]:
     lambda_inv = float(settings["lambda_inv"])
     lambda_sys = float(settings["lambda_sys"])
-    lambda_B = float(settings["lambda_B"])
-    lambda_gamma = float(settings["lambda_gamma"])
 
     coupled_matrix = np.eye(gamma_matrix.shape[0], dtype=float) - gamma_matrix
     driver_matrix = design_matrix @ b_matrix.T
@@ -593,9 +683,25 @@ def _compute_training_objective(
     system_term = float(
         lambda_sys * np.sum((fitted_predictions @ coupled_matrix.T - driver_matrix) ** 2)
     )
-    b_regularization = float(lambda_B * np.sum(b_matrix**2))
-    gamma_regularization = float(lambda_gamma * np.sum(gamma_matrix**2))
-    return fit_term + invariant_term + system_term + b_regularization + gamma_regularization
+
+    if regularization_mode == REGULARIZATION_RIDGE:
+        b_regularization = float(float(settings["lambda_B"]) * np.sum(b_matrix**2))
+        gamma_regularization = float(float(settings["lambda_gamma"]) * np.sum(gamma_matrix**2))
+    elif regularization_mode == REGULARIZATION_LASSO:
+        b_regularization = float(float(settings["lasso_lambda_B"]) * np.sum(np.abs(b_matrix)))
+        gamma_regularization = float(float(settings["lasso_lambda_gamma"]) * np.sum(np.abs(gamma_matrix)))
+    else:
+        raise ValueError(f"Unsupported regularization_mode: {regularization_mode}")
+
+    objective_value = fit_term + invariant_term + system_term + b_regularization + gamma_regularization
+    return {
+        "fit_term": fit_term,
+        "invariant_term": invariant_term,
+        "system_term": system_term,
+        "b_regularization": b_regularization,
+        "gamma_regularization": gamma_regularization,
+        "objective": objective_value,
+    }
 
 
 def _run_coupled_qp_restart(
@@ -709,6 +815,202 @@ def _run_coupled_qp_restart(
         "gamma_update_history": gamma_update_history,
         "chat_update_history": chat_update_history,
         "n_iterations": int(max(0, len(objective_history) - 1)),
+    }
+
+
+def _inverse_softplus(values: np.ndarray) -> np.ndarray:
+    clipped_values = np.maximum(np.asarray(values, dtype=float), 1e-8)
+    return np.log(np.expm1(clipped_values))
+
+
+def _project_gamma_from_logits(
+    gamma_logits: torch.Tensor,
+    *,
+    gamma_abs_bound: float,
+) -> torch.Tensor:
+    gamma_matrix = float(gamma_abs_bound) * torch.tanh(gamma_logits)
+    diagonal_matrix = torch.diag(torch.diag(gamma_matrix))
+    return gamma_matrix - diagonal_matrix
+
+
+def _run_adam_lasso_training(
+    design_matrix: np.ndarray,
+    target_matrix: np.ndarray,
+    influent_matrix: np.ndarray,
+    invariant_matrix: np.ndarray,
+    settings: Mapping[str, Any],
+    training_options: Mapping[str, Any],
+) -> dict[str, Any]:
+    device, device_label = get_training_device()
+    dtype = torch.float64
+
+    design_tensor = torch.as_tensor(np.array(design_matrix, dtype=float, copy=True), dtype=dtype, device=device)
+    target_tensor = torch.as_tensor(np.array(target_matrix, dtype=float, copy=True), dtype=dtype, device=device)
+    influent_tensor = torch.as_tensor(np.array(influent_matrix, dtype=float, copy=True), dtype=dtype, device=device)
+    invariant_tensor = torch.as_tensor(np.array(invariant_matrix, dtype=float, copy=True), dtype=dtype, device=device)
+
+    n_outputs = int(target_matrix.shape[1])
+    gamma_abs_bound = float(settings["gamma_abs_bound"])
+
+    initial_gamma = np.zeros((n_outputs, n_outputs), dtype=float)
+    initial_fitted = np.maximum(target_matrix, 0.0)
+    initial_b = _solve_b_update(design_matrix, initial_fitted, initial_gamma, settings)
+
+    clipped_gamma_ratio = np.clip(initial_gamma / max(gamma_abs_bound, 1e-8), -0.999, 0.999)
+    gamma_logits = torch.nn.Parameter(torch.as_tensor(np.arctanh(clipped_gamma_ratio), dtype=dtype, device=device))
+    b_parameter = torch.nn.Parameter(torch.as_tensor(initial_b, dtype=dtype, device=device))
+    c_logits_parameter = torch.nn.Parameter(
+        torch.as_tensor(_inverse_softplus(initial_fitted), dtype=dtype, device=device)
+    )
+
+    adam_kwargs = resolve_torch_adam_options(
+        device_label=device_label,
+        foreach=settings.get("adam_foreach"),
+    )
+    optimizer = torch.optim.Adam(
+        [b_parameter, gamma_logits, c_logits_parameter],
+        lr=float(settings["adam_learning_rate"]),
+        betas=(float(settings["adam_beta1"]), float(settings["adam_beta2"])),
+        eps=float(settings["adam_epsilon"]),
+        **adam_kwargs,
+    )
+
+    lambda_inv = float(settings["lambda_inv"])
+    lambda_sys = float(settings["lambda_sys"])
+    lasso_lambda_b = float(settings["lasso_lambda_B"])
+    lasso_lambda_gamma = float(settings["lasso_lambda_gamma"])
+
+    n_epochs = int(settings["adam_epochs"])
+    clip_grad_norm = float(settings["adam_clip_grad_norm"])
+    log_interval = int(settings["adam_log_interval"])
+
+    progress_bar = create_progress_bar(
+        total=n_epochs,
+        desc=str(training_options["progress_description"]),
+        enabled=bool(training_options["show_progress"]),
+        unit="epoch",
+    )
+
+    objective_history: list[float] = []
+    fit_history: list[float] = []
+    invariant_history: list[float] = []
+    system_history: list[float] = []
+    lasso_history: list[float] = []
+
+    try:
+        for epoch_index in range(n_epochs):
+            optimizer.zero_grad(set_to_none=True)
+
+            fitted_tensor = torch.nn.functional.softplus(c_logits_parameter)
+            gamma_matrix = _project_gamma_from_logits(gamma_logits, gamma_abs_bound=gamma_abs_bound)
+            coupled_matrix = torch.eye(n_outputs, dtype=dtype, device=device) - gamma_matrix
+            driver_tensor = design_tensor @ b_parameter.transpose(0, 1)
+
+            fit_term = torch.sum((target_tensor - fitted_tensor) ** 2)
+            if int(invariant_tensor.shape[0]) > 0:
+                invariant_residual = (fitted_tensor - influent_tensor) @ invariant_tensor.transpose(0, 1)
+                invariant_term = lambda_inv * torch.sum(invariant_residual**2)
+            else:
+                invariant_term = torch.tensor(0.0, dtype=dtype, device=device)
+            system_residual = fitted_tensor @ coupled_matrix.transpose(0, 1) - driver_tensor
+            system_term = lambda_sys * torch.sum(system_residual**2)
+
+            lasso_term = lasso_lambda_b * torch.sum(torch.abs(b_parameter))
+            lasso_term = lasso_term + lasso_lambda_gamma * torch.sum(torch.abs(gamma_matrix))
+
+            objective = fit_term + invariant_term + system_term + lasso_term
+            objective.backward()
+
+            if clip_grad_norm > 0.0:
+                torch.nn.utils.clip_grad_norm_(
+                    [b_parameter, gamma_logits, c_logits_parameter],
+                    max_norm=clip_grad_norm,
+                )
+
+            optimizer.step()
+
+            objective_value = float(objective.detach().cpu().item())
+            objective_history.append(objective_value)
+            fit_history.append(float(fit_term.detach().cpu().item()))
+            invariant_history.append(float(invariant_term.detach().cpu().item()))
+            system_history.append(float(system_term.detach().cpu().item()))
+            lasso_history.append(float(lasso_term.detach().cpu().item()))
+
+            progress_bar.update(1)
+            if ((epoch_index + 1) % log_interval == 0) or (epoch_index + 1 == n_epochs):
+                progress_bar.set_postfix(
+                    objective=str(training_options["objective_name"]),
+                    best=f"{float(np.min(objective_history)):.6g}",
+                )
+    finally:
+        progress_bar.close()
+
+    with torch.no_grad():
+        fitted_tensor = torch.nn.functional.softplus(c_logits_parameter)
+        gamma_matrix = _project_gamma_from_logits(gamma_logits, gamma_abs_bound=gamma_abs_bound)
+        b_matrix = b_parameter.detach().cpu().numpy()
+        gamma_numpy = gamma_matrix.detach().cpu().numpy()
+        fitted_predictions = fitted_tensor.detach().cpu().numpy()
+
+    conditioned_gamma, conditioning_value, shrink_factor = _enforce_gamma_conditioning(
+        gamma_numpy,
+        conditioning_max=float(settings["conditioning_max"]),
+    )
+
+    coupled_matrix = np.eye(conditioned_gamma.shape[0], dtype=float) - conditioned_gamma
+    driver_matrix = design_matrix @ b_matrix.T
+    exact_fitted_predictions, final_chat_update = _solve_chat_update(
+        target_matrix,
+        influent_matrix,
+        invariant_matrix,
+        coupled_matrix,
+        driver_matrix,
+        settings,
+        warm_start_matrix=fitted_predictions,
+    )
+    returned_objective_terms = _compute_training_objective_terms(
+        target_matrix,
+        influent_matrix,
+        invariant_matrix,
+        design_matrix,
+        b_matrix,
+        conditioned_gamma,
+        exact_fitted_predictions,
+        settings,
+        regularization_mode=REGULARIZATION_LASSO,
+    )
+    pre_projection_objective = float(objective_history[-1]) if objective_history else float("nan")
+
+    return {
+        "B_matrix": np.asarray(b_matrix, dtype=float),
+        "Gamma_matrix": np.asarray(conditioned_gamma, dtype=float),
+        "fitted_predictions": np.asarray(exact_fitted_predictions, dtype=float),
+        "objective_history": objective_history,
+        "final_objective": float(returned_objective_terms["objective"]),
+        "conditioning": float(conditioning_value),
+        "conditioning_shrink_factor": float(shrink_factor),
+        "gamma_update_history": [],
+        "chat_update_history": [],
+        "n_iterations": int(n_epochs),
+        "adam_training_history": {
+            "objective": objective_history,
+            "fit_term": fit_history,
+            "invariant_term": invariant_history,
+            "system_term": system_history,
+            "lasso_term": lasso_history,
+            "device": device_label,
+            "returned_fitted_prediction_source": "exact_c_hat_qp",
+            "final_chat_update": dict(final_chat_update),
+            "returned_state_terms": {
+                "pre_projection_objective": pre_projection_objective,
+                "fit_term": float(returned_objective_terms["fit_term"]),
+                "invariant_term": float(returned_objective_terms["invariant_term"]),
+                "system_term": float(returned_objective_terms["system_term"]),
+                "b_regularization": float(returned_objective_terms["b_regularization"]),
+                "gamma_regularization": float(returned_objective_terms["gamma_regularization"]),
+                "objective": float(returned_objective_terms["objective"]),
+            },
+        },
     }
 
 
@@ -1021,6 +1323,7 @@ def _build_model_bundle(
 
     return {
         "model_name": MODEL_NAME,
+        "training_method": str(model_hyperparameters.get("training_method", DEFAULT_TRAINING_METHOD)),
         "feature_columns": list(feature_columns),
         "target_columns": list(target_columns),
         "constraint_columns": list(constraint_columns),
@@ -1099,7 +1402,7 @@ def train_icsor_coupled_qp_model(
 
     _validate_scaling_configuration(model_hyperparameters)
     settings = _resolve_coupled_qp_settings(model_hyperparameters)
-    objective_label = str(model_hyperparameters.get("objective", "coupled_qp"))
+    objective_label = str(model_hyperparameters.get("objective", settings["training_method"]))
     options = _resolve_training_options(training_options, objective_name=objective_label)
 
     feature_frame = pd.DataFrame(training_dataset["features"])
@@ -1127,58 +1430,79 @@ def train_icsor_coupled_qp_model(
     influent_matrix = constraint_frame.to_numpy(dtype=float)
     invariant_matrix = np.asarray(A_matrix, dtype=float)
 
-    rng = np.random.default_rng(int(model_hyperparameters.get("random_seed", 42)))
-    n_outputs = target_matrix.shape[1]
-
-    progress_bar = create_progress_bar(
-        total=int(settings["n_restarts"]),
-        desc=str(options["progress_description"]),
-        enabled=bool(options["show_progress"]),
-        unit="restart",
-    )
-
     restart_summaries: list[dict[str, Any]] = []
     best_result: dict[str, Any] | None = None
+    training_method = str(settings["training_method"])
 
-    try:
-        for restart_index in range(int(settings["n_restarts"])):
-            if restart_index == 0:
-                gamma_init = np.zeros((n_outputs, n_outputs), dtype=float)
-            else:
-                gamma_init = rng.uniform(
-                    low=-float(settings["gamma_abs_bound"]),
-                    high=float(settings["gamma_abs_bound"]),
-                    size=(n_outputs, n_outputs),
+    if training_method == TRAINING_METHOD_RECURSIVE_QP:
+        rng = np.random.default_rng(int(model_hyperparameters.get("random_seed", 42)))
+        n_outputs = target_matrix.shape[1]
+
+        progress_bar = create_progress_bar(
+            total=int(settings["n_restarts"]),
+            desc=str(options["progress_description"]),
+            enabled=bool(options["show_progress"]),
+            unit="restart",
+        )
+
+        try:
+            for restart_index in range(int(settings["n_restarts"])):
+                if restart_index == 0:
+                    gamma_init = np.zeros((n_outputs, n_outputs), dtype=float)
+                else:
+                    gamma_init = rng.uniform(
+                        low=-float(settings["gamma_abs_bound"]),
+                        high=float(settings["gamma_abs_bound"]),
+                        size=(n_outputs, n_outputs),
+                    )
+                    np.fill_diagonal(gamma_init, 0.0)
+
+                restart_result = _run_coupled_qp_restart(
+                    design_matrix,
+                    target_matrix,
+                    influent_matrix,
+                    invariant_matrix,
+                    settings,
+                    initial_gamma=gamma_init,
                 )
-                np.fill_diagonal(gamma_init, 0.0)
+                restart_summary = {
+                    "restart_index": restart_index,
+                    "final_objective": float(restart_result["final_objective"]),
+                    "conditioning": float(restart_result["conditioning"]),
+                    "conditioning_shrink_factor": float(restart_result["conditioning_shrink_factor"]),
+                    "n_iterations": int(restart_result["n_iterations"]),
+                }
+                restart_summaries.append(restart_summary)
 
-            restart_result = _run_coupled_qp_restart(
-                design_matrix,
-                target_matrix,
-                influent_matrix,
-                invariant_matrix,
-                settings,
-                initial_gamma=gamma_init,
-            )
-            restart_summary = {
-                "restart_index": restart_index,
-                "final_objective": float(restart_result["final_objective"]),
-                "conditioning": float(restart_result["conditioning"]),
-                "conditioning_shrink_factor": float(restart_result["conditioning_shrink_factor"]),
-                "n_iterations": int(restart_result["n_iterations"]),
+                if best_result is None or float(restart_result["final_objective"]) < float(best_result["final_objective"]):
+                    best_result = restart_result
+
+                progress_bar.update(1)
+                progress_bar.set_postfix(
+                    objective=str(options["objective_name"]),
+                    best=f"{float(min(summary['final_objective'] for summary in restart_summaries)):.6g}",
+                )
+        finally:
+            progress_bar.close()
+    else:
+        adam_result = _run_adam_lasso_training(
+            design_matrix,
+            target_matrix,
+            influent_matrix,
+            invariant_matrix,
+            settings,
+            options,
+        )
+        best_result = adam_result
+        restart_summaries.append(
+            {
+                "restart_index": 0,
+                "final_objective": float(adam_result["final_objective"]),
+                "conditioning": float(adam_result["conditioning"]),
+                "conditioning_shrink_factor": float(adam_result["conditioning_shrink_factor"]),
+                "n_iterations": int(adam_result["n_iterations"]),
             }
-            restart_summaries.append(restart_summary)
-
-            if best_result is None or float(restart_result["final_objective"]) < float(best_result["final_objective"]):
-                best_result = restart_result
-
-            progress_bar.update(1)
-            progress_bar.set_postfix(
-                objective=str(options["objective_name"]),
-                best=f"{float(min(summary['final_objective'] for summary in restart_summaries)):.6g}",
-            )
-    finally:
-        progress_bar.close()
+        )
 
     if best_result is None:
         raise RuntimeError("icsor_coupled_qp failed to produce any training restart result.")
@@ -1246,9 +1570,11 @@ def train_icsor_coupled_qp_model(
             "n_iterations": int(best_result["n_iterations"]),
         },
         "training_diagnostics": {
+            "training_method": training_method,
             "restart_summaries": restart_summaries,
             "gamma_update_history": list(best_result.get("gamma_update_history", [])),
             "chat_update_history": list(best_result.get("chat_update_history", [])),
+            "adam_training_history": dict(best_result.get("adam_training_history", {})),
         },
     }
 
@@ -1365,7 +1691,10 @@ def run_icsor_coupled_qp_pipeline(
     params = dict(model_params) if model_params is not None else load_icsor_coupled_qp_params(repo_root)
     split_params = dict(params["hyperparameters"])
     selected_hyperparameters = resolve_model_hyperparameters(params, model_hyperparameters)
-    selected_hyperparameters.setdefault("objective", "coupled_qp")
+    selected_hyperparameters.setdefault(
+        "objective",
+        str(selected_hyperparameters.get("training_method", DEFAULT_TRAINING_METHOD)),
+    )
 
     _validate_scaling_configuration({**split_params, **selected_hyperparameters})
     coupled_qp_settings = _resolve_coupled_qp_settings(selected_hyperparameters)

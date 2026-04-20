@@ -8,6 +8,8 @@ The surrogate is split into two layers. A second-order feature map produces a fe
 
 Stoichiometric conservation remains central, and in this article it is handled through invariant-residual penalties in the fitted-prediction program used during training and as a hard linear equality in the deployed inference program. The resulting ICSOR formulation is a coupled component-space surrogate with optimization-based training, optimization-based inference, nonnegative fitted and deployed predictions, invariant-aware training, exact invariant preservation inside the deployed inference problem, and external measurement collapse. This article develops that theory carefully, states what it guarantees, and revises the discussion, estimation logic, uncertainty treatment, and limitations around that contract.
 
+In this repository implementation, coefficient estimation now supports two selectable training mechanisms under the same model contract: the original recursive coupled-QP block-update routine and an Adam-based optimizer that keeps the same fit, invariant, and coupled-system terms while using Lasso regularization for $B$ and $\Gamma$. The deployment-time constrained inference stage remains unchanged. In the Adam path, the returned training state is reconciled back to the prediction-space formulation before persistence by conditioning $\Gamma$ into the admissible deployed set and re-solving the fitted nonnegative $\widehat C$ subproblem for the exposed $(B, \Gamma, \widehat C)$ triple. This means the training algorithm can be switched without changing the native prediction space, the projection contract, or the external measured-output comparison protocol.
+
 ## 1. Introduction and Modeling Objective
 
 Surrogate models are valuable in wastewater engineering because they replace repeated numerical simulation or repeated plant-wide optimization with a direct input-output map. That speed matters when screening operating scenarios, embedding a reactor model in a larger optimization loop, or performing sensitivity studies over many influent conditions. In this article, each sample is assumed to represent a quasi-steady operating condition: the operating variables, influent composition, and effluent response are treated as effectively time-invariant over the control volume being modeled for the sampling window of interest.
@@ -420,6 +422,8 @@ C_{out} - \widehat C
 $$
 
 The first term fits the effluent ASM component states directly. The second term penalizes violations of the stoichiometric invariant relations in the fitted prediction matrix. The third term enforces consistency between the fitted prediction matrix and the coupled second-order driver. The last two terms stabilize the driver and coupling estimates when regularization is used. The hard nonnegativity constraint acts directly on $\widehat C$, while the admissible-set restriction acts on $\Gamma$.
+
+Repository note. The `recursive_qp` implementation instantiates $\mathcal R_B$ and $\mathcal R_\Gamma$ as ridge penalties weighted by `lambda_B` and `lambda_gamma`. The `adam_lasso` implementation keeps the same first three terms but uses L1 penalties weighted by `lasso_lambda_B` and `lasso_lambda_gamma` during the gradient phase, then recomputes the returned fitted prediction matrix with the exact nonnegative $\widehat C$ subproblem for the final admissible $\Gamma$.
 
 ### 6.3 Blockwise optimization when $\Gamma$ is estimated
 

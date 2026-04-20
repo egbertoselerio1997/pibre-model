@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from scipy.linalg import null_space
 
+from src.models.ml.icsor import build_icsor_design_frame
 from src.models.ml.icsor_coupled_qp import (
     _resolve_coupled_qp_settings,
     _solve_chat_update,
@@ -54,6 +55,8 @@ def _tiny_params() -> dict[str, object]:
     params["hyperparameters"]["random_seed"] = 11
     params["training_defaults"].update(
         {
+            "training_method": "recursive_qp",
+            "objective": "coupled_qp",
             "max_outer_iterations": 2,
             "n_restarts": 1,
             "objective_tolerance": 1e-6,
@@ -359,6 +362,106 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
         self.assertGreater(active_qp_count, 0)
         self.assertEqual(int(chat_metadata["warm_start_used_count"]), active_qp_count)
         self.assertEqual(int(chat_metadata["warm_start_skipped_invalid_count"]), 0)
+
+    def test_default_params_enable_adam_lasso_training(self) -> None:
+        params = load_icsor_coupled_qp_params()
+        training_defaults = dict(params["training_defaults"])
+        self.assertEqual(str(training_defaults["training_method"]), "adam_lasso")
+        self.assertEqual(str(training_defaults["objective"]), "adam_lasso")
+
+    def test_training_with_adam_lasso_returns_mode_aware_diagnostics(self) -> None:
+        params = _tiny_params()
+        params["training_defaults"].update(
+            {
+                "training_method": "adam_lasso",
+                "objective": "adam_lasso",
+                "adam_epochs": 20,
+                "adam_learning_rate": 0.01,
+                "adam_log_interval": 5,
+                "lasso_lambda_B": 1e-4,
+                "lasso_lambda_gamma": 1e-4,
+            }
+        )
+
+        training_result = train_icsor_coupled_qp_model(
+            {
+                "features": self.icsor_dataset.features,
+                "targets": self.icsor_dataset.targets,
+                "constraint_reference": self.icsor_dataset.constraint_reference,
+            },
+            params["training_defaults"],
+            A_matrix=self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            training_options={"show_progress": False},
+        )
+
+        self.assertEqual(str(training_result["training_diagnostics"]["training_method"]), "adam_lasso")
+        self.assertFalse(list(training_result["training_diagnostics"]["gamma_update_history"]))
+        self.assertFalse(list(training_result["training_diagnostics"]["chat_update_history"]))
+        adam_history = dict(training_result["training_diagnostics"]["adam_training_history"])
+        self.assertEqual(len(list(adam_history["objective"])), 20)
+        self.assertEqual(str(adam_history["returned_fitted_prediction_source"]), "exact_c_hat_qp")
+        self.assertIn("final_chat_update", adam_history)
+        self.assertEqual(training_result["B_matrix"].shape[0], self.icsor_dataset.targets.shape[1])
+        self.assertEqual(training_result["Gamma_matrix"].shape[0], self.icsor_dataset.targets.shape[1])
+        np.testing.assert_allclose(
+            np.diag(np.asarray(training_result["Gamma_matrix"], dtype=float)),
+            np.zeros(self.icsor_dataset.targets.shape[1]),
+            atol=1e-10,
+        )
+
+    def test_training_with_adam_lasso_returns_exact_final_chat_solution(self) -> None:
+        params = _tiny_params()
+        params["training_defaults"].update(
+            {
+                "training_method": "adam_lasso",
+                "objective": "adam_lasso",
+                "adam_epochs": 3,
+                "adam_learning_rate": 0.01,
+                "adam_log_interval": 1,
+                "lasso_lambda_B": 1e-4,
+                "lasso_lambda_gamma": 1e-4,
+            }
+        )
+
+        training_dataset = {
+            "features": self.icsor_dataset.features,
+            "targets": self.icsor_dataset.targets,
+            "constraint_reference": self.icsor_dataset.constraint_reference,
+        }
+        training_result = train_icsor_coupled_qp_model(
+            training_dataset,
+            params["training_defaults"],
+            A_matrix=self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            training_options={"show_progress": False},
+        )
+
+        settings = _resolve_coupled_qp_settings(params["training_defaults"])
+        design_frame, _ = build_icsor_design_frame(
+            training_dataset["features"],
+            constraint_columns=list(training_dataset["constraint_reference"].columns),
+            include_bias_term=bool(settings["include_bias_term"]),
+        )
+        design_matrix = design_frame.to_numpy(dtype=float)
+        target_matrix = training_dataset["targets"].to_numpy(dtype=float)
+        influent_matrix = training_dataset["constraint_reference"].to_numpy(dtype=float)
+        fitted_predictions = training_result["fitted_predictions"].to_numpy(dtype=float)
+        gamma_matrix = np.asarray(training_result["Gamma_matrix"], dtype=float)
+        driver_matrix = design_matrix @ np.asarray(training_result["B_matrix"], dtype=float).T
+
+        exact_fitted_predictions, _ = _solve_chat_update(
+            target_matrix,
+            influent_matrix,
+            self.a_matrix,
+            np.eye(gamma_matrix.shape[0], dtype=float) - gamma_matrix,
+            driver_matrix,
+            settings,
+            warm_start_matrix=fitted_predictions,
+        )
+
+        max_abs_gap = float(np.max(np.abs(fitted_predictions - exact_fitted_predictions)))
+        self.assertLessEqual(max_abs_gap, 3e-2)
 
 
 if __name__ == "__main__":
