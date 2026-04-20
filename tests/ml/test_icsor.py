@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 from scipy.linalg import null_space
+from sklearn.metrics import r2_score
 
 from src.models.ml.icsor import (
     build_icsor_design_frame,
@@ -122,6 +123,45 @@ class icsorModelTests(unittest.TestCase):
         np.testing.assert_allclose(effective_b, raw_b, atol=1e-10, rtol=1e-10)
         self.assertEqual(result["model_bundle"]["native_prediction_space"], "fractional_component")
         self.assertEqual(result["model_bundle"]["comparison_target_space"], "external_measured_output")
+
+    def test_fractional_projected_per_target_r2_matches_recomputed_values(self) -> None:
+        params = self._tiny_params()
+        dataset_splits = make_train_test_split(
+            self.icsor_dataset,
+            test_fraction=0.2,
+            random_seed=11,
+        )
+
+        result = run_icsor_pipeline(
+            dataset_splits.train,
+            dataset_splits.test,
+            self.a_matrix,
+            composition_matrix=self.composition_matrix,
+            model_params=params,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+
+        true_fractional = dataset_splits.test.targets.astype(float)
+        predicted_fractional = (
+            result["test_report"]["projected_fractional_predictions"]
+            .rename(columns=lambda name: str(name).removeprefix("ProjectedFractional_"))
+            .rename(columns=lambda name: f"Out_{name}")
+            .loc[:, true_fractional.columns]
+            .astype(float)
+        )
+        reported_per_target = result["test_report"]["fractional_per_target_metrics"].set_index("target")
+
+        self.assertIn("Out_X_S", reported_per_target.index)
+        self.assertIn("Out_X_H", reported_per_target.index)
+
+        for target_name in true_fractional.columns:
+            recomputed_r2 = r2_score(
+                true_fractional[target_name].to_numpy(dtype=float),
+                predicted_fractional[target_name].to_numpy(dtype=float),
+            )
+            reported_r2 = float(reported_per_target.loc[target_name, "projected_R2"])
+            self.assertAlmostEqual(recomputed_r2, reported_r2, places=12)
 
     def test_predict_roundtrip_from_saved_bundle(self) -> None:
         params = self._tiny_params()

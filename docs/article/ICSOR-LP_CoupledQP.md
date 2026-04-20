@@ -299,6 +299,43 @@ $$
 
 where $B \in \mathbb{R}^{F \times D}$ is unrestricted in sign.
 
+Using the same partitioned feature basis introduced above, the driver admits the blockwise decomposition
+
+$$
+r(u, c_{in}) = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in}),
+$$
+
+with coefficient blocks
+
+$$
+b \in \mathbb{R}^{F}, \quad
+W_u \in \mathbb{R}^{F \times M_{op}}, \quad
+W_{in} \in \mathbb{R}^{F \times F},
+$$
+
+$$
+\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}, \quad
+\Theta_{cc} \in \mathbb{R}^{F \times F^2}, \quad
+\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}.
+$$
+
+Equivalently, $B$ may be read as the column concatenation
+
+$$
+B = \begin{bmatrix} b & W_u & W_{in} & \Theta_{uu} & \Theta_{cc} & \Theta_{uc} \end{bmatrix},
+$$
+
+where $b$ is understood as an $F \times 1$ block. Each block still has a distinct engineering meaning, but now at the level of the latent driver rather than at the level of the final deployed component prediction.
+
+1. $b$ is the baseline driver present before operating and influent effects are applied.
+2. $W_u u$ captures first-order operating effects.
+3. $W_{in} c_{in}$ captures first-order influent carry-through and loading effects.
+4. $\Theta_{uu}(u \otimes u)$ captures nonlinear interactions among operating variables.
+5. $\Theta_{cc}(c_{in} \otimes c_{in})$ captures nonlinear dependence on influent composition.
+6. $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interaction that remains central to the ICSOR design.
+
+This six-block decomposition is the natural level at which coefficient summaries and heatmaps should be interpreted. A driver block can be large or small, stabilizing or destabilizing, even when its net effect on the final deployed state is later filtered by the learned coupling matrix and, if needed, by the deployed inference program.
+
 Cross-component dependence is introduced by an estimated coupling matrix $\Gamma \in \mathbb{R}^{F \times F}$. During estimation, $\Gamma$ is restricted to an admissible set that preserves interpretability and keeps the coupled system usable; common examples include $\operatorname{diag}(\Gamma) = 0$ together with additional conditioning or stability restrictions that keep $R = I_F - \Gamma$ nonsingular. Define the coupled-system matrix
 
 $$
@@ -680,8 +717,12 @@ Therefore interpretation should focus on the following objects in order of relia
 1. deployed ASM component predictions produced by the inference program,
 2. fitted prediction matrices and invariant-residual diagnostics,
 3. coupling patterns in $\Gamma$ that remain stable across admissible initializations and regularization choices,
-4. blockwise driver contributions of $B$,
+4. blockwise driver contributions of $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{cc}$, and $\Theta_{uc}$,
 5. individual coefficients only when the design matrix is sufficiently informative and the coupling estimate is stable.
+
+Using the decomposition from Section 5.3, the safest coefficient interpretation is therefore blockwise rather than entrywise. The intercept block $b$ describes the baseline driver. The linear blocks $W_u$ and $W_{in}$ describe first-order operating and influent sensitivity. The quadratic blocks $\Theta_{uu}$ and $\Theta_{cc}$ describe curvature within the operating and influent subspaces. The interaction block $\Theta_{uc}$ describes how operating conditions modulate the effect of influent composition and vice versa. In practical reporting, these six blocks are usually more stable and more scientifically legible than isolated coefficients because duplicated monomials, weak excitation, and local nonconvexity can all move weight among nearby columns without materially changing the deployed prediction.
+
+The coupling coefficients require a second interpretability layer. Off-diagonal entries of $\Gamma$ describe how the equation for one ASM component borrows from or is opposed by the others after the feature-driven driver has been formed. In many analyses the resolved system matrix $R = I_F - \Gamma$ is even easier to inspect than $\Gamma$ itself, because its diagonal entries show retained self-weight while its off-diagonal entries show the linear redistribution needed to balance the coupled system. Even then, neither $B$ nor $\Gamma$ should be read as a complete deployed effect map in isolation: the final deployed component prediction is produced only after the coupled affine relation and the inference constraints are applied.
 
 ### 8.3 Practical QP solvers for training and inference
 

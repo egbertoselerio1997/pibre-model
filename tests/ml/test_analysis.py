@@ -14,9 +14,18 @@ import pandas as pd
 from scipy.linalg import null_space
 
 from src.models.ml.icsor import run_icsor_pipeline
+from src.models.ml.icsor_coupled_qp import load_icsor_coupled_qp_params, run_icsor_coupled_qp_pipeline
 from src.models.simulation.asm2d_tsn_simulation import generate_asm2d_tsn_dataset
 from src.utils.analysis import (
 	add_effective_metric_columns,
+	build_icsor_coupled_qp_b_matrix_block_frames,
+	build_icsor_coupled_qp_b_matrix_block_interpretation_table,
+	build_icsor_coupled_qp_b_matrix_block_metadata,
+	build_icsor_coupled_qp_coefficient_contract_table,
+	build_icsor_coupled_qp_coefficient_density_tables,
+	build_icsor_coupled_qp_coefficient_frames,
+	build_icsor_coupled_qp_coefficient_metadata,
+	build_icsor_coupled_qp_response_surface_prediction_data,
 	build_negative_prediction_tables,
 	build_notebook_table_recorder,
 	build_train_test_gap_summary,
@@ -156,6 +165,28 @@ def _tiny_icsor_params() -> dict[str, Any]:
 			},
 		}
 	)
+
+
+def _tiny_icsor_coupled_qp_params() -> dict[str, Any]:
+	params = copy.deepcopy(load_icsor_coupled_qp_params())
+	params["hyperparameters"]["random_seed"] = 11
+	params["training_defaults"].update(
+		{
+			"training_method": "recursive_qp",
+			"objective": "recursive_qp",
+			"max_outer_iterations": 2,
+			"n_restarts": 1,
+			"objective_regression_window": 2,
+			"objective_regression_slope_tolerance": 1e-12,
+			"conditioning_max": 1e6,
+			"osqp_max_iter": 2000,
+			"osqp_polish": False,
+			"highs_max_iter": 2000,
+			"parallel_workers": 1,
+			"gamma_abs_bound": 0.3,
+		}
+	)
+	return params
 
 
 def _write_temp_paths_config(repo_root: Path) -> None:
@@ -805,6 +836,168 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertIn("Projected_Out_COD", response_surface["prediction_table"].columns)
 		self.assertIn("ConstraintReference_S_A", response_surface["prediction_table"].columns)
 		self.assertAlmostEqual(float(response_surface["fixed_influent_profile"].loc["S_A"]), 42.5)
+
+	def test_build_icsor_coupled_qp_response_surface_prediction_data_returns_measured_output_surfaces(self) -> None:
+		dataset_splits = make_train_test_split(
+			self.icsor_dataset,
+			test_fraction=0.25,
+			random_seed=11,
+		)
+		result = run_icsor_coupled_qp_pipeline(
+			dataset_splits.train,
+			dataset_splits.test,
+			self.icsor_a_matrix,
+			composition_matrix=self.icsor_composition_matrix,
+			measured_output_columns=list(self.icsor_metadata["measured_output_columns"]),
+			model_params=_tiny_icsor_coupled_qp_params(),
+			show_progress=False,
+			persist_artifacts=False,
+		)
+
+		with tempfile.TemporaryDirectory() as temp_dir_name:
+			model_path = Path(temp_dir_name) / "icsor_coupled_qp_model.pkl"
+			save_pickle_file(model_path, result["model_bundle"])
+			response_surface = build_icsor_coupled_qp_response_surface_prediction_data(
+				model_path,
+				metadata=self.icsor_metadata,
+				grid_points_per_axis=5,
+				operational_extension_fraction=0.25,
+			)
+
+		self.assertEqual(response_surface["operational_meshes"]["HRT"].shape, (5, 5))
+		self.assertEqual(
+			set(response_surface["per_target_surfaces"].keys()),
+			set(f"Out_{name}" for name in self.icsor_metadata["measured_output_columns"]),
+		)
+		self.assertIn("Projected_Out_COD", response_surface["prediction_table"].columns)
+		self.assertIn("ConstraintReference_S_A", response_surface["prediction_table"].columns)
+		self.assertIn("projected_fractional_predictions", response_surface)
+
+	def test_build_icsor_coupled_qp_coefficient_helpers_return_labeled_frames(self) -> None:
+		dataset_splits = make_train_test_split(
+			self.icsor_dataset,
+			test_fraction=0.25,
+			random_seed=11,
+		)
+		result = run_icsor_coupled_qp_pipeline(
+			dataset_splits.train,
+			dataset_splits.test,
+			self.icsor_a_matrix,
+			composition_matrix=self.icsor_composition_matrix,
+			measured_output_columns=list(self.icsor_metadata["measured_output_columns"]),
+			model_params=_tiny_icsor_coupled_qp_params(),
+			show_progress=False,
+			persist_artifacts=False,
+		)
+
+		coefficient_frames = build_icsor_coupled_qp_coefficient_frames(result["model_bundle"])
+		coefficient_metadata = build_icsor_coupled_qp_coefficient_metadata(result["model_bundle"])
+		coefficient_density_tables = build_icsor_coupled_qp_coefficient_density_tables(result["model_bundle"])
+
+		self.assertEqual(set(coefficient_frames), {"B_matrix", "Gamma_matrix", "R_matrix"})
+		self.assertIn("Bias", coefficient_frames["B_matrix"].columns)
+		self.assertEqual(
+			coefficient_frames["Gamma_matrix"].index.tolist(),
+			list(self.icsor_metadata["state_columns"]),
+		)
+		self.assertIn("conditioning", coefficient_metadata.columns)
+		self.assertIn("gamma_abs_bound", coefficient_metadata.columns)
+		self.assertEqual(
+			set(coefficient_density_tables["summary"]["block_name"]),
+			{"B_matrix", "Gamma_matrix", "R_matrix"},
+		)
+		gamma_density_row = coefficient_density_tables["summary"].loc[
+			coefficient_density_tables["summary"]["block_name"] == "Gamma_matrix"
+		].iloc[0]
+		self.assertEqual(
+			int(gamma_density_row["selectable_coefficients"]),
+			len(self.icsor_metadata["state_columns"]) * (len(self.icsor_metadata["state_columns"]) - 1),
+		)
+
+	def test_build_icsor_coupled_qp_b_matrix_block_frames_match_design_schema_ranges(self) -> None:
+		dataset_splits = make_train_test_split(
+			self.icsor_dataset,
+			test_fraction=0.25,
+			random_seed=11,
+		)
+		result = run_icsor_coupled_qp_pipeline(
+			dataset_splits.train,
+			dataset_splits.test,
+			self.icsor_a_matrix,
+			composition_matrix=self.icsor_composition_matrix,
+			measured_output_columns=list(self.icsor_metadata["measured_output_columns"]),
+			model_params=_tiny_icsor_coupled_qp_params(),
+			show_progress=False,
+			persist_artifacts=False,
+		)
+
+		model_bundle = result["model_bundle"]
+		coefficient_frames = build_icsor_coupled_qp_coefficient_frames(model_bundle)
+		b_frame = coefficient_frames["B_matrix"]
+		b_block_frames = build_icsor_coupled_qp_b_matrix_block_frames(model_bundle)
+		b_block_metadata = build_icsor_coupled_qp_b_matrix_block_metadata(model_bundle)
+
+		expected_block_names = {
+			"linear_operational",
+			"linear_influent",
+			"bias",
+			"quadratic_operational",
+			"quadratic_influent",
+			"interaction_operational_influent",
+		}
+		self.assertTrue(expected_block_names.issubset(set(b_block_frames)))
+		self.assertEqual(set(b_block_frames), set(b_block_metadata["block_name"]))
+
+		reconstructed_columns: list[str] = []
+		for metadata_row in b_block_metadata.itertuples(index=False):
+			block_frame = b_block_frames[str(metadata_row.block_name)]
+			self.assertEqual(int(metadata_row.width), int(block_frame.shape[1]))
+			reconstructed_columns.extend(list(block_frame.columns))
+
+		self.assertEqual(reconstructed_columns, list(b_frame.columns))
+		reconstructed_values = np.concatenate(
+			[b_block_frames[str(block_name)].to_numpy(dtype=float) for block_name in b_block_metadata["block_name"]],
+			axis=1,
+		)
+		np.testing.assert_allclose(reconstructed_values, b_frame.to_numpy(dtype=float), atol=1e-10)
+
+	def test_build_icsor_coupled_qp_coefficient_interpretation_tables_align_with_block_schema(self) -> None:
+		dataset_splits = make_train_test_split(
+			self.icsor_dataset,
+			test_fraction=0.25,
+			random_seed=11,
+		)
+		result = run_icsor_coupled_qp_pipeline(
+			dataset_splits.train,
+			dataset_splits.test,
+			self.icsor_a_matrix,
+			composition_matrix=self.icsor_composition_matrix,
+			measured_output_columns=list(self.icsor_metadata["measured_output_columns"]),
+			model_params=_tiny_icsor_coupled_qp_params(),
+			show_progress=False,
+			persist_artifacts=False,
+		)
+
+		model_bundle = result["model_bundle"]
+		block_metadata = build_icsor_coupled_qp_b_matrix_block_metadata(model_bundle)
+		block_interpretation = build_icsor_coupled_qp_b_matrix_block_interpretation_table(model_bundle)
+		coefficient_contract = build_icsor_coupled_qp_coefficient_contract_table(model_bundle)
+
+		self.assertEqual(
+			set(block_interpretation["block_name"]),
+			set(block_metadata["block_name"]),
+		)
+		self.assertIn("conceptual_block", block_interpretation.columns)
+		self.assertIn("driver_term", block_interpretation.columns)
+		self.assertIn("interpretation", block_interpretation.columns)
+		bias_row = block_interpretation.loc[block_interpretation["block_name"] == "bias"].iloc[0]
+		self.assertEqual(str(bias_row["driver_term"]), "b")
+
+		self.assertEqual(len(coefficient_contract), 1)
+		contract_row = coefficient_contract.iloc[0]
+		self.assertEqual(str(contract_row["system_matrix_definition"]), "R = I - Gamma")
+		self.assertIn("unrestricted", str(contract_row["driver_sign_constraint"]).lower())
+		self.assertIn("hard constraints", str(contract_row["deployment_nonnegativity_enforcement"]).lower())
 
 
 if __name__ == "__main__":
