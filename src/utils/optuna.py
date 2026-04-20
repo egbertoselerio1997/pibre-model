@@ -72,11 +72,57 @@ def create_optuna_study(
 	)
 
 
-def suggest_parameters(trial: optuna.Trial, search_space: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+def _condition_matches(condition: Mapping[str, Any], resolved_values: Mapping[str, Any]) -> bool:
+	"""Return whether one declarative condition matches the resolved parameter context."""
+
+	parameter_name = str(condition["parameter"])
+	if parameter_name not in resolved_values:
+		return False
+
+	parameter_value = resolved_values[parameter_name]
+	if "equals" in condition:
+		return parameter_value == condition["equals"]
+	if "in" in condition:
+		return parameter_value in list(condition["in"])
+	if "not_equals" in condition:
+		return parameter_value != condition["not_equals"]
+
+	raise ValueError(
+		"Optuna conditional search-space entries must declare one of: equals, in, not_equals."
+	)
+
+
+def _parameter_is_active(spec: Mapping[str, Any], resolved_values: Mapping[str, Any]) -> bool:
+	"""Return whether one parameter spec is active under the current resolved values."""
+
+	condition_spec = spec.get("condition")
+	if condition_spec is None:
+		return True
+
+	if isinstance(condition_spec, Mapping):
+		conditions = [condition_spec]
+	elif isinstance(condition_spec, list):
+		conditions = condition_spec
+	else:
+		raise ValueError("Optuna search-space condition must be a mapping or a list of mappings.")
+
+	return all(_condition_matches(dict(condition), resolved_values) for condition in conditions)
+
+
+def suggest_parameters(
+	trial: optuna.Trial,
+	search_space: Mapping[str, Mapping[str, Any]],
+	*,
+	context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
 	"""Suggest parameter values from a declarative search-space definition."""
 
+	resolved_values = dict(context or {})
 	suggested: dict[str, Any] = {}
 	for parameter_name, spec in search_space.items():
+		if not _parameter_is_active(spec, resolved_values):
+			continue
+
 		parameter_type = str(spec["type"]).lower()
 		if parameter_type == "float":
 			suggested[parameter_name] = trial.suggest_float(
@@ -99,6 +145,8 @@ def suggest_parameters(trial: optuna.Trial, search_space: Mapping[str, Mapping[s
 			)
 		else:
 			raise ValueError(f"Unsupported Optuna parameter type: {parameter_type}")
+
+		resolved_values[parameter_name] = suggested[parameter_name]
 
 	return suggested
 

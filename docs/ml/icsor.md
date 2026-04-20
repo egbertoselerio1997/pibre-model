@@ -89,7 +89,7 @@ The repository supports two manual affine-core estimators for this measured-spac
 - `ols` uses the original closed-form least-squares solution for the identifiable affine core.
 - `ridge` applies L2 shrinkage to the same identifiable affine core, with the bias block left unpenalized.
 
-In both cases, one admissible raw component-space coefficient matrix is then reconstructed as a minimum-norm solution consistent with the collapsed affine objective. The non-negative correction is not part of coefficient fitting; it is a post-estimation deployment step. When notebook-managed Optuna tuning is enabled for ICSOR, the notebook keeps the estimator fixed to ridge and tunes only the regularization strength `ridge_alpha`.
+In both cases, one admissible raw component-space coefficient matrix is then reconstructed as a minimum-norm solution consistent with the collapsed affine objective. The non-negative correction is not part of coefficient fitting; it is a post-estimation deployment step. When notebook-managed Optuna tuning is enabled for ICSOR, the notebook samples from the declarative `icsor.search_space` in `config/params.json`, including conditional parameters such as `ridge_alpha`, which only activates when `affine_estimator="ridge"`.
 
 ## 6. Returned artifacts and persisted bundle fields
 

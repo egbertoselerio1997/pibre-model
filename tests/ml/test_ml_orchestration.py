@@ -7,10 +7,13 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+from optuna.trial import FixedTrial
 from scipy.linalg import null_space
 
+from src.models.ml import load_icsor_coupled_qp_params
 from src.models.ml.adaboost_regressor import build_adaboost_regressor_model, load_adaboost_regressor_params
 from src.models.simulation.asm2d_tsn_simulation import generate_asm2d_tsn_dataset
+from src.utils.optuna import suggest_parameters
 from src.utils.process import (
     apply_train_test_split_indices,
     build_icsor_supervised_dataset,
@@ -21,7 +24,11 @@ from src.utils.process import (
     sample_dataset_split_indices,
 )
 from src.utils.simulation import load_params_config
-from src.utils.train import tune_icsor_hyperparameters, tune_tabular_regressor_hyperparameters
+from src.utils.train import (
+    tune_icsor_coupled_qp_hyperparameters,
+    tune_icsor_hyperparameters,
+    tune_tabular_regressor_hyperparameters,
+)
 
 
 def _compute_a_matrix(petersen_matrix: np.ndarray, composition_matrix: np.ndarray) -> np.ndarray:
@@ -65,7 +72,8 @@ def _build_tiny_adaboost_params() -> dict[str, object]:
     return params
 
 
-def _build_tiny_icsor_params() -> dict[str, object]:
+def _build_tiny_icsor_params(*, affine_estimator: str = "ridge") -> dict[str, object]:
+    objective_name = "projected_ridge" if affine_estimator == "ridge" else "projected_ols"
     return {
         "hyperparameters": {
             "random_seed": 11,
@@ -73,9 +81,9 @@ def _build_tiny_icsor_params() -> dict[str, object]:
             "scale_targets": False,
         },
         "training_defaults": {
-            "objective": "projected_ridge",
+            "objective": objective_name,
             "solver": "multivariate_lstsq",
-            "affine_estimator": "ridge",
+            "affine_estimator": affine_estimator,
             "ols_backend": "numpy_lstsq",
             "ridge_alpha": 0.001,
             "include_bias_term": True,
@@ -94,7 +102,15 @@ def _build_tiny_icsor_params() -> dict[str, object]:
             "confidence_level": 0.95,
         },
         "search_space": {
-            "ridge_alpha": {"type": "float", "low": 1e-6, "high": 1e-2, "log": True},
+            "affine_estimator": {"type": "categorical", "choices": [affine_estimator]},
+            "ridge_alpha": {
+                "type": "float",
+                "low": 1e-6,
+                "high": 1e-2,
+                "log": True,
+                "condition": {"parameter": "affine_estimator", "equals": "ridge"},
+            },
+            "tradeoff_parameter": {"type": "float", "low": 1e-4, "high": 1.0, "log": True},
         },
         "artifact_options": {
             "persist_model": False,
@@ -102,6 +118,80 @@ def _build_tiny_icsor_params() -> dict[str, object]:
             "persist_optuna": False,
         },
     }
+
+
+def _build_tiny_icsor_coupled_qp_params(*, training_method: str = "recursive_qp") -> dict[str, object]:
+    params = copy.deepcopy(load_icsor_coupled_qp_params())
+    params["hyperparameters"]["random_seed"] = 11
+    params["training_defaults"].update(
+        {
+            "training_method": training_method,
+            "objective": training_method,
+            "max_outer_iterations": 2,
+            "n_restarts": 1,
+            "objective_regression_window": 2,
+            "objective_regression_slope_tolerance": 1e-12,
+            "conditioning_max": 1e6,
+            "osqp_max_iter": 2000,
+            "osqp_polish": False,
+            "highs_max_iter": 2000,
+            "parallel_workers": 1,
+            "gamma_abs_bound": 0.3,
+            "adam_epochs": 20,
+            "adam_learning_rate": 0.01,
+            "adam_log_interval": 5,
+            "lasso_lambda_B": 1e-4,
+            "lasso_lambda_gamma": 1e-4,
+        }
+    )
+    params["search_space"] = {
+        "lambda_inv": {"type": "float", "low": 1e-2, "high": 1.0, "log": True},
+        "lambda_sys": {"type": "float", "low": 1e-2, "high": 1.0, "log": True},
+        "gamma_abs_bound": {"type": "float", "low": 0.2, "high": 0.3, "log": False},
+        "lambda_B": {
+            "type": "float",
+            "low": 1e-6,
+            "high": 1e-3,
+            "log": True,
+            "condition": {"parameter": "training_method", "equals": "recursive_qp"},
+        },
+        "lambda_gamma": {
+            "type": "float",
+            "low": 1e-6,
+            "high": 1e-3,
+            "log": True,
+            "condition": {"parameter": "training_method", "equals": "recursive_qp"},
+        },
+        "objective_regression_window": {
+            "type": "int",
+            "low": 2,
+            "high": 3,
+            "log": False,
+            "condition": {"parameter": "training_method", "equals": "recursive_qp"},
+        },
+        "lasso_lambda_B": {
+            "type": "float",
+            "low": 1e-5,
+            "high": 1e-3,
+            "log": True,
+            "condition": {"parameter": "training_method", "equals": "adam_lasso"},
+        },
+        "lasso_lambda_gamma": {
+            "type": "float",
+            "low": 1e-5,
+            "high": 1e-3,
+            "log": True,
+            "condition": {"parameter": "training_method", "equals": "adam_lasso"},
+        },
+        "adam_learning_rate": {
+            "type": "float",
+            "low": 1e-3,
+            "high": 1e-2,
+            "log": True,
+            "condition": {"parameter": "training_method", "equals": "adam_lasso"},
+        },
+    }
+    return params
 
 
 TABULAR_MODEL_NAMES = [
@@ -243,8 +333,55 @@ class MlOrchestrationTests(unittest.TestCase):
         self.assertTrue(set(params["training_defaults"]).issubset(best_hyperparameters))
         self.assertEqual(optuna_summary["n_trials"], 1)
 
+    def test_suggest_parameters_skips_inactive_conditional_entries(self) -> None:
+        search_space = {
+            "affine_estimator": {"type": "categorical", "choices": ["ols"]},
+            "ridge_alpha": {
+                "type": "float",
+                "low": 1e-6,
+                "high": 1e-2,
+                "log": True,
+                "condition": {"parameter": "affine_estimator", "equals": "ridge"},
+            },
+            "tradeoff_parameter": {"type": "float", "low": 1e-6, "high": 1.0, "log": True},
+        }
+
+        suggested = suggest_parameters(
+            FixedTrial({"affine_estimator": "ols", "tradeoff_parameter": 0.1}),
+            search_space,
+        )
+
+        self.assertEqual(str(suggested["affine_estimator"]), "ols")
+        self.assertIn("tradeoff_parameter", suggested)
+        self.assertNotIn("ridge_alpha", suggested)
+
+    def test_suggest_parameters_uses_context_for_conditional_entries(self) -> None:
+        search_space = {
+            "adam_learning_rate": {
+                "type": "float",
+                "low": 1e-4,
+                "high": 1e-2,
+                "log": True,
+                "condition": {"parameter": "training_method", "equals": "adam_lasso"},
+            }
+        }
+
+        active_suggestion = suggest_parameters(
+            FixedTrial({"adam_learning_rate": 1e-3}),
+            search_space,
+            context={"training_method": "adam_lasso"},
+        )
+        inactive_suggestion = suggest_parameters(
+            FixedTrial({}),
+            search_space,
+            context={"training_method": "recursive_qp"},
+        )
+
+        self.assertIn("adam_learning_rate", active_suggestion)
+        self.assertEqual(inactive_suggestion, {})
+
     def test_external_icsor_tuning_returns_ridge_hyperparameters(self) -> None:
-        params = _build_tiny_icsor_params()
+        params = _build_tiny_icsor_params(affine_estimator="ridge")
         split_indices = make_train_test_split_indices(self.dataset.index, test_fraction=0.2, random_seed=11)
         tuning_indices = sample_dataset_split_indices(split_indices.train, fraction=0.5, random_seed=11)
         tuning_split_indices = make_train_test_split_indices(tuning_indices, test_fraction=0.25, random_seed=11)
@@ -261,11 +398,64 @@ class MlOrchestrationTests(unittest.TestCase):
         )
 
         self.assertEqual(best_hyperparameters["affine_estimator"], "ridge")
+        self.assertEqual(best_hyperparameters["objective"], "projected_ridge")
         self.assertIn("ridge_alpha", best_hyperparameters)
         self.assertGreaterEqual(float(best_hyperparameters["ridge_alpha"]), 1e-6)
         self.assertLessEqual(float(best_hyperparameters["ridge_alpha"]), 1e-2)
+        self.assertEqual(optuna_summary["best_params"]["affine_estimator"], "ridge")
+        self.assertIn("ridge_alpha", optuna_summary["best_params"])
         self.assertEqual(optuna_summary["n_trials"], 1)
         self.assertEqual(optuna_summary["best_trial_number"], 0)
+
+    def test_external_icsor_tuning_supports_ols_without_ridge_trial_parameter(self) -> None:
+        params = _build_tiny_icsor_params(affine_estimator="ols")
+        split_indices = make_train_test_split_indices(self.dataset.index, test_fraction=0.2, random_seed=11)
+        tuning_indices = sample_dataset_split_indices(split_indices.train, fraction=0.5, random_seed=11)
+        tuning_split_indices = make_train_test_split_indices(tuning_indices, test_fraction=0.25, random_seed=11)
+        tuning_splits = apply_train_test_split_indices(self.icsor_dataset, tuning_split_indices)
+
+        best_hyperparameters, optuna_summary = tune_icsor_hyperparameters(
+            tuning_splits.train,
+            tuning_splits.test,
+            A_matrix=self.icsor_a_matrix,
+            composition_matrix=self.composition_matrix,
+            measured_output_columns=list(self.metadata["measured_output_columns"]),
+            model_params=params,
+            n_trials=1,
+            show_progress_bar=False,
+        )
+
+        self.assertEqual(best_hyperparameters["affine_estimator"], "ols")
+        self.assertEqual(best_hyperparameters["objective"], "projected_ols")
+        self.assertEqual(optuna_summary["best_params"]["affine_estimator"], "ols")
+        self.assertNotIn("ridge_alpha", optuna_summary["best_params"])
+        self.assertEqual(optuna_summary["n_trials"], 1)
+
+    def test_external_coupled_qp_tuning_returns_method_specific_hyperparameters(self) -> None:
+        params = _build_tiny_icsor_coupled_qp_params(training_method="adam_lasso")
+        split_indices = make_train_test_split_indices(self.dataset.index, test_fraction=0.2, random_seed=11)
+        tuning_indices = sample_dataset_split_indices(split_indices.train, fraction=0.5, random_seed=11)
+        tuning_split_indices = make_train_test_split_indices(tuning_indices, test_fraction=0.25, random_seed=11)
+        tuning_splits = apply_train_test_split_indices(self.icsor_dataset, tuning_split_indices)
+
+        best_hyperparameters, optuna_summary = tune_icsor_coupled_qp_hyperparameters(
+            tuning_splits.train,
+            tuning_splits.test,
+            A_matrix=self.icsor_a_matrix,
+            composition_matrix=self.composition_matrix,
+            measured_output_columns=list(self.metadata["measured_output_columns"]),
+            model_params=params,
+            n_trials=1,
+            show_progress_bar=False,
+        )
+
+        self.assertEqual(best_hyperparameters["training_method"], "adam_lasso")
+        self.assertEqual(best_hyperparameters["objective"], "adam_lasso")
+        self.assertNotIn("training_method", optuna_summary["best_params"])
+        self.assertIn("adam_learning_rate", optuna_summary["best_params"])
+        self.assertIn("lasso_lambda_B", optuna_summary["best_params"])
+        self.assertNotIn("lambda_B", optuna_summary["best_params"])
+        self.assertEqual(optuna_summary["n_trials"], 1)
 
     @patch("src.utils.optuna.create_progress_bar")
     def test_tabular_tuning_enables_progress_by_default(self, progress_factory: MagicMock) -> None:

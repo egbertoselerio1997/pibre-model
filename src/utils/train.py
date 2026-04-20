@@ -354,7 +354,9 @@ def tune_tabular_regressor_hyperparameters(
 
     def objective(trial: Any) -> float:
         hyperparameters = dict(base_hyperparameters)
-        hyperparameters.update(suggest_parameters(trial, model_params["search_space"]))
+        hyperparameters.update(
+            suggest_parameters(trial, model_params["search_space"], context=hyperparameters)
+        )
         training_result = train_tabular_regressor(
             {
                 "features": scaled_tuning_train_split.features,
@@ -404,6 +406,27 @@ def tune_tabular_regressor_hyperparameters(
     return best_hyperparameters, make_study_summary(study)
 
 
+def _extract_projected_validation_mse(report: Mapping[str, pd.DataFrame]) -> float:
+    """Extract the projected-prediction MSE from one evaluation report."""
+
+    aggregate_metrics = report["aggregate_metrics"]
+    projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
+    return float(projected_row["MSE"])
+
+
+def _resolve_icsor_optuna_objective_label(hyperparameters: Mapping[str, Any]) -> str:
+    estimator_name = str(hyperparameters.get("affine_estimator", "ols")).strip().lower()
+    return f"projected_{estimator_name}"
+
+
+def _resolve_coupled_qp_training_method(hyperparameters: Mapping[str, Any]) -> str:
+    return str(hyperparameters.get("training_method", "recursive_qp")).strip().lower()
+
+
+def _resolve_coupled_qp_optuna_objective_label(hyperparameters: Mapping[str, Any]) -> str:
+    return _resolve_coupled_qp_training_method(hyperparameters)
+
+
 def tune_icsor_hyperparameters(
     tuning_train_split: DatasetSplit,
     tuning_test_split: DatasetSplit,
@@ -417,21 +440,15 @@ def tune_icsor_hyperparameters(
     timeout: int | None = None,
     show_progress_bar: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Tune the ICSOR ridge regularization strength with notebook-managed splits."""
+    """Tune ICSOR hyperparameters with notebook-managed Optuna splits."""
 
     from src.models.ml.icsor import run_icsor_pipeline
 
-    base_hyperparameters = resolve_model_hyperparameters(model_params, model_hyperparameters)
-    if str(base_hyperparameters.get("affine_estimator", "ols")).strip().lower() != "ridge":
-        raise ValueError(
-            "tune_icsor_hyperparameters requires affine_estimator='ridge'; Optuna does not choose the ICSOR solver family."
-        )
-
     if not model_params.get("search_space"):
-        raise ValueError("icsor search_space must be defined in config/params.json to tune ridge_alpha.")
+        raise ValueError("icsor search_space must be defined in config/params.json for Optuna tuning.")
 
-    base_hyperparameters = dict(base_hyperparameters)
-    base_hyperparameters["objective"] = "projected_ridge"
+    base_hyperparameters = dict(resolve_model_hyperparameters(model_params, model_hyperparameters))
+    base_hyperparameters["objective"] = _resolve_icsor_optuna_objective_label(base_hyperparameters)
     seed = int(model_params["hyperparameters"]["random_seed"])
     study = create_optuna_study(
         "icsor",
@@ -441,7 +458,10 @@ def tune_icsor_hyperparameters(
 
     def objective(trial: Any) -> float:
         hyperparameters = dict(base_hyperparameters)
-        hyperparameters.update(suggest_parameters(trial, model_params["search_space"]))
+        hyperparameters.update(
+            suggest_parameters(trial, model_params["search_space"], context=hyperparameters)
+        )
+        hyperparameters["objective"] = _resolve_icsor_optuna_objective_label(hyperparameters)
         hyperparameters["uncertainty_method"] = "none"
         tuning_result = run_icsor_pipeline(
             tuning_train_split,
@@ -454,9 +474,7 @@ def tune_icsor_hyperparameters(
             show_progress=False,
             persist_artifacts=False,
         )
-        aggregate_metrics = tuning_result["test_report"]["aggregate_metrics"]
-        projected_row = aggregate_metrics.loc[aggregate_metrics["prediction_type"] == "projected"].iloc[0]
-        return float(projected_row["MSE"])
+        return _extract_projected_validation_mse(tuning_result["test_report"])
 
     optimize_study(
         study,
@@ -469,6 +487,78 @@ def tune_icsor_hyperparameters(
 
     best_hyperparameters = dict(base_hyperparameters)
     best_hyperparameters.update(study.best_trial.params)
+    best_hyperparameters["objective"] = _resolve_icsor_optuna_objective_label(best_hyperparameters)
+    return best_hyperparameters, make_study_summary(study)
+
+
+def tune_icsor_coupled_qp_hyperparameters(
+    tuning_train_split: DatasetSplit,
+    tuning_test_split: DatasetSplit,
+    *,
+    A_matrix: np.ndarray,
+    composition_matrix: np.ndarray,
+    measured_output_columns: list[str] | None = None,
+    model_params: Mapping[str, Any],
+    model_hyperparameters: Mapping[str, Any] | None = None,
+    n_trials: int,
+    timeout: int | None = None,
+    show_progress_bar: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Tune coupled-QP ICSOR hyperparameters with notebook-managed Optuna splits.
+
+    The coupled-QP training_method is intentionally NOT optimized by Optuna and must
+    be selected manually through model_hyperparameters/training_defaults.
+    """
+
+    from src.models.ml.icsor_coupled_qp import run_icsor_coupled_qp_pipeline
+
+    if not model_params.get("search_space"):
+        raise ValueError("icsor_coupled_qp search_space must be defined in config/params.json for Optuna tuning.")
+
+    base_hyperparameters = dict(resolve_model_hyperparameters(model_params, model_hyperparameters))
+    selected_training_method = _resolve_coupled_qp_training_method(base_hyperparameters)
+    base_hyperparameters["training_method"] = selected_training_method
+    base_hyperparameters["objective"] = selected_training_method
+    seed = int(model_params["hyperparameters"]["random_seed"])
+    study = create_optuna_study(
+        "icsor_coupled_qp",
+        seed=seed,
+        pruner_config=model_params.get("pruner"),
+    )
+
+    def objective(trial: Any) -> float:
+        hyperparameters = dict(base_hyperparameters)
+        hyperparameters.update(
+            suggest_parameters(trial, model_params["search_space"], context=hyperparameters)
+        )
+        hyperparameters["training_method"] = selected_training_method
+        hyperparameters["objective"] = selected_training_method
+        tuning_result = run_icsor_coupled_qp_pipeline(
+            tuning_train_split,
+            tuning_test_split,
+            np.asarray(A_matrix, dtype=float),
+            composition_matrix=np.asarray(composition_matrix, dtype=float),
+            measured_output_columns=measured_output_columns,
+            model_params=model_params,
+            model_hyperparameters=hyperparameters,
+            show_progress=False,
+            persist_artifacts=False,
+        )
+        return _extract_projected_validation_mse(tuning_result["test_report"])
+
+    optimize_study(
+        study,
+        objective,
+        n_trials=int(n_trials),
+        timeout=timeout,
+        show_progress_bar=show_progress_bar,
+        objective_name="validation_mse",
+    )
+
+    best_hyperparameters = dict(base_hyperparameters)
+    best_hyperparameters.update(study.best_trial.params)
+    best_hyperparameters["training_method"] = selected_training_method
+    best_hyperparameters["objective"] = selected_training_method
     return best_hyperparameters, make_study_summary(study)
 
 
@@ -750,6 +840,7 @@ __all__ = [
     "run_tabular_regressor_pipeline",
     "serialize_report_frames",
     "train_tabular_regressor",
+    "tune_icsor_coupled_qp_hyperparameters",
     "transform_feature_frame",
     "tune_icsor_hyperparameters",
     "tune_tabular_regressor_hyperparameters",

@@ -497,7 +497,7 @@ $$
 
 which is a convex quadratic program in the fitted predictions. Thus the appropriate training statement is not global convexity but blockwise convexity together with local stationarity of the final estimate.
 
-One explicit implementation is cyclic block-coordinate descent with restarts. Choose tolerances $\varepsilon_{obj} > 0$ and $\varepsilon_{par} > 0$, a maximum outer-iteration count $T_{max}$, and a restart count $S$. For restart index $s = 1, \ldots, S$, initialize an admissible coupling matrix $\Gamma^{(0,s)} \in \mathcal G$ such as the zero matrix or a sparse prior guess, initialize a nonnegative fitted prediction matrix $\widehat C^{(0,s)}$ such as $\max(C_{out}, 0)$ or the solution of the $\widehat C$-subproblem under that pilot coupling, and obtain $B^{(0,s)}$ from the corresponding $B$-update. Then, for outer iteration $t = 0, 1, \ldots, T_{max}-1$, perform the cyclic updates
+One explicit implementation is cyclic block-coordinate descent with restarts. Choose a regression-window size $W \ge 2$, a slope tolerance $\varepsilon_{reg} \ge 0$, a maximum outer-iteration count $T_{max}$, and a restart count $S$. For restart index $s = 1, \ldots, S$, initialize an admissible coupling matrix $\Gamma^{(0,s)} \in \mathcal G$ such as the zero matrix or a sparse prior guess, initialize a nonnegative fitted prediction matrix $\widehat C^{(0,s)}$ such as $\max(C_{out}, 0)$ or the solution of the $\widehat C$-subproblem under that pilot coupling, and obtain $B^{(0,s)}$ from the corresponding $B$-update. Then, for outer iteration $t = 0, 1, \ldots, T_{max}-1$, perform the cyclic updates
 
 $$
 B^{(t+1,s)}
@@ -523,24 +523,26 @@ $$
 J^{(t+1,s)} = J(B^{(t+1,s)}, \Gamma^{(t+1,s)}, \widehat C^{(t+1,s)}).
 $$
 
-Stop the restart when both
+Also record the running minimum objective value
 
 $$
-\frac{|J^{(t+1,s)} - J^{(t,s)}|}{1 + |J^{(t,s)}|} \le \varepsilon_{obj}
+m^{(t+1,s)} = \min_{0 \le i \le t+1} J^{(i,s)}.
 $$
 
-and
+Once at least $W$ objective values have been recorded, fit a simple linear regression to the trailing window of running minimum objective values,
 
 $$
-\max \left\{
-\frac{\|B^{(t+1,s)} - B^{(t,s)}\|_F}{1 + \|B^{(t,s)}\|_F},
-\frac{\|\Gamma^{(t+1,s)} - \Gamma^{(t,s)}\|_F}{1 + \|\Gamma^{(t,s)}\|_F},
-\frac{\|\widehat C^{(t+1,s)} - \widehat C^{(t,s)}\|_F}{1 + \|\widehat C^{(t,s)}\|_F}
-\right\}
-\le \varepsilon_{par},
+m^{(t-W+2+j,s)} \approx \alpha^{(t+1,s)} + \beta^{(t+1,s)} j,
+\qquad j = 0, \ldots, W-1.
 $$
 
-or when a chosen blockwise KKT residual tolerance has been met. Across all restarts, retain the feasible stationary point with the smallest attained objective value and acceptable conditioning of $I_F - \Gamma$. Because each exact block update cannot increase $J$ and because $J \ge 0$, the objective sequence within each restart is monotone nonincreasing and converges in value, although the final point need not be globally optimal.
+Stop the restart when the regression slope is sufficiently flat relative to the best objective attained so far,
+
+$$
+\left|\widehat \beta^{(t+1,s)}\right| \le \varepsilon_{reg},
+$$
+
+or when the outer-iteration cap is reached. Across all restarts, retain the feasible stationary point associated with the smallest recorded running minimum objective value and acceptable conditioning of $I_F - \Gamma$. Because each exact block update cannot increase $J$ and because $J \ge 0$, the objective sequence within each restart is monotone nonincreasing and converges in value, although the final point need not be globally optimal.
 
 ### 6.4 Deployment-time inference as a mathematical program
 
@@ -691,7 +693,7 @@ Training is no longer a one-shot convex quadratic program. It is a structured bl
 
 Standard convex machinery therefore still applies within each block, including active-set methods, interior-point methods, operator-splitting methods, and augmented-Lagrangian variants. In the $\widehat C$-step, the invariant penalty preserves convexity without requiring additional linear equality constraints.
 
-In implementation terms, the training loop is a Gauss-Seidel sweep in the order $B \rightarrow \Gamma \rightarrow \widehat C$, with warm starts passed from one outer iteration to the next. Each restart should record the final objective value, the conditioning of $I_F - \Gamma$, and any active admissibility constraints on $\Gamma$; the retained estimate is the best feasible restart rather than merely the last one run.
+In implementation terms, the training loop is a Gauss-Seidel sweep in the order $B \rightarrow \Gamma \rightarrow \widehat C$, with warm starts passed from one outer iteration to the next. Each restart should record the running minimum objective value, the final objective value, the conditioning of $I_F - \Gamma$, and any active admissibility constraints on $\Gamma$; the retained estimate is the best feasible restart judged by the smallest attained objective value rather than merely the last one run.
 
 Deployment-time inference is substantially smaller. For each new sample, one solves a convex linear program in the $2F$ variables $(c, r)$. That means the additional online cost is typically modest relative to the cost of plant simulation, while still giving a hard nonnegativity guarantee and exact invariant preservation on the deployed prediction.
 

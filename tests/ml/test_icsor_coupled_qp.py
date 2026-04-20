@@ -12,6 +12,7 @@ from scipy.linalg import null_space
 
 from src.models.ml.icsor import build_icsor_design_frame
 from src.models.ml.icsor_coupled_qp import (
+    _run_coupled_qp_restart,
     _resolve_coupled_qp_settings,
     _solve_chat_update,
     _solve_gamma_update,
@@ -56,16 +57,16 @@ def _tiny_params() -> dict[str, object]:
     params["training_defaults"].update(
         {
             "training_method": "recursive_qp",
-            "objective": "coupled_qp",
+            "objective": "recursive_qp",
             "max_outer_iterations": 2,
             "n_restarts": 1,
-            "objective_tolerance": 1e-6,
-            "parameter_tolerance": 1e-5,
+            "objective_regression_window": 2,
+            "objective_regression_slope_tolerance": 1e-12,
             "conditioning_max": 1e6,
             "osqp_max_iter": 2000,
             "osqp_polish": False,
             "highs_max_iter": 2000,
-            "parallel_workers": 2,
+            "parallel_workers": 1,
             "gamma_abs_bound": 0.3,
         }
     )
@@ -194,10 +195,26 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
             -float(params["training_defaults"]["nonnegativity_tolerance"]) - 1e-8,
         )
 
+        objective_history = np.asarray(training_result["objective_history"], dtype=float)
+        running_best_history = np.asarray(training_result["running_best_objective_history"], dtype=float)
+        np.testing.assert_allclose(
+            running_best_history,
+            np.minimum.accumulate(objective_history),
+            atol=1e-10,
+            rtol=1e-10,
+        )
+        self.assertAlmostEqual(float(training_result["best_objective"]), float(np.min(objective_history)), places=9)
+        self.assertEqual(
+            int(training_result["best_restart_summary"]["best_iteration"]),
+            int(np.argmin(objective_history)),
+        )
+
         chat_update_history = list(training_result["training_diagnostics"]["chat_update_history"])
         gamma_update_history = list(training_result["training_diagnostics"]["gamma_update_history"])
+        convergence_history = list(training_result["training_diagnostics"]["convergence_history"])
         self.assertTrue(chat_update_history)
         self.assertTrue(gamma_update_history)
+        self.assertEqual(len(convergence_history), int(training_result["best_restart_summary"]["n_iterations"]))
 
         chat_statuses = {
             status_name
@@ -213,6 +230,65 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
         chat_all_rows_screened = all(int(entry.get("active_qp_count", 0)) == 0 for entry in chat_update_history)
         self.assertTrue(chat_has_solved_status or chat_all_rows_screened)
         self.assertTrue(any("solved" in str(status_name).lower() for status_name in gamma_statuses))
+
+    def test_resolve_coupled_qp_settings_accepts_objective_regression_controls(self) -> None:
+        settings = _resolve_coupled_qp_settings(
+            {
+                "objective_regression_window": 7,
+                "objective_regression_slope_tolerance": 1e-3,
+            }
+        )
+
+        self.assertEqual(int(settings["objective_regression_window"]), 7)
+        self.assertAlmostEqual(float(settings["objective_regression_slope_tolerance"]), 1e-3)
+
+    def test_resolve_coupled_qp_settings_rejects_invalid_objective_regression_controls(self) -> None:
+        with self.assertRaises(ValueError):
+            _resolve_coupled_qp_settings({"objective_regression_window": 1})
+
+        with self.assertRaises(ValueError):
+            _resolve_coupled_qp_settings({"objective_regression_slope_tolerance": -1e-6})
+
+    def test_restart_stops_when_objective_regression_indicator_flattens(self) -> None:
+        design_frame, _ = build_icsor_design_frame(
+            self.icsor_dataset.features,
+            list(self.icsor_dataset.constraint_reference.columns),
+            include_bias_term=True,
+        )
+        settings = _resolve_coupled_qp_settings(
+            {
+                "training_method": "recursive_qp",
+                "objective_regression_window": 2,
+                "objective_regression_slope_tolerance": 1e6,
+                "max_outer_iterations": 5,
+                "osqp_polish": False,
+                "highs_max_iter": 2000,
+                "parallel_workers": 1,
+            }
+        )
+
+        restart_result = _run_coupled_qp_restart(
+            design_frame.to_numpy(dtype=float),
+            self.icsor_dataset.targets.to_numpy(dtype=float),
+            self.icsor_dataset.constraint_reference.to_numpy(dtype=float),
+            self.a_matrix,
+            settings,
+            initial_gamma=np.zeros((self.icsor_dataset.targets.shape[1], self.icsor_dataset.targets.shape[1]), dtype=float),
+        )
+
+        self.assertTrue(bool(restart_result["converged"]))
+        self.assertEqual(str(restart_result["convergence_reason"]), "objective_regression")
+        self.assertEqual(int(restart_result["n_iterations"]), 1)
+        objective_history = np.asarray(restart_result["objective_history"], dtype=float)
+        self.assertAlmostEqual(float(restart_result["best_objective"]), float(np.min(objective_history)), places=9)
+        self.assertEqual(int(restart_result["best_iteration"]), int(np.argmin(objective_history)))
+        self.assertEqual(
+            len(list(restart_result["running_best_objective_history"])),
+            len(list(restart_result["objective_history"])),
+        )
+        convergence_history = list(restart_result["convergence_history"])
+        self.assertEqual(len(convergence_history), 1)
+        self.assertTrue(bool(convergence_history[0]["window_active"]))
 
     def test_chat_update_screening_all_interior_skips_osqp_rows(self) -> None:
         target_matrix = np.array(
@@ -363,11 +439,13 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
         self.assertEqual(int(chat_metadata["warm_start_used_count"]), active_qp_count)
         self.assertEqual(int(chat_metadata["warm_start_skipped_invalid_count"]), 0)
 
-    def test_default_params_enable_adam_lasso_training(self) -> None:
+    def test_default_params_enable_recursive_qp_training(self) -> None:
         params = load_icsor_coupled_qp_params()
         training_defaults = dict(params["training_defaults"])
-        self.assertEqual(str(training_defaults["training_method"]), "adam_lasso")
-        self.assertEqual(str(training_defaults["objective"]), "adam_lasso")
+        self.assertEqual(str(training_defaults["training_method"]), "recursive_qp")
+        self.assertEqual(str(training_defaults["objective"]), "recursive_qp")
+        self.assertIn("objective_regression_window", training_defaults)
+        self.assertIn("objective_regression_slope_tolerance", training_defaults)
 
     def test_training_with_adam_lasso_returns_mode_aware_diagnostics(self) -> None:
         params = _tiny_params()
@@ -398,6 +476,7 @@ class IcsorCoupledQpModelTests(unittest.TestCase):
         self.assertEqual(str(training_result["training_diagnostics"]["training_method"]), "adam_lasso")
         self.assertFalse(list(training_result["training_diagnostics"]["gamma_update_history"]))
         self.assertFalse(list(training_result["training_diagnostics"]["chat_update_history"]))
+        self.assertFalse(list(training_result["training_diagnostics"]["convergence_history"]))
         adam_history = dict(training_result["training_diagnostics"]["adam_training_history"])
         self.assertEqual(len(list(adam_history["objective"])), 20)
         self.assertEqual(str(adam_history["returned_fitted_prediction_source"]), "exact_c_hat_qp")

@@ -21,9 +21,9 @@ The notebook comparison layer therefore remains externally collapsed measured-ou
 The implementation supports two coefficient-estimation mechanisms under one model contract:
 
 1. `recursive_qp` (original): cyclic block-coordinate updates where `B`, `Gamma`, and `C_hat` are updated with closed-form and OSQP-backed subproblems.
-2. `adam_lasso` (new default): a gradient phase over `B`, boxed zero-diagonal `Gamma`, and a positive parameterization of `C_hat`, with Lasso penalties on `B` and `Gamma`.
+2. `adam_lasso`: a gradient phase over `B`, boxed zero-diagonal `Gamma`, and a positive parameterization of `C_hat`, with Lasso penalties on `B` and `Gamma`.
 
-Both mechanisms keep the same deployment-time constrained projection stage.
+Both mechanisms keep the same deployment-time constrained projection stage. The current defaults in `config/params.json` set `training_method="recursive_qp"`, but the notebook-managed Optuna path can tune across both families through a conditional search space.
 
 The shared coupled objective uses three blocks:
 
@@ -72,13 +72,15 @@ Important keys include:
 - `lasso_lambda_B`, `lasso_lambda_gamma` for the Adam-Lasso L1 regularizers
 - `gamma_abs_bound`
 - `max_outer_iterations`, `n_restarts`
-- `objective_tolerance`, `parameter_tolerance`, `conditioning_max`
+- `objective_regression_window`, `objective_regression_slope_tolerance`, `conditioning_max`
 - `adam_epochs`, `adam_learning_rate`, `adam_beta1`, `adam_beta2`, `adam_epsilon`
 - `adam_clip_grad_norm`, `adam_log_interval`, `adam_foreach`
 - `osqp_eps_abs`, `osqp_eps_rel`, `osqp_max_iter`, `osqp_polish`, `osqp_verbose`
 - `enable_training_warm_start`, `enable_gamma_warm_start`, `enable_c_hat_warm_start`, `warm_start_clip_tolerance`
 - `nonnegativity_tolerance`, `constraint_tolerance`
 - `highs_presolve`, `highs_max_iter`, `highs_verbose`, `highs_retry_without_presolve`, `parallel_workers`
+
+The `search_space` block now drives notebook-managed Optuna tuning from `src.utils.train`. It includes `training_method` as a selector plus method-specific parameters that activate conditionally for `recursive_qp` or `adam_lasso`.
 
 `scale_features` and `scale_targets` are required to remain `false` for this model.
 
@@ -96,10 +98,9 @@ Artifacts are saved through the shared model artifact path patterns in `config/p
 
 ## 7. Current first-pass limitations
 
-The first implementation intentionally excludes:
+The current implementation intentionally excludes:
 
 - coefficient uncertainty and prediction interval outputs
 - exact-equality invariant-constrained training variant
-- Optuna tuning for CoupledQP-specific hyperparameters
 
-Those can be added in a later revision without changing the current notebook and artifact contracts.
+Notebook-managed Optuna tuning for coupled-QP hyperparameters is now implemented externally through `src.utils.train` and `main.ipynb`, so the remaining gaps are primarily uncertainty reporting and alternative training formulations.

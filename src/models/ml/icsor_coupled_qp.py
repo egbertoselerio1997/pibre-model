@@ -53,7 +53,7 @@ SUPPORTED_TRAINING_METHODS = {
 }
 
 DEFAULT_INCLUDE_BIAS_TERM = True
-DEFAULT_TRAINING_METHOD = TRAINING_METHOD_ADAM_LASSO
+DEFAULT_TRAINING_METHOD = TRAINING_METHOD_RECURSIVE_QP
 DEFAULT_LAMBDA_INV = 1.0
 DEFAULT_LAMBDA_SYS = 1.0
 DEFAULT_LAMBDA_B = 1e-4
@@ -61,8 +61,8 @@ DEFAULT_LAMBDA_GAMMA = 1e-4
 DEFAULT_GAMMA_ABS_BOUND = 0.5
 DEFAULT_MAX_OUTER_ITERATIONS = 50
 DEFAULT_N_RESTARTS = 3
-DEFAULT_OBJECTIVE_TOLERANCE = 1e-7
-DEFAULT_PARAMETER_TOLERANCE = 1e-6
+DEFAULT_OBJECTIVE_REGRESSION_WINDOW = 5
+DEFAULT_OBJECTIVE_REGRESSION_SLOPE_TOLERANCE = 1e-4
 DEFAULT_CONDITIONING_MAX = 1e8
 DEFAULT_OSQP_EPS_ABS = 1e-6
 DEFAULT_OSQP_EPS_REL = 1e-6
@@ -142,8 +142,15 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         "gamma_abs_bound": float(model_hyperparameters.get("gamma_abs_bound", DEFAULT_GAMMA_ABS_BOUND)),
         "max_outer_iterations": int(model_hyperparameters.get("max_outer_iterations", DEFAULT_MAX_OUTER_ITERATIONS)),
         "n_restarts": int(model_hyperparameters.get("n_restarts", DEFAULT_N_RESTARTS)),
-        "objective_tolerance": float(model_hyperparameters.get("objective_tolerance", DEFAULT_OBJECTIVE_TOLERANCE)),
-        "parameter_tolerance": float(model_hyperparameters.get("parameter_tolerance", DEFAULT_PARAMETER_TOLERANCE)),
+        "objective_regression_window": int(
+            model_hyperparameters.get("objective_regression_window", DEFAULT_OBJECTIVE_REGRESSION_WINDOW)
+        ),
+        "objective_regression_slope_tolerance": float(
+            model_hyperparameters.get(
+                "objective_regression_slope_tolerance",
+                DEFAULT_OBJECTIVE_REGRESSION_SLOPE_TOLERANCE,
+            )
+        ),
         "conditioning_max": float(model_hyperparameters.get("conditioning_max", DEFAULT_CONDITIONING_MAX)),
         "osqp_eps_abs": float(model_hyperparameters.get("osqp_eps_abs", DEFAULT_OSQP_EPS_ABS)),
         "osqp_eps_rel": float(model_hyperparameters.get("osqp_eps_rel", DEFAULT_OSQP_EPS_REL)),
@@ -214,10 +221,10 @@ def _resolve_coupled_qp_settings(model_hyperparameters: Mapping[str, Any]) -> di
         raise ValueError("icsor_coupled_qp max_outer_iterations must be at least 1.")
     if settings["n_restarts"] < 1:
         raise ValueError("icsor_coupled_qp n_restarts must be at least 1.")
-    if settings["objective_tolerance"] <= 0.0:
-        raise ValueError("icsor_coupled_qp objective_tolerance must be positive.")
-    if settings["parameter_tolerance"] <= 0.0:
-        raise ValueError("icsor_coupled_qp parameter_tolerance must be positive.")
+    if settings["objective_regression_window"] < 2:
+        raise ValueError("icsor_coupled_qp objective_regression_window must be at least 2.")
+    if settings["objective_regression_slope_tolerance"] < 0.0:
+        raise ValueError("icsor_coupled_qp objective_regression_slope_tolerance must be nonnegative.")
     if settings["conditioning_max"] <= 1.0:
         raise ValueError("icsor_coupled_qp conditioning_max must exceed 1.")
     if settings["osqp_eps_abs"] <= 0.0:
@@ -704,6 +711,49 @@ def _compute_training_objective_terms(
     }
 
 
+def _compute_linear_regression_slope(values: np.ndarray) -> float:
+    value_array = np.asarray(values, dtype=float).reshape(-1)
+    if value_array.size < 2:
+        return 0.0
+
+    x_values = np.arange(value_array.size, dtype=float)
+    x_centered = x_values - float(np.mean(x_values))
+    denominator = float(np.dot(x_centered, x_centered))
+    if denominator <= 0.0:
+        return 0.0
+
+    y_centered = value_array - float(np.mean(value_array))
+    return float(np.dot(x_centered, y_centered) / denominator)
+
+
+def _summarize_objective_regression_indicator(
+    running_best_objective_history: list[float],
+    *,
+    window_size: int,
+) -> dict[str, Any]:
+    if len(running_best_objective_history) < int(window_size):
+        return {
+            "window_active": False,
+            "window_size": int(window_size),
+            "normalization_scale": float("nan"),
+            "regression_slope": float("nan"),
+            "regression_indicator": float("nan"),
+        }
+
+    recent_running_best = np.asarray(running_best_objective_history[-int(window_size) :], dtype=float)
+    normalization_scale = float(1.0 + abs(recent_running_best[-1]))
+    normalized_running_best = recent_running_best / normalization_scale
+    regression_slope = _compute_linear_regression_slope(normalized_running_best)
+
+    return {
+        "window_active": True,
+        "window_size": int(window_size),
+        "normalization_scale": normalization_scale,
+        "regression_slope": float(regression_slope),
+        "regression_indicator": float(abs(regression_slope)),
+    }
+
+
 def _run_coupled_qp_restart(
     design_matrix: np.ndarray,
     target_matrix: np.ndarray,
@@ -726,10 +776,12 @@ def _run_coupled_qp_restart(
     )
 
     objective_history: list[float] = []
+    running_best_objective_history: list[float] = []
     gamma_update_history: list[dict[str, Any]] = []
     chat_update_history: list[dict[str, Any]] = []
+    convergence_history: list[dict[str, Any]] = []
 
-    previous_objective = _compute_training_objective(
+    current_objective = _compute_training_objective(
         target_matrix,
         influent_matrix,
         invariant_matrix,
@@ -739,9 +791,16 @@ def _run_coupled_qp_restart(
         fitted_predictions,
         settings,
     )
-    objective_history.append(previous_objective)
+    objective_history.append(current_objective)
+    running_best_objective_history.append(current_objective)
+    best_objective = float(current_objective)
+    best_iteration = 0
+    converged = False
+    convergence_reason = "max_outer_iterations"
+    regression_window = int(settings["objective_regression_window"])
+    regression_slope_tolerance = float(settings["objective_regression_slope_tolerance"])
 
-    for _ in range(int(settings["max_outer_iterations"])):
+    for outer_iteration in range(int(settings["max_outer_iterations"])):
         b_updated = _solve_b_update(
             design_matrix,
             fitted_predictions,
@@ -786,22 +845,33 @@ def _run_coupled_qp_restart(
         gamma_update_history.append(dict(gamma_update_metadata))
         chat_update_history.append(dict(chat_update_metadata))
 
-        b_delta = float(np.linalg.norm(b_updated - b_matrix) / (1.0 + np.linalg.norm(b_matrix)))
-        gamma_delta = float(np.linalg.norm(gamma_updated - gamma_matrix) / (1.0 + np.linalg.norm(gamma_matrix)))
-        c_delta = float(
-            np.linalg.norm(fitted_updated - fitted_predictions) / (1.0 + np.linalg.norm(fitted_predictions))
+        if updated_objective < best_objective:
+            best_objective = float(updated_objective)
+            best_iteration = int(outer_iteration + 1)
+        running_best_objective_history.append(best_objective)
+
+        convergence_entry = {
+            "iteration": int(outer_iteration + 1),
+            "objective": float(updated_objective),
+            "running_best_objective": float(best_objective),
+            "best_iteration": int(best_iteration),
+        }
+        convergence_entry.update(
+            _summarize_objective_regression_indicator(
+                running_best_objective_history,
+                window_size=regression_window,
+            )
         )
-        parameter_delta = max(b_delta, gamma_delta, c_delta)
-        objective_delta = float(abs(updated_objective - previous_objective) / (1.0 + abs(previous_objective)))
+        convergence_history.append(convergence_entry)
 
         b_matrix = b_updated
         gamma_matrix = gamma_updated
         fitted_predictions = fitted_updated
-        previous_objective = updated_objective
+        current_objective = updated_objective
 
-        if objective_delta <= float(settings["objective_tolerance"]) and parameter_delta <= float(
-            settings["parameter_tolerance"]
-        ):
+        if bool(convergence_entry["window_active"]) and float(convergence_entry["regression_indicator"]) <= regression_slope_tolerance:
+            converged = True
+            convergence_reason = "objective_regression"
             break
 
     return {
@@ -809,11 +879,17 @@ def _run_coupled_qp_restart(
         "Gamma_matrix": gamma_matrix,
         "fitted_predictions": fitted_predictions,
         "objective_history": objective_history,
-        "final_objective": float(objective_history[-1]),
+        "running_best_objective_history": running_best_objective_history,
+        "final_objective": float(current_objective),
+        "best_objective": float(best_objective),
+        "best_iteration": int(best_iteration),
         "conditioning": float(conditioning_value),
         "conditioning_shrink_factor": float(shrink_factor),
         "gamma_update_history": gamma_update_history,
         "chat_update_history": chat_update_history,
+        "convergence_history": convergence_history,
+        "converged": bool(converged),
+        "convergence_reason": str(convergence_reason),
         "n_iterations": int(max(0, len(objective_history) - 1)),
     }
 
@@ -986,11 +1062,17 @@ def _run_adam_lasso_training(
         "Gamma_matrix": np.asarray(conditioned_gamma, dtype=float),
         "fitted_predictions": np.asarray(exact_fitted_predictions, dtype=float),
         "objective_history": objective_history,
+        "running_best_objective_history": list(np.minimum.accumulate(np.asarray(objective_history, dtype=float))),
         "final_objective": float(returned_objective_terms["objective"]),
+        "best_objective": float(returned_objective_terms["objective"]),
+        "best_iteration": int(n_epochs),
         "conditioning": float(conditioning_value),
         "conditioning_shrink_factor": float(shrink_factor),
         "gamma_update_history": [],
         "chat_update_history": [],
+        "convergence_history": [],
+        "converged": True,
+        "convergence_reason": "adam_final_state",
         "n_iterations": int(n_epochs),
         "adam_training_history": {
             "objective": objective_history,
@@ -1432,6 +1514,7 @@ def train_icsor_coupled_qp_model(
 
     restart_summaries: list[dict[str, Any]] = []
     best_result: dict[str, Any] | None = None
+    best_restart_summary: dict[str, Any] | None = None
     training_method = str(settings["training_method"])
 
     if training_method == TRAINING_METHOD_RECURSIVE_QP:
@@ -1467,20 +1550,25 @@ def train_icsor_coupled_qp_model(
                 )
                 restart_summary = {
                     "restart_index": restart_index,
+                    "best_objective": float(restart_result["best_objective"]),
+                    "best_iteration": int(restart_result["best_iteration"]),
                     "final_objective": float(restart_result["final_objective"]),
                     "conditioning": float(restart_result["conditioning"]),
                     "conditioning_shrink_factor": float(restart_result["conditioning_shrink_factor"]),
+                    "converged": bool(restart_result["converged"]),
+                    "convergence_reason": str(restart_result["convergence_reason"]),
                     "n_iterations": int(restart_result["n_iterations"]),
                 }
                 restart_summaries.append(restart_summary)
 
-                if best_result is None or float(restart_result["final_objective"]) < float(best_result["final_objective"]):
+                if best_result is None or float(restart_result["best_objective"]) < float(best_result["best_objective"]):
                     best_result = restart_result
+                    best_restart_summary = restart_summary
 
                 progress_bar.update(1)
                 progress_bar.set_postfix(
                     objective=str(options["objective_name"]),
-                    best=f"{float(min(summary['final_objective'] for summary in restart_summaries)):.6g}",
+                    best=f"{float(min(summary['best_objective'] for summary in restart_summaries)):.6g}",
                 )
         finally:
             progress_bar.close()
@@ -1494,17 +1582,20 @@ def train_icsor_coupled_qp_model(
             options,
         )
         best_result = adam_result
-        restart_summaries.append(
-            {
-                "restart_index": 0,
-                "final_objective": float(adam_result["final_objective"]),
-                "conditioning": float(adam_result["conditioning"]),
-                "conditioning_shrink_factor": float(adam_result["conditioning_shrink_factor"]),
-                "n_iterations": int(adam_result["n_iterations"]),
-            }
-        )
+        best_restart_summary = {
+            "restart_index": 0,
+            "best_objective": float(adam_result["best_objective"]),
+            "best_iteration": int(adam_result["best_iteration"]),
+            "final_objective": float(adam_result["final_objective"]),
+            "conditioning": float(adam_result["conditioning"]),
+            "conditioning_shrink_factor": float(adam_result["conditioning_shrink_factor"]),
+            "converged": bool(adam_result["converged"]),
+            "convergence_reason": str(adam_result["convergence_reason"]),
+            "n_iterations": int(adam_result["n_iterations"]),
+        }
+        restart_summaries.append(dict(best_restart_summary))
 
-    if best_result is None:
+    if best_result is None or best_restart_summary is None:
         raise RuntimeError("icsor_coupled_qp failed to produce any training restart result.")
 
     best_b_matrix = np.asarray(best_result["B_matrix"], dtype=float)
@@ -1559,21 +1650,18 @@ def train_icsor_coupled_qp_model(
         ),
         "training_projection_details": training_projection_details,
         "final_objective": float(best_result["final_objective"]),
+        "best_objective": float(best_result["best_objective"]),
         "objective_history": list(best_result["objective_history"]),
-        "best_restart_summary": {
-            "restart_index": int(
-                min(restart_summaries, key=lambda summary: float(summary["final_objective"]))["restart_index"]
-            ),
-            "final_objective": float(best_result["final_objective"]),
-            "conditioning": float(best_result["conditioning"]),
-            "conditioning_shrink_factor": float(best_result["conditioning_shrink_factor"]),
-            "n_iterations": int(best_result["n_iterations"]),
-        },
+        "running_best_objective_history": list(
+            best_result.get("running_best_objective_history", best_result["objective_history"])
+        ),
+        "best_restart_summary": dict(best_restart_summary),
         "training_diagnostics": {
             "training_method": training_method,
             "restart_summaries": restart_summaries,
             "gamma_update_history": list(best_result.get("gamma_update_history", [])),
             "chat_update_history": list(best_result.get("chat_update_history", [])),
+            "convergence_history": list(best_result.get("convergence_history", [])),
             "adam_training_history": dict(best_result.get("adam_training_history", {})),
         },
     }
@@ -1685,8 +1773,6 @@ def run_icsor_coupled_qp_pipeline(
     timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Train, evaluate, and optionally persist one coupled-QP icsor bundle."""
-
-    del optuna_summary
 
     params = dict(model_params) if model_params is not None else load_icsor_coupled_qp_params(repo_root)
     split_params = dict(params["hyperparameters"])
@@ -1826,12 +1912,17 @@ def run_icsor_coupled_qp_pipeline(
                     "test": int(len(dataset_splits.test.features)),
                 },
             }
+            optuna_payload = (
+                dict(optuna_summary)
+                if optuna_summary is not None and bool(artifact_options.get("persist_optuna", True))
+                else None
+            )
             metrics_summary = metrics_payload if bool(artifact_options.get("persist_metrics", True)) else None
             artifact_paths = persist_training_artifacts(
                 MODEL_NAME,
                 model_bundle,
                 metrics_summary=metrics_summary,
-                optuna_summary=None,
+                optuna_summary=optuna_payload,
                 repo_root=repo_root,
                 timestamp=timestamp,
             )
@@ -1841,7 +1932,7 @@ def run_icsor_coupled_qp_pipeline(
 
     return {
         "best_hyperparameters": selected_hyperparameters,
-        "optuna_summary": None,
+        "optuna_summary": optuna_summary,
         "artifact_paths": artifact_paths,
         "train_report": train_report,
         "test_report": test_report,
