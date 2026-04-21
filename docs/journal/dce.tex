@@ -9,8 +9,11 @@
 \usepackage{graphicx}
 \usepackage{subcaption}
 \usepackage{multirow}
+\usepackage{lineno}
 
 \begin{document}
+
+\linenumbers
 
 \title{An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}
 \author{}
@@ -21,26 +24,30 @@
 \begin{tabbing}
 \hspace{2.5cm} \= \kill
 $A$ \> Full-row-rank invariant matrix defining the null space of the stoichiometric matrix \\
-$B$ \> Latent component-space parameter matrix of the unconstrained surrogate \\
+$B$ \> Second-order driver coefficient matrix \\
+$c_{aff}$ \> Invariant-consistent affine correction used before constrained deployment \\
 $c_{in}$ \> Influent ASM component concentration vector ($c_{in} \in \mathbb{R}^{F}$) \\
 $c_{out}$ \> True steady-state effluent ASM component concentration vector ($c_{out} \in \mathbb{R}^{F}$) \\
-$c_{raw}$ \> Unconstrained surrogate prediction of the effluent ASM component state \\
-$c^*$ \> Final non-negative, invariant-projected ASM component prediction \\
-$c_{aff}$ \> Orthogonal affine projection of the raw prediction \\
+$c_{raw}$ \> Unconstrained coupled component prediction before affine presolve \\
+$\hat{c}$ \> Final deployed ICSOR ASM component prediction \\
+$\widehat{C}$ \> Fitted non-negative component prediction matrix used in training \\
 $D$ \> Total dimension of the second-order feature map \\
 $F$ \> Number of mechanistic ASM components \\
+$\Gamma$ \> Learned ASM component coupling matrix \\
 $I_{comp}$ \> Composition matrix mapping ASM components to measured composites ($I_{comp} \in \mathbb{R}^{K \times F}$) \\
 $K$ \> Number of measured composite variables \\
-$M$ \> Effective identifiable affine matrix in measured space ($M \in \mathbb{R}^{K \times D}$) \\
+$\lambda_B$ \> Ridge regularization weight on $B$ \\
+$\lambda_\Gamma$ \> Ridge regularization weight on $\Gamma$ \\
+$\lambda_{inv}$ \> Invariant-residual penalty weight in the training objective \\
+$\lambda_{sys}$ \> Coupled-system consistency penalty weight in the training objective \\
 $M_{op}$ \> Number of operational variables \\
-$P_{adm}$ \> Orthogonal projector onto the admissible change space \\
-$P_{inv}$ \> Orthogonal projector onto the row space of $A$ \\
-$R$ \> Number of reactions in the mechanistic model \\
+$N_{rxn}$ \> Number of reactions in the mechanistic model \\
+$R$ \> Coupled-system matrix, $R = I_F - \Gamma$ \\
 $u$ \> Operational input vector ($u \in \mathbb{R}^{M_{op}}$) \\
-$y$ \> True measured effluent composite vector ($y \in \mathbb{R}^{K}$) \\
-$y^*$ \> Deployed projected measured prediction \\
-$y_{raw}$ \> Unconstrained raw measured prediction \\
-$\nu$ \> Stoichiometric matrix ($\nu \in \mathbb{R}^{R \times F}$) \\
+$w_c$ \> Componentwise weight vector used in deployed correction \\
+$y_{ext}$ \> Reported measured effluent composite vector ($y_{ext} \in \mathbb{R}^{K}$) \\
+$\hat{y}_{ext}$ \> Reported composite prediction, $\hat{y}_{ext} = I_{comp}\hat{c}$ \\
+$\nu$ \> Stoichiometric matrix ($\nu \in \mathbb{R}^{N_{rxn} \times F}$) \\
 $\xi$ \> Net reaction progress vector \\
 $\phi$ \> Partitioned second-order feature map \\
 $\otimes$ \> Kronecker product \\
@@ -52,53 +59,56 @@ Water pollution presents a critical environmental and public health challenge wo
 
 In response to the computational and mathematical complexity inherent in non-linear Activated Sludge Models, research has increasingly focused on developing surrogate models to approximate the behavior of biological wastewater treatment systems (Bhosekar \& Ierapetritou, 2018; Durkin et al., 2024; Tsochatzidi et al., 2025). Traditional approaches have explored linearization techniques (Li et al., 2020; Yang et al., 2014) and multivariable polynomial fitting (Ahn et al., 2014; Kim et al., 2009; Lim et al., 2011). While linear methods like Partial Least Squares (PLS) offer interpretable mappings, they inherently struggle to capture the severe non-linearities of microbial kinetics without extensive feature engineering. To overcome these limitations, the machine learning (ML) paradigm has emerged as a powerful route for approximating highly non-linear wastewater-treatment behavior (Croll et al., 2023; Nazlabadi et al., 2021). A wide array of data-driven algorithms—ranging from distance-based methods like k-Nearest Neighbors (k-NN) and PLS (Khatri et al., 2020; Wold et al., 2001), to kernel methods like Support Vector Regression (SVR) (Fang et al., 2011), tree-based ensembles such as Random Forest (RF), AdaBoost, XGBoost, LightGBM, and CatBoost (Sadri Moghaddam \& Mesghali, 2023; Wang et al., 2025; Yang et al., 2025), and Artificial Neural Networks (ANN) (Asadi et al., 2017; Bagherzadeh et al., 2021; Mao et al., 2024)—have demonstrated strong predictive capabilities for effluent quality. 
 
-Despite their predictive accuracy, these standard ML algorithms suffer from a fundamental structural blindness: they map operational inputs $u \in \mathbb{R}^{M_{op}}$ and influent conditions $c_{in}$ directly to measured outputs, minimizing empirical risk strictly in the observation space. In activated sludge systems, however, the true physical state is defined by a latent ASM component vector $c \in \mathbb{R}^F$, where $F$ is the number of mechanistic components (e.g., soluble substrate, autotrophic biomass, ammonium). The stoichiometric matrix $\nu \in \mathbb{R}^{R \times F}$ dictates how these components interact across $R$ reactions. This implies strict conservation laws of the form $Ac = Ac_{in}$, where $A \in \mathbb{R}^{q \times F}$ is a full-row-rank matrix whose transposed rows form a basis for $\operatorname{null}(\nu)$, such that $A\nu^T = 0$. Plant operators and simulators rarely observe $c$ directly; instead, they observe a measured composite vector $y \in \mathbb{R}^K$, defined by a linear composition map $y = I_{comp}c$, where $I_{comp} \in \mathbb{R}^{K \times F}$. 
+Despite their predictive accuracy, these standard ML algorithms remain structurally blind to a central physical requirement of activated sludge systems: material cannot be created or destroyed arbitrarily across the modeled control volume. A surrogate may fit observed effluent behavior well while still implying an impossible redistribution of the underlying ASM components, thereby violating the mass balances that govern COD, nitrogen, or phosphorus transfer. At the same time, physically admissible concentration states must remain componentwise non-negative. These two requirements are inseparable in practice. A surrogate that conserves mass but predicts negative concentrations is still unusable, and a surrogate that preserves non-negativity while violating mass conservation remains physically misleading.
 
-By bypassing the latent component space $\mathbb{R}^F$, black-box regressors (such as PLS, k-NN, SVR, RF, AdaBoost, XGBoost, LightGBM, CatBoost, and ANN) can accurately fit observed effluent aggregates while implying a physically impossible redistribution of the underlying ASM components. To make this concrete, consider an ASM-flavored miniature system with three components: soluble substrate ($S_S$), particulate substrate ($X_S$), and ammonium ($S_{NH}$). Let a simplified reaction convert $S_S$ to $X_S$ without altering ammonium ($\nu = [-1, 1, 0]$). An admissible invariant basis preserving total COD equivalents and ammonium is $A = \left[\begin{smallmatrix} 1 & 1 & 0 \\ 0 & 0 & 1 \end{smallmatrix}\right]$. If the measured outputs are total COD and ammonium ($I_{comp} = A$), and the influent is $c_{in} = [10, 10, 5]^T$, a raw surrogate might predict an unphysical effluent state $c_{raw} = [-1, 21, 5]^T$. The measured output is $y_{raw} = I_{comp}c_{raw} = [20, 5]^T$. Crucially, the physically feasible state $c = [0, 20, 5]^T$ produces the exact same measured output $y = [20, 5]^T$. A measured-space-only correction cannot distinguish between these two states, allowing physically absurd internal states to masquerade as accurate predictions.
+Recent scientific-ML literature shows that satisfying both requirements simultaneously is nontrivial. A substantial class of methods enforces conservation alone through conservative flux formulations, stoichiometric architectures, projection operators, Bayesian reconciliation, or completion strategies, but does not guarantee non-negativity of the corrected state (Beucler et al., 2021; Geiss et al., 2022; Hansen et al., 2023; Harder et al., 2022; Sturm \& Silva, 2025; Sturm \& Wexler, 2020, 2022). Closely related soft-constraint approaches, such as physics-informed neural networks, can encourage physically plausible behavior but generally provide neither exact conservation nor strict positivity guarantees (Raissi et al., 2019). Conversely, positivity-only constructions such as output transformations ensure non-negative states yet do not enforce global material balance (Kircher \& Votsmeier, 2025).
 
-This study addresses this epistemological and physical mismatch through the development of Invariant-Constrained Second-Order Regression (ICSOR), a physics-informed surrogate framework for steady-state activated sludge systems. ICSOR is designed to answer a precise question: given a steady-state influent state and operating condition, what measured effluent state should be predicted if the underlying ASM component state must satisfy the stoichiometric invariants of the reaction network and remain componentwise non-negative? 
+A smaller body of work has reported simultaneous enforcement of conservation and non-negativity. Kircher and Votsmeier (2025) develop positivity-preserving conservative corrections for mechanistic kinetics surrogates in atmospheric chemistry and heterogeneous catalysis. Min et al. (2024) and Utkarsh et al. (2025) propose hard-constrained learning frameworks that can impose equality and inequality constraints together in more general machine-learning settings. In atmospheric transport, Sturm et al. (2023) show that mass-preserving scaling can maintain both total conservation and non-negativity for advected aerosol superspecies. These results demonstrate that dual physical guarantees are achievable, but they arise in application settings whose state definitions, constraints, and deployment objectives differ substantially from those of activated sludge process surrogates.
 
-To achieve this, ICSOR employs a partitioned second-order feature map $\phi(u, c_{in})$ that explicitly separates operational variables (which alter the process environment) from influent concentrations (which dictate the material inventory). By retaining full vectorized quadratic blocks via the Kronecker product (e.g., $u \otimes u$, $c_{in} \otimes c_{in}$, and $u \otimes c_{in}$), the model transparently captures all pairwise non-linear operation-loading interactions. Specifically, these bilinear terms naturally approximate the multiplicative interactions inherent in the biological processes, such as the biomass-substrate coupling characteristic of Monod-type kinetics. Crucially, the raw surrogate prediction is corrected in the latent component space before being collapsed to measured outputs. This correction is executed in two stages: first, an orthogonal affine projection maps the raw prediction onto the invariant-consistent set ($Ac = Ac_{in}$); second, if this affine projection yields negative component concentrations, a strictly convex quadratic program (QP) finds the closest Euclidean point on the intersection of the invariant affine set and the non-negative orthant ($c \ge 0$). Component non-negativity guarantees composite non-negativity, provided the relevant rows of $I_{comp}$ are entrywise non-negative.
+This gap is consequential for wastewater engineering. Activated sludge models couple multiple conserved material inventories with biologically and chemically constrained component states, so violations of either mass conservation or non-negativity can distort interpretation, confound process optimization, and undermine confidence in surrogate-assisted design. A physically constrained data-driven model would therefore offer several practical benefits: it would preserve the bookkeeping needed for COD, nitrogen, and phosphorus analysis, prevent impossible negative component concentrations, reduce reliance on ad hoc clipping or reconciliation, and yield predictions that remain more defensible as operating conditions and influent loads vary. Yet, to our knowledge, no prior activated sludge surrogate has provided hard guarantees of both stoichiometric mass conservation and componentwise non-negativity within a single interpretable steady-state framework.
 
-The objective of this article is to formulate the ICSOR framework as an analytically structured surrogate and to evaluate its efficacy on a standalone Continuous Stirred Tank Reactor (CSTR). By comparing ICSOR against the aforementioned unconstrained measured-space baselines, this study assesses whether the proposed model can achieve competitive predictive accuracy while explicitly guaranteeing the parsimony, interpretability, and rigorous physical consistency required for reliable process analysis. The framework presented herein is strictly bounded to steady-state predictions; while it guarantees stoichiometric invariance and non-negativity, it does not claim to enforce full kinetic or thermodynamic feasibility, nor does it replace dynamic trajectory simulators. Instead, it occupies a necessary middle ground: a surrogate simple enough to have its affine core estimated from data by least squares, yet mathematically constrained to respect the fundamental mass balances of wastewater engineering.
+This study addresses that need through the development of Invariant-Constrained Second-Order Regression (ICSOR), a physics-informed surrogate framework for steady-state activated sludge systems. ICSOR is designed to answer a practical question: given a steady-state influent condition and operating point, what effluent state should be predicted if the surrogate is required to remain physically admissible by construction? Rather than treating physical consistency as a soft regularizer or a purely diagnostic afterthought, the framework is built so that deployed predictions satisfy both mass-conservation requirements and non-negativity requirements simultaneously.
+
+To do so, ICSOR couples an interpretable second-order surrogate with a hard physical correction performed in ASM component space. The regression structure retains transparent operating-condition, influent, and interaction effects, while the deployment step removes states that would violate the admissible physical region. The result is a surrogate that remains analytically structured and data-driven, yet is constrained to return only physically meaningful steady-state predictions.
+
+The objective of this article is to formulate the ICSOR framework as an analytically structured surrogate and to evaluate its efficacy on a standalone Continuous Stirred Tank Reactor (CSTR). By comparing ICSOR against established unconstrained baselines, this study assesses whether the proposed model can achieve competitive predictive accuracy while explicitly guaranteeing the parsimony, interpretability, and rigorous physical consistency required for reliable process analysis. The framework presented herein is strictly bounded to steady-state predictions; while it guarantees mass conservation and non-negativity, it does not claim to enforce full kinetic or thermodynamic feasibility, nor does it replace dynamic trajectory simulators. Instead, it occupies a necessary middle ground: a surrogate simple enough to be estimated transparently from data, yet mathematically constrained to respect the fundamental physical constraints of wastewater engineering.
 
 \section{Theory and Calculation}
 
 \subsection{Physical Scope, State Spaces, and Notation}
 
-A fixed reactor block or process unit represented by steady-state samples is considered. The system boundary is identical to the boundary used to define the influent and effluent state vectors. Any external source or sink crossing that boundary must be explicitly represented in the adopted stoichiometric model; otherwise, it is excluded from the claim of invariant preservation. 
+A fixed reactor block or process unit represented by steady-state samples is considered. The system boundary used to define influent and effluent states is identical to the boundary used to define stoichiometric conservation. Any external source or sink that crosses that boundary must therefore be represented in the adopted stoichiometric model; otherwise, it lies outside the present conservation claim.
 
-Let $M_{op}$ be the number of operational variables, $F$ the number of ASM components, $K$ the number of measured composite variables, and $R$ the number of reactions. Single-sample vectors are written as column vectors. The following state spaces and operators are defined:
+ICSOR is formulated natively in ASM component space. Its scientific output is the effluent component vector itself, not a measured aggregate. Measured composites are obtained only afterward through an external composition matrix. This choice is deliberate because mass conservation and componentwise non-negativity are both defined in ASM component coordinates.
+
+Let $M_{op}$ be the number of operational variables, $F$ the number of ASM components, $K$ the number of reported composite variables, and $N_{rxn}$ the number of reactions. Single-sample vectors are written as column vectors. The following state spaces and operators are defined:
 \begin{itemize}
     \item $u \in \mathbb{R}^{M_{op}}$: Operational input vector (e.g., hydraulic retention time, aeration intensity).
     \item $c_{in} \in \mathbb{R}^{F}$: Influent ASM component concentration vector.
     \item $c_{out} \in \mathbb{R}^{F}$: True steady-state effluent ASM component concentration vector.
-    \item $c_{raw} \in \mathbb{R}^{F}$: Unconstrained surrogate prediction of the effluent ASM component state.
-    \item $c^* \in \mathbb{R}^{F}$: Final non-negative, invariant-projected ASM component prediction.
-    \item $y \in \mathbb{R}^{K}$: Measured effluent composite vector.
-    \item $I_{comp} \in \mathbb{R}^{K \times F}$: Composition matrix mapping ASM component concentrations to measured composite variables, such that $y = I_{comp}c_{out}$.
-    \item $\nu \in \mathbb{R}^{R \times F}$: Stoichiometric matrix.
+    \item $\hat{c} \in \mathbb{R}^{F}$: Final deployed ICSOR component prediction.
+    \item $y_{ext} \in \mathbb{R}^{K}$: Reported measured composite vector.
+    \item $I_{comp} \in \mathbb{R}^{K \times F}$: Composition matrix mapping ASM component concentrations to reported composites, such that $y_{ext} = I_{comp}c_{out}$.
+    \item $\nu \in \mathbb{R}^{N_{rxn} \times F}$: Stoichiometric matrix.
 \end{itemize}
 
-The linear composition map $I_{comp}$ is standard in wastewater modeling. In the common case where composites (e.g., total COD, total nitrogen, TSS) are formed by summing relevant component concentrations with non-negative conversion factors, the rows of $I_{comp}$ are entrywise non-negative. This sign structure is critical: non-negative component predictions ($c^* \ge 0$) mathematically imply non-negative measured composites ($y^* \ge 0$) only under this specific condition.
+The linear composition map $I_{comp}$ remains external to the model itself. In the common wastewater-reporting case where its rows are entrywise non-negative, non-negative component predictions imply non-negative reported composites automatically. Thus ICSOR places the hard non-negativity guarantee where it is physically meaningful, namely on the predicted ASM component state.
 
 \subsection{Stoichiometric Structure and Conserved Quantities}
 
-Let $\nu \in \mathbb{R}^{R \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. For a steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{R}$, scaled into concentration-equivalent units, such that the net change across the control volume is:
+Let $\nu \in \mathbb{R}^{N_{rxn} \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. For a steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{N_{rxn}}$, scaled into concentration-equivalent units, such that the net change across the control volume is:
 \begin{equation}
 c_{out} - c_{in} = \nu^T \xi
 \end{equation}
-The vector $\xi$ is rarely observed. To eliminate it and isolate the conserved quantities, a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ is introduced, whose transposed rows form a basis of $\operatorname{null}(\nu)$. Equivalently, $A \nu^T = 0$. Multiplying the stoichiometric change relation by $A$ yields:
+The vector $\xi$ is rarely observed directly. To eliminate it and isolate the conserved quantities, a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ is introduced whose rows span the left null space of $\nu$, so that $A\nu^T = 0$. Multiplying the stoichiometric change relation by $A$ yields:
 \begin{equation}
 A(c_{out} - c_{in}) = A \nu^T \xi = 0 \quad \implies \quad A c_{out} = A c_{in}
 \end{equation}
-Each row of $A$ represents one independent conserved combination of ASM components (e.g., COD equivalents or nitrogen balances) implied by the reaction network. The invariant relation $A c_{out} = A c_{in}$ forms the affine physical constraint that any credible surrogate must satisfy.
+Each row of $A$ represents one independent conserved combination of ASM components implied by the adopted reaction network and system boundary. The basis of $A$ is not unique, but once it is fixed, the invariant relation $Ac_{out} = Ac_{in}$ defines the exact conservation law that deployed ICSOR predictions must satisfy.
 
-To make this concrete, consider a miniature 2-component system where soluble substrate ($c_1$) is converted to particulate substrate ($c_2$) without net loss: $\nu = [-1, 1]$. The null space is spanned by $A = [1, 1]$. The invariant relation becomes $c_{out,1} + c_{out,2} = c_{in,1} + c_{in,2}$. The reaction may redistribute material, but it cannot alter the conserved total.
+\subsection{Coupled Second-Order Driver and Prediction-Space Training}
 
-\subsection{Unconstrained Surrogate in ASM Component Space}
-
-In activated sludge systems, operational variables ($u$) alter the process environment, while influent concentrations ($c_{in}$) dictate the material inventory. Treating them as interchangeable inputs obscures their physical roles. ICSOR partitions these inputs using an engineered second-order feature map:
+Operational variables $u$ alter the process environment, whereas influent concentrations $c_{in}$ determine the material inventory presented to that environment. ICSOR keeps these roles explicit by using a partitioned second-order feature map:
 \begin{equation}
 \phi(u, c_{in}) = \begin{bmatrix}
 1 \\
@@ -109,92 +119,149 @@ c_{in} \otimes c_{in} \\
 u \otimes c_{in}
 \end{bmatrix} \in \mathbb{R}^{D}
 \end{equation}
-where $\otimes$ denotes the Kronecker product under column-wise vectorization, yielding a feature dimension $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$. 
+where $\otimes$ denotes the Kronecker product under column-wise vectorization and $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$.
 
-The unconstrained raw surrogate is defined in the latent component space as $c_{raw} = B \phi(u, c_{in})$, where $B \in \mathbb{R}^{F \times D}$. To ground this mathematically and physically, $B$ is partitioned conformably with the feature map:
+The feature map drives a latent component-space forcing vector rather than the final deployed prediction directly:
 \begin{equation}
-c_{raw} = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in})
-\end{equation}
-with parameter blocks defined as $W_u \in \mathbb{R}^{F \times M_{op}}$, $W_{in} \in \mathbb{R}^{F \times F}$, $b \in \mathbb{R}^{F}$, $\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$, $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$, and $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$. 
-
-Each block has a distinct engineering interpretation in the latent space: $W_u u$ captures first-order operating effects; $W_{in} c_{in}$ captures direct carry-through of influent composition; $\Theta_{uu}$ and $\Theta_{cc}$ capture self-quadratic non-linearities; and crucially, $\Theta_{uc}(u \otimes c_{in})$ captures the operation-loading interactions that drive biological kinetics. However, because $c_{raw}$ is purely data-driven, it is not guaranteed to satisfy the invariant relation $A c_{raw} = A c_{in}$, nor is it guaranteed to be non-negative.
-
-\subsection{Projection onto the Invariant-Consistent Non-Negative Set}
-
-To enforce physical discipline, the raw prediction must be corrected. The invariant-consistent non-negative feasible set for a given influent state is defined as:
-\begin{equation}
-\mathcal{S}_+(c_{in}) = \{ c \in \mathbb{R}^{F} : A c = A c_{in}, \; c \ge 0 \}
-\end{equation}
-ICSOR corrects the raw surrogate by finding the closest Euclidean point in this feasible set. This is formulated as a strictly convex quadratic program (QP):
-\begin{equation}
-c^* = \arg\min_{c \in \mathbb{R}^{F}} \; \frac{1}{2} \lVert c - c_{raw} \rVert_2^2 \quad \text{subject to} \quad A c = A c_{in}, \quad c \ge 0
-\end{equation}
-Because the objective is strictly convex and the feasible set is closed and non-empty (assuming $c_{in} \ge 0$), the minimizer $c^*$ exists and is unique. Because this metric is Euclidean in raw concentration coordinates, component scaling directly influences the magnitude and direction of the correction.
-
-This formulation contains the orthogonal affine projection as a reference solution. If the non-negativity constraint is dropped, the closed-form affine projection is:
-\begin{equation}
-c_{aff} = P_{adm} c_{raw} + P_{inv} c_{in}
-\end{equation}
-where $P_{inv} = A^T(A A^T)^{-1} A$ is the orthogonal projector onto the row space of $A$, and $P_{adm} = I_F - P_{inv}$ is the projector onto the admissible change space. 
-
-In computational deployment, solving the full $F$-dimensional QP is unnecessary. Let $N_A \in \mathbb{R}^{F \times (F-q)}$ be a matrix whose orthonormal columns span $\operatorname{null}(A)$. Every point in the affine set can be parameterized as $c = c_{aff} + N_A z$ for some reduced coordinate vector $z \in \mathbb{R}^{F-q}$. Because $N_A$ has orthonormal columns, the Euclidean metric is preserved ($z^T N_A^T N_A z = z^T z$), and the correction reduces to:
-\begin{equation}
-\min_{z \in \mathbb{R}^{F-q}} \; \frac{1}{2} z^T z \quad \text{subject to} \quad N_A z \ge -c_{aff}
-\end{equation}
-The correction is evaluated hierarchically: if $c_{raw}$ is feasible, it is retained; if only invariants are violated, $c_{aff}$ is used; the reduced QP is solved only when $c_{aff}$ contains negative components.
-
-\subsection{Collapse to Measured Output Space and Blockwise Interpretability}
-
-Practical prediction targets are measured composites, not latent components. The final deployed prediction is obtained by collapsing the corrected component state:
-\begin{equation}
-y^* = I_{comp} c^*
-\end{equation}
-Crucially, the correction must occur \textit{before} the collapse. A measured-space-only correction cannot distinguish between physically distinct component states that happen to yield the same composite aggregates.
-
-Before positivity constraints activate, the measured prediction induced by the affine projector is $y_{aff} = I_{comp} c_{aff}$. Substituting the definition of $c_{aff}$ yields the affine measured-space core:
-\begin{equation}
-y_{aff} = G B \phi(u, c_{in}) + H c_{in}
-\end{equation}
-where $G = I_{comp} P_{adm}$ and $H = I_{comp} P_{inv}$. Defining the effective identifiable affine matrix as $M = G B \in \mathbb{R}^{K \times D}$, the model becomes:
-\begin{equation}
-y_{aff} = M \phi(u, c_{in}) + H c_{in}
+r(u, c_{in}) = B \phi(u, c_{in})
 \end{equation}
 
-While the latent component-space matrix $B$ is not uniquely identifiable from measured data, the effective affine core $M$ is. To provide direct engineering interpretability, $M$ can be partitioned conformably with the feature map into effective measured-space blocks:
-\begin{equation}
-M = \begin{bmatrix}
-b_y & W_{u,y} & W_{in,y} & \Theta_{uu,y} & \Theta_{cc,y} & \Theta_{uc,y}
-\end{bmatrix}
-\end{equation}
-where $b_y = G b$, $W_{u,y} = G W_u$, $W_{in,y} = G W_{in}$, $\Theta_{uu,y} = G \Theta_{uu}$, $\Theta_{cc,y} = G \Theta_{cc}$, and $\Theta_{uc,y} = G \Theta_{uc}$. Substituting these blocks into the affine-core model and collecting the first-order influent terms yields:
-\begin{equation}
-y_{aff} = b_y + W_{u,y} u + (W_{in,y} + H)c_{in} + \Theta_{uu,y}(u \otimes u) + \Theta_{cc,y}(c_{in} \otimes c_{in}) + \Theta_{uc,y}(u \otimes c_{in})
-\end{equation}
-This blockwise expression is the cornerstone of the model's interpretability. A process engineer can directly inspect $W_{u,y}$ to understand the effective linear sensitivity of measured composites (e.g., effluent total nitrogen) to operational changes (e.g., aeration intensity). Similarly, $\Theta_{uc,y}$ explicitly quantifies how shifts in influent loading modify those operational sensitivities in the measured space. 
+Using the same partitioned basis, the driver can be written blockwise as
+\[
+r(u, c_{in}) = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in}),
+\]
+with $b \in \mathbb{R}^{F}$, $W_u \in \mathbb{R}^{F \times M_{op}}$, $W_{in} \in \mathbb{R}^{F \times F}$, $\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$, $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$, and $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$.
 
-\subsection{Estimation and Epistemological Boundaries}
+Cross-component dependence is introduced explicitly through a learned coupling matrix $\Gamma \in \mathbb{R}^{F \times F}$. In this study, $\Gamma$ is estimated in an admissible set that fixes its diagonal to zero, bounds its off-diagonal entries, and rejects choices that make $R = I_F - \Gamma$ poorly conditioned. The coupled relation is written as
+\begin{equation}
+R c = r(u, c_{in}), \qquad R = I_F - \Gamma
+\end{equation}
 
-That same affine-core relation dictates the epistemology of the framework. Stacking the single-sample expression $y_{aff} = M \phi(u, c_{in}) + H c_{in}$ over a dataset of $N$ steady-state samples yields:
-\begin{equation}
-Y = \Phi M^T + C_{in} H^T + E
-\end{equation}
-where $\Phi \in \mathbb{R}^{N \times D}$ is the feature matrix, $Y \in \mathbb{R}^{N \times K}$ the measured output matrix, $C_{in} \in \mathbb{R}^{N \times F}$ the influent state matrix, and $E \in \mathbb{R}^{N \times K}$ the residual matrix. Measured composite data therefore uniquely identify the affine core $M$ via the least-squares pseudoinverse estimator
-\begin{equation}
-\widehat{M}^T = \Phi^+\left(Y - C_{in} H^T\right)
-\end{equation}
-However, they do \textit{not} uniquely identify the latent component-space matrix $B$. If $N_B \in \mathbb{R}^{F \times D}$ satisfies $G N_B = 0$, then $G(B + N_B) = M$. 
+The sign of $B$ is not constrained. That choice is deliberate: increasing and decreasing effects are both allowed in the latent driver, while non-negativity is enforced later where it matters physically, on the predicted component state itself.
 
-Consequently, the final deployed predictor is decomposed as:
+Over a dataset of $N$ steady-state samples, let $\Phi \in \mathbb{R}^{N \times D}$ collect the feature rows, let $C_{in} \in \mathbb{R}_{+}^{N \times F}$ collect influent component states, and let $C_{out} \in \mathbb{R}_{+}^{N \times F}$ collect effluent component targets. ICSOR introduces a fitted non-negative component prediction matrix $\widehat{C} \in \mathbb{R}_{+}^{N \times F}$ and estimates $(B, \Gamma, \widehat{C})$ through the coupled objective
+\[
+\begin{aligned}
+(\widehat{B}, \widehat{\Gamma}, \widehat{C}) = {}&
+\arg\min_{B,\, \Gamma \in \mathcal{G},\, \widehat{C} \in \mathbb{R}_{+}^{N \times F}}
+\Bigl\|
+C_{out} - \widehat{C}
+\Bigr\|_F^2 \\
+&+ \lambda_{inv}
+\Bigl\|
+(\widehat{C} - C_{in})A^T
+\Bigr\|_F^2 \\
+&+ \lambda_{sys}
+\Bigl\|
+\widehat{C}(I_F - \Gamma)^T - \Phi B^T
+\Bigr\|_F^2 \\
+&+ \lambda_B \|B\|_F^2
++ \lambda_\Gamma \|\Gamma\|_F^2.
+\end{aligned}
+\]
+
+Each term has a distinct role. The first term fits effluent ASM components directly. The second penalizes invariant mismatch in component space. The third forces consistency between the fitted states and the coupled driver relation. The ridge penalties stabilize the driver and coupling estimates.
+
+\subsection{Deployment-Time Inference with Exact Conservation and Non-Negativity}
+
+Training determines $\widehat{B}$ and $\widehat{\Gamma}$. Deployment then predicts a new component state by solving a second mathematical program. For a new sample $(u_*, c_{in,*})$, define
+\[
+\phi_* = \phi(u_*, c_{in,*}), \qquad d_* = \widehat{B}\phi_*, \qquad \widehat{R} = I_F - \widehat{\Gamma}.
+\]
+
+Whenever $\widehat{R}$ is nonsingular, the unconstrained coupled state is
+\[
+c_{raw} = \widehat{R}^{-1} d_*.
+\]
+
+A cheap affine presolve then restores exact invariants without yet enforcing non-negativity:
+\[
+c_{aff} = \arg\min_{c \in \mathbb{R}^{F}} \; \|c - c_{raw}\|_2^2 \quad \text{subject to} \quad A c = A c_{in,*}.
+\]
+
+If $c_{raw}$ already satisfies the invariants and remains non-negative, ICSOR can deploy it directly. If $c_{raw}$ is infeasible but $c_{aff}$ is non-negative, the affine presolve is already sufficient. Only when the affine state still contains negative components does ICSOR activate the full correction program:
 \begin{equation}
-y^* = y_{aff} + \delta_+(u, c_{in})
+\begin{aligned}
+\hat{c} = {}& \arg\min_{c \in \mathbb{R}^{F},\, \rho \in \mathbb{R}^{F}} \; w_c^T \rho \\
+\text{subject to} \quad {}& A c = A c_{in,*}, \\
+& c \ge 0, \\
+& -\rho \le c - c_{aff} \le \rho, \\
+& \rho \ge 0
+\end{aligned}
 \end{equation}
-where $\delta_+(u, c_{in}) = I_{comp}(c^* - c_{aff})$ is the sample-specific positivity correction. The data identify the globally affine core $y_{aff}$ (and its interpretable blocks), while the non-linear correction $\delta_+$ relies on fixing a chosen latent representative for $B$. If the minimum-Frobenius-norm exact representative $\widehat{B}_{ls} = G^+ \widehat{M}$ is chosen, it induces a compatible affine core $\widehat{M}_G = G G^+ \widehat{M}$. This compatible core equals the unconstrained least-squares fit $\widehat{M}$ only when $\widehat{M}$ already lies perfectly in $\operatorname{range}(G)$. This delineates exactly what the surrogate learns from data versus what it enforces through physical geometry.
+with fixed componentwise correction weights $w_c \in \mathbb{R}_{+}^{F}$. Equation~(6) is the deployed ICSOR predictor. It enforces exact invariant preservation and componentwise non-negativity simultaneously while keeping the final state as close as possible to the coupled affine reference in a weighted $L_1$ sense.
+
+Under the adopted non-negative component basis, $c_{in,*}$ is feasible whenever the influent state itself is physically admissible. The deployed problem is therefore not an afterthought but the mechanism by which ICSOR closes the following gap: every deployed prediction preserves the adopted conserved quantities and remains non-negative componentwise. The raw-check, affine-presolve, then LP-correction sequence is also practically important because it reserves the general optimizer for the subset of samples whose non-negativity constraints are genuinely active.
+
+\subsection{External Reporting and Blockwise Interpretability}
+
+If reported measured composites are needed after deployment, they are computed externally by
+\[
+\hat{y}_{ext} = I_{comp}\hat{c}.
+\]
+This collapse is not part of the regression model itself. It is a reporting operator applied to the deployed component prediction. Keeping it external matters because different internal ASM component states can produce the same measured aggregates. The learned scientific object is therefore $\hat{c}$, not the reported collapse alone.
+
+Interpretability is retained at two levels. First, the six blocks of $B$ have direct engineering meaning in the latent driver: $b$ is the baseline forcing, $W_u$ and $W_{in}$ encode first-order operating and influent effects, $\Theta_{uu}$ and $\Theta_{cc}$ encode within-subspace curvature, and $\Theta_{uc}$ encodes operation-loading interaction effects. Second, $\Gamma$ describes how that driver is redistributed across ASM components through the coupled system matrix $R = I_F - \Gamma$. The deployed prediction must therefore be read as the result of a driver, a coupling structure, and a constrained inference solve acting together.
+
+These coefficients are motivated by plant operation rather than by algebraic convenience. The operating block $W_u$ corresponds to levers that wastewater engineers actually move, such as aeration intensity and hydraulic retention time. For example, a driver coefficient linking stronger aeration to oxygen-sensitive channels is practically consistent with the familiar observation that additional aeration supports nitrification, suppresses soluble oxygen demand from biodegradable COD fractions, and changes how quickly ammonium-rich influent is converted toward oxidized nitrogen forms. The influent block $W_{in}$ captures first-order loading carry-through. Larger influent $S_{NH4}$ can increase the forcing on nitrifier-related states and nitrogen-conversion pathways; larger $S_{PO4}$, $X_{PAO}$, $X_{PP}$, or $X_{PHA}$ can intensify the phosphorus-removal subproblem; and larger readily biodegradable fractions such as $S_F$ or $S_A$ can shift heterotrophic activity and oxygen consumption.
+
+The quadratic blocks are equally practical. $\Theta_{uu}$ allows the same operating action to have different marginal effects at different settings, which is exactly what plant staff observe when aeration moves from oxygen-limited to oxygen-sufficient regimes. $\Theta_{uc}$ encodes the fact that an operational change does not act on every influent equally: increasing aeration under high ammonium loading is not the same intervention as increasing aeration under low ammonium loading, and longer residence time matters differently for particulate substrate-rich influent than for a mostly soluble feed. $\Theta_{cc}$ captures coupled loading regimes such as biodegradable COD arriving simultaneously with ammonium, or phosphate arriving with PAO-related storage fractions, where one compound changes the practical meaning of another. In that sense, the block structure of $B$ is motivated by the compound-compound and compound-operation interactions that dominate real diagnoses of nitrification loss, carbon limitation, or phosphorus breakthrough.
+
+The coupling coefficients in $\Gamma$ serve a different but equally practical purpose. They do not describe how the operating point generates forcing; they describe how one ASM component balance borrows from or offsets the others once that forcing has been created. A stable coupling between dissolved oxygen and nitrifier biomass channels reflects the operational fact that oxygen availability and nitrifier response cannot be interpreted independently. Coupling among ammonium, nitrite, and nitrate channels reflects the serial structure of nitrification and denitrification. Coupling among $S_{PO4}$, $X_{PAO}$, $X_{PP}$, and $X_{PHA}$ reflects the storage and release mechanisms behind biological phosphorus removal. Likewise, coupling between soluble and particulate COD-bearing states reflects the linked hydrolysis-and-uptake behavior that operators observe as simultaneous shifts in soluble load, biomass response, and solids production. The sign of a coupling coefficient indicates whether that linked component enters the balance in a reinforcing or compensating direction, while its magnitude indicates how strongly the redistribution must be represented to reproduce the observed state pattern. A persistent entry of $\Gamma$ is therefore practically relevant because it encodes a recurring material linkage in plant operation rather than a purely statistical artifact.
+
+\subsection{Deterministic Recursive Coupled-QP Estimation and Modeling Boundaries}
+
+This article adopts the recursive coupled-QP training route rather than a generic stochastic first-order optimizer such as Adam. That choice is deliberate. For fixed $(\Gamma, \widehat{C})$, the $B$ update is a ridge-regularized linear least-squares solve. For fixed $(B, \widehat{C})$, the $\Gamma$ update is a convex box-constrained quadratic program. For fixed $(B, \Gamma)$, the $\widehat{C}$ update is a convex non-negative quadratic program with the invariant penalty retained. The training loop therefore consists of deterministic Gauss-Seidel sweeps over exact block solutions.
+
+One practical reason is the matrix $R = I_F - \Gamma$ itself. Deployment requires $R$ to remain invertible, and in practice it must remain well conditioned because both the raw coupled state and the subsequent correction depend on solving through $R$. A nearly singular $R$ would amplify numerical noise, distort the affine presolve, and make the deployed correction unstable. The recursive coupled-QP route can control this requirement explicitly: each $\Gamma$ update is box-constrained, its diagonal is fixed at zero, and the candidate is accepted only if $\kappa(I_F - \Gamma)$ stays below a prescribed conditioning threshold. If that threshold is violated, the candidate can be shrunk toward the origin and, if necessary, replaced by a safe fallback. Stochastic methods such as Adam, and indeed other generic first-order solvers, do not provide that admissibility guarantee by themselves. They may lower the objective while still visiting or returning nearly singular coupling matrices unless an additional conditioning projection is imposed externally.
+
+This architecture is preferred here over generic stochastic first-order training for three reasons. First, each exact block update cannot increase the coupled objective, so the objective sequence within a restart is monotone non-increasing and converges in value to a stationary point. Second, the optimization variables remain attached to interpretable convex subproblems instead of being absorbed into one optimizer trajectory with learning-rate, momentum, clipping, or epoch-count sensitivity. Third, with fixed initialization, restart policy, and solver tolerances, the recursive coupled-QP route is reproducible in a way that stochastic training need not be.
+
+The solver choices follow the same principle of structural fidelity. OSQP is used for the convex QP subproblems because the $\Gamma$ and $\widehat{C}$ blocks are sparse, box- and non-negativity-constrained quadratic programs. The deployment problem in Eq.~(6) is solved with HiGHS because, once $c_{aff}$ is fixed, the deployed correction is a linear program rather than a quadratic one. A second computational advantage comes from the hierarchical presolve described in Section~2.4: the raw coupled state is checked first, the affine invariant correction is checked second, and the LP is reserved only for states whose non-negativity constraints remain active after those cheaper steps. The manuscript therefore presents one definite ICSOR contract: direct component-space prediction, explicit learned coupling, invariant-aware training, exact constrained deployment, and deterministic recursive coupled-QP estimation.
+
+The iterative estimator and the accelerated deployment logic can be summarized as follows.
+
+\begin{quote}
+\noindent\textbf{Pseudocode 1. Deterministic recursive coupled-QP training}
+\begin{tabbing}
+\hspace{0.6cm}\=\hspace{0.6cm}\=\hspace{0.6cm}\=\kill
+\textbf{Input:} $\Phi$, $C_{in}$, $C_{out}$, $A$, solver settings \\
+\textbf{for} restart $s = 1, \dots, S$ \textbf{do} \\
+\> initialize admissible $\Gamma^{(0,s)}$ and non-negative $\widehat{C}^{(0,s)}$ \\
+\> compute $B^{(0,s)}$ from the corresponding ridge solve \\
+\> \textbf{for} $t = 0, \dots, T_{\max}-1$ \textbf{do} \\
+\>\> update $B^{(t+1,s)}$ by ridge least squares \\
+\>\> update $\Gamma^{(t+1,s)}$ by constrained QP \\
+\>\> enforce zero diagonal, box bounds, and $\kappa(I_F - \Gamma^{(t+1,s)}) \le \kappa_{\max}$ \\
+\>\> update $\widehat{C}^{(t+1,s)}$ by non-negative invariant-aware QP \\
+\>\> record the objective value and its running minimum \\
+\>\> \textbf{if} the trailing objective slope is below tolerance \textbf{then stop the restart} \\
+\> \textbf{end for} \\
+\textbf{end for} \\
+retain the feasible restart with the smallest recorded objective \\
+\textbf{Output:} $\widehat{B}$, $\widehat{\Gamma}$, $\widehat{C}$
+\end{tabbing}
+\end{quote}
+
+\begin{quote}
+\noindent\textbf{Pseudocode 2. Hierarchical deployment with affine presolve}
+\begin{tabbing}
+\hspace{0.6cm}\=\hspace{0.6cm}\=\hspace{0.6cm}\=\kill
+\textbf{Input:} $u_*$, $c_{in,*}$, $\widehat{B}$, $\widehat{\Gamma}$, $A$ \\
+form $\phi_*$ and compute the raw coupled state $c_{raw} = (I_F - \widehat{\Gamma})^{-1}\widehat{B}\phi_*$ \\
+\textbf{if} $c_{raw}$ is invariant-consistent and non-negative \textbf{then return} $c_{raw}$ \\
+form the affine invariant correction $c_{aff}$ \\
+\textbf{if} $c_{aff}$ is non-negative \textbf{then return} $c_{aff}$ \\
+solve the deployment LP in Eq.~(6) with $c_{aff}$ as the reference state \\
+\textbf{return} the projected state $\hat{c}$
+\end{tabbing}
+\end{quote}
 
 \section{Methodology}
 
 \subsection{Mechanistic Dataset and Simulation Domain}
 
-All benchmark data were generated from a standalone steady-state continuous stirred tank reactor (CSTR) simulator based on the Activated Sludge Model No.\ 2d with two-step nitrification (ASM2d-TSN). The mechanistic description contained $R = 28$ biological and chemical processes acting on $F = 21$ ASM state variables, and a linear composition map $I_{comp} \in \mathbb{R}^{K \times F}$ with $K = 6$ from the latent state space to six measured effluent composites: chemical oxygen demand (COD), total nitrogen (TN), total Kjeldahl nitrogen (TKN), total phosphorus (TP), total suspended solids (TSS), and volatile suspended solids (VSS).
+All benchmark data were generated from a standalone steady-state continuous stirred tank reactor (CSTR) simulator based on the Activated Sludge Model No.\ 2d with two-step nitrification (ASM2d-TSN). The mechanistic description contained $N_{rxn} = 28$ biological and chemical processes acting on $F = 21$ ASM state variables, and a linear composition map $I_{comp} \in \mathbb{R}^{K \times F}$ with $K = 6$ from the latent state space to six measured effluent composites: chemical oxygen demand (COD), total nitrogen (TN), total Kjeldahl nitrogen (TKN), total phosphorus (TP), total suspended solids (TSS), and volatile suspended solids (VSS).
 
 The simulation domain was sampled using Latin hypercube sampling (LHS) to ensure uniform coverage of the joint input space. A total of 10,000 valid steady-state samples were generated with random seed 42. Each sample was defined by $M_{op} = 2$ operating variables and $F = 21$ influent state variables. The operating variables were the hydraulic retention time and aeration level, sampled as $\mathrm{HRT} \in [6,36]$~h and $\mathrm{Aeration} \in [0.5,2.5]$. The influent-state sampling ranges are presented in Table~\ref{tab:influent_ranges}.
 
@@ -236,15 +303,15 @@ The simulation domain was sampled using Latin hypercube sampling (LHS) to ensure
 
 For each sampled influent-operating point, the effluent steady state was obtained by solving the nonlinear ASM2d-TSN algebraic balance equations under bound constraints. Although LHS independently samples the input space, the nonlinear ASM algebraic solver inherently acts as a physical filter: operating points leading to severe washout or non-viable states that fail to converge to a stable steady state within the prescribed residual tolerances are rejected. The generative procedure explicitly continued drawing new samples until exactly 10,000 valid, biologically viable steady-state points were collected. The primary solve used bound-constrained nonlinear least squares with lower and upper state bounds of $10^{-8}$ and 1500, variable, residual, and gradient tolerances of $10^{-9}$, and a maximum of 1200 function evaluations. Two starting points were tested for each sample: an initial guess assembled from the current influent state and the previous accepted solution, and a multistart perturbation of that initial guess. If neither trial reduced the maximum absolute residual below the configured acceptance threshold of 5.0, a dynamic-relaxation step was performed by integrating the governing residual dynamics for 20 days with a Backward Differentiation Formula (BDF) solver before re-solving the steady-state problem. Only solutions that both converged and satisfied the acceptance threshold were retained.
 
-The accepted effluent ASM state $c_{out} \in \mathbb{R}^F$ was then collapsed through the composition matrix $I_{comp}$ to the six measured outputs $y = I_{comp} c_{out}$. The persisted dataset therefore contained operating variables $u$, influent component states $c_{in}$, influent measured composites $I_{comp} c_{in}$, effluent component states $c_{out}$, and effluent measured composites $y$. However, only the measured effluent composites were used as prediction targets in the cross-model benchmark.
+The accepted effluent ASM state $c_{out} \in \mathbb{R}^F$ was then collapsed through the composition matrix $I_{comp}$ to the six measured outputs $y = I_{comp} c_{out}$. The persisted dataset therefore contained operating variables $u$, influent component states $c_{in}$, influent measured composites $I_{comp} c_{in}$, effluent component states $c_{out}$, and effluent measured composites $y$. For ICSOR, the effluent ASM component states $c_{out}$ were retained as the native training targets. For cross-model reporting and comparison, those same states were also collapsed to the six measured outputs $y$.
 
 \subsection{Construction of the Benchmark Dataset and Constraint Operators}
 
-The stoichiometric matrix $\nu \in \mathbb{R}^{R \times F}$, corresponding to the Petersen matrix of the ASM2d-TSN reaction network, and the composition matrix $I_{comp} \in \mathbb{R}^{K \times F}$ were taken from the canonical ASM2d-TSN reference formulation used by the simulator. From the stoichiometric matrix, the component-space invariant matrix $A \in \mathbb{R}^{q \times F}$ was obtained as a basis of the left null space of $\nu$, consistent with the conservation law $A\nu^T = 0$ developed in Section~2. Concretely, the left null space of $\nu$ is equivalent to the right null space of $\nu^T$. This null space was computed using the \texttt{scipy.linalg.null\_space} function from SciPy (Virtanen et al., 2020), which internally performs a Singular Value Decomposition (SVD) and extracts the right singular vectors whose corresponding singular values fall below a numerically determined tolerance. The SVD-based approach was selected because it is numerically stable for rank-deficient matrices and yields an orthonormal basis, avoiding the ill-conditioning that can arise from direct factorization methods such as Gaussian elimination on the transpose. The resulting orthonormal column vectors were transposed to form the rows of $A$. To further stabilize the representation for downstream arithmetic, the entries of $A$ were rounded to five decimal places, entries with magnitude below $10^{-10}$ were set to zero, and each row was normalized by its first non-zero coefficient so that the leading non-trivial entry of every conserved-quantity row is unity.
+The stoichiometric matrix $\nu \in \mathbb{R}^{N_{rxn} \times F}$, corresponding to the Petersen matrix of the ASM2d-TSN reaction network, and the composition matrix $I_{comp} \in \mathbb{R}^{K \times F}$ were taken from the canonical ASM2d-TSN reference formulation used by the simulator. From the stoichiometric matrix, the component-space invariant matrix $A \in \mathbb{R}^{q \times F}$ was obtained as a basis of the left null space of $\nu$, consistent with the conservation law $A\nu^T = 0$ developed in Section~2. Concretely, the left null space of $\nu$ is equivalent to the right null space of $\nu^T$. This null space was computed using the \texttt{scipy.linalg.null\_space} function from SciPy (Virtanen et al., 2020), which internally performs a Singular Value Decomposition (SVD) and extracts the right singular vectors whose corresponding singular values fall below a numerically determined tolerance. The SVD-based approach was selected because it is numerically stable for rank-deficient matrices and yields an orthonormal basis, avoiding the ill-conditioning that can arise from direct factorization methods such as Gaussian elimination on the transpose. The resulting orthonormal column vectors were transposed to form the rows of $A$. To further stabilize the representation for downstream arithmetic, the entries of $A$ were rounded to five decimal places, entries with magnitude below $10^{-10}$ were set to zero, and each row was normalized by its first non-zero coefficient so that the leading non-trivial entry of every conserved-quantity row is unity.
 
-A single supervised-learning dataset was assembled for the entire benchmark. Its features consisted of 23 physical inputs for every sample: the two operating variables $u \in \mathbb{R}^{M_{op}}$ and the 21 influent ASM state variables $c_{in} \in \mathbb{R}^{F}$. Its targets were the six measured effluent composites $y \in \mathbb{R}^{K}$. For ICSOR, the 21-component influent state vector $c_{in}$ additionally served as the constraint reference, so that the invariant projection and non-negativity correction could be enforced in the latent component space before collapse to measured outputs via $I_{comp}$.
+A single supervised-learning dataset was assembled for the entire benchmark. Its features consisted of 23 physical inputs for every sample: the two operating variables $u \in \mathbb{R}^{M_{op}}$ and the 21 influent ASM state variables $c_{in} \in \mathbb{R}^{F}$. For the classical regressors, the prediction targets were the six measured effluent composites $y \in \mathbb{R}^{K}$. For ICSOR, the native targets were the 21 effluent ASM component states $c_{out} \in \mathbb{R}^{F}$, and the six reported composites were obtained only after deployment as $\hat{y}_{ext} = I_{comp}\hat{c}$. The influent state vector $c_{in}$ additionally served as the invariant reference for both training and deployment.
 
-Because the classical regressors predict directly in the measured-output space $\mathbb{R}^K$ and never construct a latent component prediction $c_{raw} \in \mathbb{R}^F$, no invariant or non-negativity projection was applied to their outputs. The raw measured-space prediction of each classical model constitutes its deployed prediction. By contrast, ICSOR's deployed prediction is the physically corrected output $y^* = I_{comp} c^*$ obtained after the invariant and non-negativity projection described in Section~2. All models shared exactly the same 23-feature input basis and the same six-target output basis, ensuring that any differences in predictive accuracy are attributable solely to model structure.
+Because the classical regressors predict directly in the measured-output space $\mathbb{R}^K$ and never construct a component-space state candidate, no invariant or non-negativity enforcement can be applied to their outputs. The raw measured-space prediction of each classical model therefore constitutes its deployed prediction. By contrast, ICSOR's deployed comparison output is the externally reported vector $\hat{y}_{ext} = I_{comp}\hat{c}$ obtained after the constrained inference step of Section~2.4. All models shared the same 23-feature input basis and were compared on the same six reported measured outputs, but ICSOR alone was trained natively in component space.
 
 \subsection{Preprocessing and Split Management}
 
@@ -258,7 +325,7 @@ The hyperparameters of all classical benchmark regressors were selected via Baye
 
 \begin{table}[htbp]
 \centering
-\caption{Optuna-optimized hyperparameters for the classical benchmark regressors. ICSOR has no tunable hyperparameters beyond its analytical formulation.}
+\caption{Optuna-optimized hyperparameters for the classical benchmark regressors. ICSOR used the fixed recursive coupled-QP configuration described in Section~2.}
 \label{tab:optuna_hyperparameters}
 \small
 \begin{tabular}{@{}lll@{}}
@@ -344,7 +411,7 @@ The hyperparameters of all classical benchmark regressors were selected via Baye
 \end{tabular}
 \end{table}
 
-Random seed 42 was used wherever the model family exposed stochastic initialization. ICSOR requires no hyperparameter tuning: its identifiable affine core $M$ is estimated in closed form by multivariate least squares, and the physical projection parameters are derived directly from the stoichiometric matrix $\nu$ and the composition matrix $I_{comp}$.
+Random seed 42 was used wherever the model family exposed stochastic initialization. ICSOR was not tuned by Optuna in this study. Instead, one fixed recursive coupled-QP configuration was used throughout: \texttt{training\_method = recursive\_qp}, one restart, at most 60 outer iterations, box-constrained coupling with $\gamma_{abs} = 0.368$, ridge weights $\lambda_{inv} = 8.68 \times 10^{-3}$, $\lambda_{sys} = 1.27 \times 10^{-3}$, $\lambda_B = 6.09 \times 10^{-5}$, and $\lambda_\Gamma = 6.55 \times 10^{-4}$, plus OSQP absolute and relative tolerances of $10^{-6}$ for the convex training subproblems. These fixed settings preserve the deterministic training contract of Section~2.6 and avoid mixing optimizer choice into the model comparison.
 
 \subsection{Benchmark Models}
 
@@ -352,11 +419,16 @@ Random seed 42 was used wherever the model family exposed stochastic initializat
 
 The ICSOR model was constructed exactly as described in Section~2. The input was partitioned into the operational vector $u \in \mathbb{R}^{M_{op}}$ ($M_{op} = 2$) and the influent component vector $c_{in} \in \mathbb{R}^{F}$ ($F = 21$). These were mapped through the partitioned second-order feature map defined in Eq.~(3):
 \begin{equation*}
-\phi(u, c_{in}) = \begin{bmatrix} 1, & u^T, & c_{in}^T, & (u \otimes u)^T, & (c_{in} \otimes c_{in})^T, & (u \otimes c_{in})^T \end{bmatrix}^T \in \mathbb{R}^D
+\phi(u, c_{in}) = \begin{bmatrix}
+1, & u^T, & c_{in}^T, \\
+(u \otimes u)^T, & (c_{in} \otimes c_{in})^T, & (u \otimes c_{in})^T
+\end{bmatrix}^T \in \mathbb{R}^D
 \end{equation*}
-yielding a total feature dimension of $D = 1 + 2 + 21 + 4 + 441 + 42 = 511$, comprising 1 bias term, 2 linear operational terms, 21 linear influent terms, 4 operational self-product terms, 441 influent self-product terms, and 42 operation-influent interaction terms. The identifiable affine core $\widehat{M} \in \mathbb{R}^{K \times D}$ was estimated by the multivariate least-squares pseudoinverse $\widehat{M}^T = \Phi^+\left(Y - C_{in} H^T\right)$ as described in Section~2.6. A minimum-Frobenius-norm representative $\widehat{B}_{ls} = G^+ \widehat{M}$ was then fixed to enable latent-component-space prediction.
+yielding a total feature dimension of $D = 1 + 2 + 21 + 4 + 441 + 42 = 511$, comprising 1 bias term, 2 linear operational terms, 21 linear influent terms, 4 operational self-product terms, 441 influent self-product terms, and 42 operation-influent interaction terms. Training was performed in ASM component space rather than in measured-output space. For each fit, ICSOR estimated the driver matrix $B$, the coupling matrix $\Gamma$, and the fitted non-negative state matrix $\widehat{C}$ using the recursive coupled-QP routine of Section~2.6 with the fixed settings reported above.
 
-Raw component-space predictions $c_{raw} = \widehat{B}_{ls}\, \phi(u, c_{in})$ were corrected in two stages following the hierarchical procedure of Section~2.4: first, the orthogonal affine projection $c_{aff} = P_{adm}\, c_{raw} + P_{inv}\, c_{in}$ enforced the invariant relation $Ac = Ac_{in}$; second, when $c_{aff}$ contained negative components, the reduced-dimension quadratic program (Eq.~8) was solved using the Operator Splitting Quadratic Program (OSQP) solver with absolute and relative tolerances of $10^{-8}$, a maximum of 10,000 iterations, and enabled polishing and warm starts. The corrected component state $c^*$ was then collapsed to the measured output via $y^* = I_{comp}\, c^*$.
+Within each outer cycle, the $B$ block was updated by a ridge-regularized linear solve, the $\Gamma$ block by an OSQP-backed convex quadratic program with zero diagonal and box constraints, and the $\widehat{C}$ block by an OSQP-backed non-negative quadratic program with the invariant penalty retained. The Adam-Lasso alternative available in the repository was not used in this manuscript because the objective here was a deterministic, reproducible estimator with monotone blockwise objective descent.
+
+At deployment, the trained parameters produced the coupled affine reference $c_{aff} = (I_F - \widehat{\Gamma})^{-1}\widehat{B}\phi(u, c_{in})$, and the final component prediction $\hat{c}$ was obtained by solving the linear program in Eq.~(6) with the configured HiGHS settings. The reported benchmark output was then $\hat{y}_{ext} = I_{comp}\hat{c}$.
 
 \subsubsection{Classical Regressors}
 
@@ -423,7 +495,7 @@ The three MLP architectures are illustrated in Fig.~\ref{fig:mlp_architectures}.
 \label{fig:mlp_architectures}
 \end{figure}
 
-The classical regressors produced predictions directly in the measured-output space $\mathbb{R}^K$. Because these models never construct a latent component-space prediction $c_{raw} \in \mathbb{R}^F$, there is no physically meaningful basis on which to apply the invariant or non-negativity projection developed in Section~2. Consequently, the raw measured-space output of each classical model constitutes its final deployed prediction and is used directly for metric evaluation.
+The classical regressors produced predictions directly in the measured-output space $\mathbb{R}^K$. Because these models never construct a latent component-space state candidate, there is no physically meaningful basis on which to apply the invariant or non-negativity enforcement developed in Section~2. Consequently, the raw measured-space output of each classical model constitutes its final deployed prediction and is used directly for metric evaluation.
 
 \subsection{Prediction Taxonomy and Metric Definitions}
 
@@ -431,13 +503,13 @@ Before presenting the evaluation protocol, it is necessary to define precisely h
 
 \subsubsection{Raw and Projected Predictions}
 
-For ICSOR, the term \textit{raw prediction} denotes the measured-space output obtained by collapsing the unconstrained component-space estimate without any physical correction, i.e., $y_{raw} = I_{comp}\, c_{raw}$. This prediction does not satisfy the stoichiometric invariants $Ac = Ac_{in}$ and may imply negative component concentrations. The term \textit{projected prediction} denotes the physically corrected measured-space output $y^* = I_{comp}\, c^*$, obtained after the invariant affine projection and, when necessary, the non-negativity quadratic program have been applied to $c_{raw}$ in the latent component space. The projected prediction is the deployed output of the ICSOR framework.
+For ICSOR, the term \textit{raw prediction} denotes the measured-space output obtained by collapsing the coupled affine reference prior to constrained deployment, i.e., $y_{raw} = I_{comp}\, c_{aff}$. This reference need not satisfy the exact invariant relation and may imply negative component concentrations. The term \textit{projected prediction} denotes the final reported output $\hat{y}_{ext} = I_{comp}\, \hat{c}$ obtained after the deployment linear program in Eq.~(6) has been solved. The projected prediction is the deployed output of the ICSOR framework.
 
 For the classical regressors, only raw predictions exist. Because these models map inputs directly to measured composites without ever constructing a latent component-space estimate, neither invariant projection nor non-negativity correction can be applied. The raw measured-space output is therefore also the deployed output.
 
 \subsubsection{Effective Metrics}
 
-To enable a fair cross-model comparison, the term \textit{effective prediction} is defined as the deployed output of each model: the projected prediction $y^*$ for ICSOR and the raw measured-space prediction $\hat{y}$ for each classical regressor. All cross-model rankings in this study are based exclusively on effective predictions. Correspondingly, the \textit{effective test metric} for a given performance measure (e.g., effective test RMSE) denotes that measure evaluated on the test set using each model's effective prediction, and the \textit{effective training metric} denotes the same measure evaluated on the training set.
+To enable a fair cross-model comparison, the term \textit{effective prediction} is defined as the deployed output of each model: the projected prediction $\hat{y}_{ext}$ for ICSOR and the raw measured-space prediction $\hat{y}$ for each classical regressor. All cross-model rankings in this study are based exclusively on effective predictions. Correspondingly, the \textit{effective test metric} for a given performance measure (e.g., effective test RMSE) denotes that measure evaluated on the test set using each model's effective prediction, and the \textit{effective training metric} denotes the same measure evaluated on the training set.
 
 \subsubsection{Regression Metrics}
 
@@ -459,13 +531,13 @@ These metrics were computed both at the aggregate level (averaging across all ta
 
 \subsection{Evaluation Protocol}
 
-Each model was trained once on the authoritative 8,000-row training set and evaluated on both the training and test sets. For ICSOR, both raw and projected metrics were recorded so that the impact of the physical correction could be quantified; however, only the projected (effective) metrics were used for cross-model ranking. For the classical regressors, only raw (effective) metrics were available. Aggregate and per-target regression metrics were computed for all six measured outputs using the five metrics defined above.
+Each model was trained once on the authoritative 8,000-row training set and evaluated on both the training and test sets. For ICSOR, both raw and projected metrics were recorded so that the impact of the deployment correction could be quantified; however, only the projected (effective) metrics were used for cross-model ranking. For the classical regressors, only raw (effective) metrics were available. Aggregate and per-target regression metrics were computed for all six measured outputs using the five metrics defined above.
 
-Negative-prediction analyses quantified the number and proportion of predicted values below zero, the proportion of samples containing at least one negative prediction, and the minimum negative excursion. ICSOR additionally reported fractional-space constraint residuals $\|Ac^* - Ac_{in}\|$, parity plots in both measured and component spaces, and blockwise coefficient visualizations of the identifiable affine core $M$.
+Negative-prediction analyses quantified the number and proportion of predicted values below zero, the proportion of samples containing at least one negative prediction, and the minimum negative excursion. ICSOR additionally reported component-space constraint residuals $\|A\hat{c} - Ac_{in}\|$, parity plots in both measured and component spaces, and blockwise visualizations of the learned driver and coupling coefficients.
 
 \subsection{Repeated Dataset-Size Analysis}
 
-To assess sample-efficiency and generalization behavior, each model underwent a repeated dataset-size analysis. The full benchmark dataset was subsampled without replacement at total sizes of 500, 1450, 2400, 3350, 4300, 5250, 6200, 7150, 8100, 9050, and 10,000 rows. Each size was repeated 100 times with distinct but reproducible seeds derived from the base seed 42, and each repeated sample was re-split using the same 20\% test fraction. The resulting analysis therefore comprised 1,100 re-estimated train-test experiments per model. The hyperparameters selected in the main benchmark stage (Table~\ref{tab:optuna_hyperparameters} for classical models; the fixed analytical formulation for ICSOR) were reused throughout this sweep so that the resampling analysis isolated sample-size sensitivity and split variability rather than retuning noise. Performance at each dataset size was summarized by the effective MSE, i.e., the MSE computed from each model's deployed (effective) prediction.
+To assess sample-efficiency and generalization behavior, each model underwent a repeated dataset-size analysis. The full benchmark dataset was subsampled without replacement at total sizes of 500, 1450, 2400, 3350, 4300, 5250, 6200, 7150, 8100, 9050, and 10,000 rows. Each size was repeated 100 times with distinct but reproducible seeds derived from the base seed 42, and each repeated sample was re-split using the same 20\% test fraction. The resulting analysis therefore comprised 1,100 re-estimated train-test experiments per model. The hyperparameters selected in the main benchmark stage (Table~\ref{tab:optuna_hyperparameters} for classical models; the fixed recursive coupled-QP configuration for ICSOR) were reused throughout this sweep so that the resampling analysis isolated sample-size sensitivity and split variability rather than retuning noise. Performance at each dataset size was summarized by the effective MSE, i.e., the MSE computed from each model's deployed (effective) prediction.
 
 \subsection{Comparative Analysis}
 
@@ -495,7 +567,7 @@ Physical behavior was assessed in parallel through effective negative-prediction
 
 \section{Results and Discussion}
 
-This section reports the results of the cross-model comparison described in Section~3. All twelve models---ICSOR, XGBoost, LightGBM, CatBoost, AdaBoost, Random Forest (RF), SVR, $k$-NN, PLS, MLP Shallow, MLP Medium, and MLP Deep---were evaluated under the identical repeated dataset-size analysis protocol. The primary ranking metric is the effective test RMSE, where \textit{effective} denotes the projected prediction $y^* = I_{comp}\,c^*$ for ICSOR and the raw measured-space prediction for each classical regressor, as defined in Section~3.6. All results are averaged across the resampling repetitions at each training size unless stated otherwise.
+This section reports the results of the cross-model comparison described in Section~3. All twelve models---ICSOR, XGBoost, LightGBM, CatBoost, AdaBoost, Random Forest (RF), SVR, $k$-NN, PLS, MLP Shallow, MLP Medium, and MLP Deep---were evaluated under the identical repeated dataset-size analysis protocol. The primary ranking metric is the effective test RMSE, where \textit{effective} denotes the projected prediction $\hat{y}_{ext} = I_{comp}\,\hat{c}$ for ICSOR and the raw measured-space prediction for each classical regressor, as defined in Section~3.6. All results are averaged across the resampling repetitions at each training size unless stated otherwise.
 
 \subsection{Overall Model Ranking at Maximum Training Size}
 
@@ -503,7 +575,7 @@ Table~\ref{tab:leaderboard} presents the effective test metrics for all twelve m
 
 \begin{table}[htbp]
 \centering
-\caption{Effective test metrics at the full training size (8{,}000 training samples, 2{,}000 test samples), sorted by effective test RMSE rank. ICSOR uses the projected prediction $y^* = I_{comp}\,c^*$; all classical models use their raw measured-space output.}
+\caption{Effective test metrics at the full training size (8{,}000 training samples, 2{,}000 test samples), sorted by effective test RMSE rank. ICSOR uses the projected prediction $\hat{y}_{ext} = I_{comp}\,\hat{c}$; all classical models use their raw measured-space output.}
 \label{tab:leaderboard}
 \small
 \begin{tabular}{@{}rlccccc@{}}
@@ -538,7 +610,7 @@ Table~\ref{tab:leaderboard} ranks models at the full training size. To assess co
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.85\textwidth]{revision_plots/average_rank_heatmap_20260407_165106.png}
+\includegraphics[width=0.85\textwidth]{placeholder.png}
 \caption{Average rank heatmap across all training sizes, measured output targets, and metrics. Lower average rank (darker shading) indicates more consistent top performance across the full evaluation protocol.}
 \label{fig:avg_rank_heatmap}
 \end{figure}
@@ -557,7 +629,7 @@ Figure~\ref{fig:lc_rmse_mae} presents the effective test RMSE and MAE learning c
 \centering
 % Placeholder: RMSE learning curve
 % Path: results/plot_results/comparison/plots/effective_rmse_learning_curve_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/effective_rmse_learning_curve_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Effective test RMSE}
 \end{subfigure}
 \hfill
@@ -565,7 +637,7 @@ Figure~\ref{fig:lc_rmse_mae} presents the effective test RMSE and MAE learning c
 \centering
 % Placeholder: MAE learning curve
 % Path: results/plot_results/comparison/plots/effective_mae_learning_curve_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/effective_mae_learning_curve_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Effective test MAE}
 \end{subfigure}
 \caption{Effective test RMSE and MAE learning curves across training sizes (400--8{,}000 samples). Lines denote the mean across resampling repetitions; shaded bands represent the interquartile range. All twelve models share identical train-test partitions at each size.}
@@ -578,7 +650,7 @@ Figure~\ref{fig:lc_rmse_mae} presents the effective test RMSE and MAE learning c
 \centering
 % Placeholder: R2 learning curve
 % Path: results/plot_results/comparison/plots/effective_r2_learning_curve_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/effective_r2_learning_curve_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Effective test $R^2$}
 \end{subfigure}
 \hfill
@@ -586,7 +658,7 @@ Figure~\ref{fig:lc_rmse_mae} presents the effective test RMSE and MAE learning c
 \centering
 % Placeholder: MAPE learning curve
 % Path: results/plot_results/comparison/plots/effective_mape_learning_curve_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/effective_mape_learning_curve_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Effective test MAPE}
 \end{subfigure}
 \caption{Effective test $R^2$ and MAPE learning curves across training sizes (400--8{,}000 samples). Higher $R^2$ is better; lower MAPE is better.}
@@ -663,7 +735,7 @@ Table~\ref{tab:per_target} reports the effective test RMSE for each model at the
 \centering
 % Placeholder: Per-target RMSE heatmap
 % Path: results/plot_results/comparison/plots/effective_rmse_by_target_heatmap_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/effective_rmse_by_target_heatmap_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Effective RMSE by target}
 \end{subfigure}
 \hfill
@@ -671,7 +743,7 @@ Table~\ref{tab:per_target} reports the effective test RMSE for each model at the
 \centering
 % Placeholder: Per-target negative rate heatmap
 % Path: results/plot_results/comparison/plots/negative_prediction_rate_by_target_heatmap_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/negative_prediction_rate_by_target_heatmap_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Negative prediction rate by target}
 \end{subfigure}
 \caption{Per-target diagnostic heatmaps at the largest training size (8{,}000 samples). (a)~Effective test RMSE for each model and measured output target. (b)~Percentage of predicted values below zero for each model and target. Models are ordered by overall average rank (best at top).}
@@ -723,7 +795,7 @@ Table~\ref{tab:gen_gap} reports the effective RMSE generalization gap $\Delta_{\
 \centering
 % Placeholder: Generalization gap learning curve
 % Path: results/plot_results/comparison/plots/effective_rmse_generalization_gap_20260407_165106.png
-\includegraphics[width=0.85\textwidth]{revision_plots/effective_rmse_generalization_gap_20260407_165106.png}
+\includegraphics[width=0.85\textwidth]{placeholder.png}
 \caption{Effective RMSE generalization gap ($\Delta_{\mathrm{RMSE}} = \overline{\mathrm{RMSE}}_{\mathrm{test}} - \overline{\mathrm{RMSE}}_{\mathrm{train}}$) as a function of training size. Smaller gaps indicate better generalization. ICSOR (bold) maintains one of the smallest gaps across all training sizes.}
 \label{fig:gen_gap}
 \end{figure}
@@ -742,7 +814,7 @@ The tree-based ensemble methods show variable gaps. CatBoost (24.6\%) and XGBoos
 
 At the full training size, the one-shot benchmark summaries still report zero negative predictions on the test set for all twelve models, including PLS. However, the repeated dataset-size sweep underlying Fig.~\ref{fig:target_heatmaps}b resolves a vanishing residual PLS signal at the largest training size: the diagnostic summary gives a mean negative-prediction rate of 0.0008\% with standard deviation 0.0026\%, whereas every other model remains at exactly 0.0\%. The heatmap is therefore still visually dominated by zeros, but it no longer supports the stronger claim of uniform exact zeros for every model across the repeated splits.
 
-However, this near-absence of negatives carries a fundamentally different epistemological status for ICSOR than for the classical regressors. For ICSOR, zero negatives is guaranteed by construction: the quadratic program in Eq.~(6) enforces $c^* \ge 0$ in the latent component space, and the entrywise non-negativity of the relevant rows of $I_{comp}$ then ensures $y^* = I_{comp}\,c^* \ge 0$ in the measured output space. For the remaining models, the near-zero negative rate is still a data-dependent observation that could change under different input distributions, smaller training sets, or extrapolation beyond the simulation domain.
+However, this near-absence of negatives carries a fundamentally different epistemological status for ICSOR than for the classical regressors. For ICSOR, zero negatives is guaranteed by construction: the linear program in Eq.~(6) enforces $\hat{c} \ge 0$ in the latent component space, and the entrywise non-negativity of the relevant rows of $I_{comp}$ then ensures $\hat{y}_{ext} = I_{comp}\,\hat{c} \ge 0$ in the measured output space. For the remaining models, the near-zero negative rate is still a data-dependent observation that could change under different input distributions, smaller training sets, or extrapolation beyond the simulation domain.
 
 \subsubsection{Raw-to-Projected Correction Magnitude}
 
@@ -754,7 +826,7 @@ Figure~\ref{fig:icsor_diagnostics}a shows the raw-to-projected correction magnit
 \centering
 % Placeholder: Raw-to-effective adjustment learning curve
 % Path: results/plot_results/comparison/plots/raw_to_effective_adjustment_learning_curve_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/raw_to_effective_adjustment_learning_curve_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Raw-to-projected adjustment $\|c^* - c_{raw}\|_2$}
 \end{subfigure}
 \hfill
@@ -762,7 +834,7 @@ Figure~\ref{fig:icsor_diagnostics}a shows the raw-to-projected correction magnit
 \centering
 % Placeholder: Constraint residual learning curve
 % Path: results/plot_results/comparison/plots/effective_constraint_residual_learning_curve_20260407_165106.png
-\includegraphics[width=\textwidth]{revision_plots/effective_constraint_residual_learning_curve_20260407_165106.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{Constraint residual $\|Ac^* - Ac_{in}\|_2$}
 \end{subfigure}
 \caption{ICSOR-specific physical diagnostics across training sizes. (a)~L2 norm of the correction applied by the stoichiometric invariant projection and non-negativity quadratic program. The decreasing trend indicates that the raw surrogate $c_{raw} = \widehat{B}_{ls}\,\phi(u,c_{in})$ progressively aligns with the physical constraint structure as training data grows. (b)~L2 norm of the constraint residual $Ac^* - Ac_{in}$, confirming machine-precision satisfaction of the stoichiometric invariant at all training sizes.}
@@ -781,7 +853,10 @@ Figure~\ref{fig:icsor_diagnostics}b shows the L2 norm of the constraint residual
 
 Unlike the classical benchmark models, ICSOR exposes an interpretable measured-space affine core through the identifiable block matrix
 \begin{equation*}
-M = \begin{bmatrix} b_y & W_{u,y} & W_{in,y} & \Theta_{uu,y} & \Theta_{cc,y} & \Theta_{uc,y} \end{bmatrix},
+M = \begin{bmatrix}
+b_y & W_{u,y} & W_{in,y} \\
+\Theta_{uu,y} & \Theta_{cc,y} & \Theta_{uc,y}
+\end{bmatrix},
 \end{equation*}
 introduced in Section~2.5. Because $M$ is identified directly from measured data whereas the latent representative $B$ is not (Section~2.6), the coefficient plots are the most defensible engineering summary of how the surrogate organizes operating effects, influent carry-through, and second-order interactions. These plots must be interpreted carefully: they describe the affine core $y_{aff} = M\phi(u,c_{in}) + Hc_{in}$ before the sample-specific positivity correction $\delta_+$ is applied. They therefore encode signed structural tendencies of the learned surrogate rather than global partial derivatives of the fully corrected deployed prediction $y^*$.
 
@@ -814,7 +889,7 @@ Total & 3066 & 570 & 18.6 \\
 \centering
 % Placeholder: ICSOR operational coefficient heatmap
 % Path: results/plot_results/training/icsor/coefficients/w_u_heatmap_20260407_060250.png
-\includegraphics[width=\textwidth]{revision_plots/w_u_heatmap_20260407_060250.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{$W_{u,y}$}
 \end{subfigure}
 \hfill
@@ -822,7 +897,7 @@ Total & 3066 & 570 & 18.6 \\
 \centering
 % Placeholder: ICSOR influent coefficient heatmap
 % Path: results/plot_results/training/icsor/coefficients/w_in_heatmap_20260407_060250.png
-\includegraphics[width=\textwidth]{revision_plots/w_in_heatmap_20260407_060250.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{$W_{in,y} + H$}
 \end{subfigure}
 \hfill
@@ -830,7 +905,7 @@ Total & 3066 & 570 & 18.6 \\
 \centering
 % Placeholder: ICSOR bias bar chart
 % Path: results/plot_results/training/icsor/coefficients/bias_bar_chart_20260407_060250.png
-\includegraphics[width=\textwidth]{revision_plots/bias_bar_chart_20260407_060250.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{$b_y$}
 \end{subfigure}
 \caption{First-order coefficient plots of the identifiable ICSOR affine core in measured space. The displayed quantities correspond to the ICSOR blocks defined in Section~2.5.}
@@ -843,7 +918,7 @@ Total & 3066 & 570 & 18.6 \\
 \centering
 % Placeholder: ICSOR operational interaction tensor heatmaps
 % Path: results/plot_results/training/icsor/coefficients/theta_uu_heatmaps_20260407_060250.png
-\includegraphics[width=\textwidth]{revision_plots/theta_uu_heatmaps_20260407_060250.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{$\Theta_{uu,y}$}
 \end{subfigure}
 \hfill
@@ -851,7 +926,7 @@ Total & 3066 & 570 & 18.6 \\
 \centering
 % Placeholder: ICSOR operational-influent interaction tensor heatmaps
 % Path: results/plot_results/training/icsor/coefficients/theta_uc_heatmaps_20260407_060250.png
-\includegraphics[width=\textwidth]{revision_plots/theta_uc_heatmaps_20260407_060250.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{$\Theta_{uc,y}$}
 \end{subfigure}
 \hfill
@@ -859,7 +934,7 @@ Total & 3066 & 570 & 18.6 \\
 \centering
 % Placeholder: ICSOR influent interaction tensor heatmaps
 % Path: results/plot_results/training/icsor/coefficients/theta_cc_heatmaps_20260407_060250.png
-\includegraphics[width=\textwidth]{revision_plots/theta_cc_heatmaps_20260407_060250.png}
+\includegraphics[width=\textwidth]{placeholder.png}
 \caption{$\Theta_{cc,y}$}
 \end{subfigure}
 \caption{Second-order coefficient plots of the identifiable ICSOR affine core in measured space. These plots separate pure operating curvature, mixed operating-influent interactions, and pure influent interactions, enabling a direct engineering reading of the model structure developed in Section~2.}
@@ -894,7 +969,7 @@ The 15\% RMSE improvement of MLP Medium over SVR (the best non-MLP model at the 
 
 ICSOR's generalization gap of 2.5\% is the smallest among all models with competitive absolute accuracy ($\mathrm{RMSE} < 10$). This translates to a practical advantage: ICSOR's deployment performance can be reliably predicted from its validation performance, with minimal risk of degradation under modest distribution shifts. In contrast, MLP Medium exhibits a gap of 75.7\% and LightGBM reaches 74.2\%, indicating substantial memorization of training patterns. While this memorization has not yet degraded their generalization to the point where simpler models win, it represents a latent risk for real-world deployment, particularly in wastewater treatment systems where influent characteristics are inherently non-stationary.
 
-The average rank stability of ICSOR (Table~\ref{tab:avg_rank}: spread of 0.23 across metrics) further confirms that the stoichiometric projection acts as an effective regularizer. The physical constraint manifold $\mathcal{S}_+(c_{in})$ restricts the hypothesis space, yielding predictions that are not only physically consistent but also statistically stable. This regularization mechanism is fundamentally different from the parameter-space penalties (L2 regularization) applied to the MLP models: it operates in the output space and enforces a hard physical constraint rather than a soft statistical preference.
+The average-rank stability of ICSOR (Fig.~\ref{fig:avg_rank_heatmap}: spread of 0.23 across metrics) further confirms that the constrained deployment rule acts as an effective regularizer. The exact-invariant, non-negative feasible set enforced at deployment restricts the hypothesis space, yielding predictions that are not only physically consistent but also statistically stable. This regularization mechanism is fundamentally different from the parameter-space penalties (L2 regularization) applied to the MLP models: it operates in the output space and enforces a hard physical constraint rather than a soft statistical preference.
 
 \subsubsection{Sample Efficiency and Target Robustness}
 
@@ -906,7 +981,7 @@ Conversely, for targets driven by empirical aggregate dynamics (COD: rank~7, TSS
 
 ICSOR is the only model that provides hard guarantees on both stoichiometric invariance and prediction non-negativity. The constraint residual $\|Ac^* - Ac_{in}\|_2 \approx 5 \times 10^{-11}$ (Fig.~\ref{fig:icsor_diagnostics}b) confirms machine-precision enforcement of the conservation law across all training sizes. The monotonically decreasing raw-to-projected adjustment (Fig.~\ref{fig:icsor_diagnostics}a) demonstrates that the unconstrained surrogate $c_{raw} = \widehat{B}_{ls}\,\phi(u, c_{in})$ progressively aligns with the physical constraints as more training data become available, indicating that the model \textit{learns} the physics rather than relying entirely on the post-hoc correction.
 
-In contrast, the one-shot full-size benchmark yields zero negative predictions for all classical models, but the repeated sweep shows that this behavior is not exact across random splits: at 8{,}000 training samples PLS retains a mean negative rate of 0.0008\%, while the remaining classical regressors stay at 0.0\%. The observation is therefore still data-dependent rather than structurally guaranteed. Under more extreme input conditions or smaller training sets, any unconstrained regressor could in principle yield negative effluent concentrations, a failure mode that ICSOR prevents by construction through the non-negativity constraint $c^* \ge 0$ in the QP formulation (Eq.~6) and the entrywise non-negative structure of $I_{comp}$.
+In contrast, the one-shot full-size benchmark yields zero negative predictions for all classical models, but the repeated sweep shows that this behavior is not exact across random splits: at 8{,}000 training samples PLS retains a mean negative rate of 0.0008\%, while the remaining classical regressors stay at 0.0\%. The observation is therefore still data-dependent rather than structurally guaranteed. Under more extreme input conditions or smaller training sets, any unconstrained regressor could in principle yield negative effluent concentrations, a failure mode that ICSOR prevents by construction through the non-negativity constraint $\hat{c} \ge 0$ in the linear-program deployment rule (Eq.~6) and the entrywise non-negative structure of $I_{comp}$.
 
 For practical deployment in regulated wastewater treatment, this structural guarantee has implications beyond numerical accuracy. Negative predicted concentrations can corrupt downstream process optimization, trigger spurious control actions, and undermine regulatory compliance assessments. The explicit physical plausibility provided by ICSOR represents an engineering safeguard that purely data-driven models cannot replicate without ad-hoc output clipping, which is known to introduce its own biases.
 
