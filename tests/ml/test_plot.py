@@ -16,16 +16,19 @@ import numpy as np
 import pandas as pd
 
 from src.utils.plot import (
+	PIBRE_THEME_TOKENS,
 	apply_pibre_plot_theme,
 	persist_figure_artifacts,
 	plot_coefficient_bar_chart,
 	plot_coefficient_heatmap,
 	plot_coefficient_tensor_heatmaps,
+	plot_icsor_target_atlas,
 	plot_metric_heatmap,
 	plot_metric_summary_lines,
 	plot_response_surface_contours,
 	plot_train_test_parity_panels,
 	plot_train_test_metric_boxplots,
+	save_figure_pdf,
 )
 
 
@@ -142,6 +145,32 @@ def _build_metric_summary_frame() -> pd.DataFrame:
 	)
 
 
+def _build_atlas_blocks() -> dict[str, np.ndarray]:
+	return {
+		"b": np.array([[0.12]], dtype=float),
+		"W_u": np.array([[0.4, -0.2]], dtype=float),
+		"Theta_uu": np.array([[0.1, -0.05], [-0.05, -0.18]], dtype=float),
+		"W_in": np.array([[0.2, 0.1, -0.1]], dtype=float),
+		"Theta_uc": np.array([[0.2, 0.1, -0.2], [-0.1, 0.05, 0.25]], dtype=float),
+		"Theta_cc": np.array(
+			[
+				[0.2, -0.1, 0.0],
+				[-0.1, 0.3, 0.05],
+				[0.0, 0.05, -0.2],
+			],
+			dtype=float,
+		),
+		"Gamma": np.array(
+			[
+				[0.0, 0.04, -0.01],
+				[-0.03, 0.0, 0.02],
+				[0.01, -0.02, 0.0],
+			],
+			dtype=float,
+		),
+	}
+
+
 class PlotHelperTests(unittest.TestCase):
 	def tearDown(self) -> None:
 		plt.close("all")
@@ -149,10 +178,11 @@ class PlotHelperTests(unittest.TestCase):
 	def test_apply_pibre_plot_theme_sets_expected_defaults(self) -> None:
 		apply_pibre_plot_theme()
 
-		self.assertEqual(matplotlib.rcParams["figure.facecolor"], "#F7F4EA")
+		self.assertEqual(matplotlib.rcParams["figure.facecolor"], "#FFFFFF")
 		self.assertEqual(matplotlib.rcParams["axes.facecolor"], "#FFFFFF")
 		self.assertEqual(matplotlib.rcParams["image.cmap"], "cividis")
-		self.assertEqual(matplotlib.rcParams["lines.linewidth"], 2.0)
+		self.assertEqual(matplotlib.rcParams["lines.linewidth"], 1.8)
+		self.assertEqual(matplotlib.rcParams["grid.linestyle"], ":")
 
 	def test_plot_train_test_metric_boxplots_returns_mean_overlays_and_fliers(self) -> None:
 		metric_frame = _build_metric_frame()
@@ -241,7 +271,39 @@ class PlotHelperTests(unittest.TestCase):
 		self.assertEqual(artist_bundle["lines"][0].get_linestyle(), "-")
 		self.assertEqual(artist_bundle["lines"][1].get_linestyle(), "--")
 
-	def test_persist_figure_artifacts_writes_png_and_svg(self) -> None:
+	def test_plot_metric_summary_lines_emphasizes_icsor_series(self) -> None:
+		summary_frame = pd.DataFrame(
+			[
+				{"model_label": "Model A", "train_size": 80, "metric_mean": 0.24, "metric_q25": 0.22, "metric_q75": 0.26},
+				{"model_label": "Model A", "train_size": 160, "metric_mean": 0.20, "metric_q25": 0.19, "metric_q75": 0.21},
+				{"model_label": "ICSOR", "train_size": 80, "metric_mean": 0.18, "metric_q25": 0.16, "metric_q75": 0.20},
+				{"model_label": "ICSOR", "train_size": 160, "metric_mean": 0.14, "metric_q25": 0.13, "metric_q75": 0.16},
+			]
+		)
+
+		_, axis = plot_metric_summary_lines(
+			summary_frame,
+			x_column="train_size",
+			y_column="metric_mean",
+			group_column="model_label",
+			lower_column="metric_q25",
+			upper_column="metric_q75",
+			title="Effective RMSE learning curves",
+			x_label="Training samples",
+			y_label="Effective RMSE",
+		)
+
+		artist_bundle = getattr(axis, "_pibre_metric_summary_lines")
+		line_by_label = {line.get_label(): line for line in artist_bundle["lines"]}
+		icsor_line = line_by_label["ICSOR"]
+		baseline_line = line_by_label["Model A"]
+		self.assertEqual(
+			matplotlib.colors.to_hex(icsor_line.get_color()).lower(),
+			str(PIBRE_THEME_TOKENS["icsor_color"]).lower(),
+		)
+		self.assertGreater(icsor_line.get_linewidth(), baseline_line.get_linewidth())
+
+	def test_persist_figure_artifacts_writes_pdf_png_and_svg(self) -> None:
 		figure, axis = plt.subplots(figsize=(4.0, 3.0))
 		axis.plot([0.0, 1.0], [1.0, 0.0])
 
@@ -256,8 +318,31 @@ class PlotHelperTests(unittest.TestCase):
 				timestamp="20260406_111111",
 			)
 
+			self.assertTrue(persisted_paths["pdf"].is_file())
 			self.assertTrue(persisted_paths["png"].is_file())
 			self.assertTrue(persisted_paths["svg"].is_file())
+
+	def test_save_figure_pdf_rejects_non_pdf_suffix(self) -> None:
+		figure, _ = plt.subplots(figsize=(4.0, 3.0))
+		with tempfile.TemporaryDirectory() as temp_dir:
+			with self.assertRaises(ValueError):
+				save_figure_pdf(figure, Path(temp_dir) / "not_pdf.png")
+
+	def test_plot_icsor_target_atlas_returns_block_axes_and_colorbar(self) -> None:
+		figure = plot_icsor_target_atlas(
+			_build_atlas_blocks(),
+			target_name="COD",
+			operational_labels=["HRT", "Aeration"],
+			state_labels=["S_O", "S_F", "S_A"],
+			include_footer=True,
+		)
+
+		artist_bundle = getattr(figure, "_pibre_icsor_target_atlas")
+		self.assertEqual(set(artist_bundle["axes"].keys()), {"b", "W_u", "Theta_uu", "W_in", "Theta_uc", "Theta_cc", "Gamma"})
+		self.assertEqual(artist_bundle["axes"]["W_u"].get_title(), r"$W_u$")
+		self.assertEqual(artist_bundle["block_mapping"]["Theta_uc"].shape, (2, 3))
+		self.assertEqual(artist_bundle["colorbar"].ax.get_ylabel(), "Coefficient value")
+		self.assertEqual(len(figure.axes), 8)
 
 	def test_plot_metric_heatmap_returns_annotations_and_colorbar(self) -> None:
 		heatmap_frame = pd.DataFrame(

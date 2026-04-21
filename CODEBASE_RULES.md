@@ -118,47 +118,62 @@ These helpers must be designed for maximum reuse, especially optuna.py, train.py
 
 ### 12.1 Common Plot Theme and Style
 
-All generated plots, whether produced from Python modules, notebooks, tests that persist figures, or documentation-support scripts, must use one repository-wide plotting theme applied through shared helpers in src/utils/plot.py.
+All generated plots, whether produced from Python modules, notebooks, tests that persist figures, or documentation-support scripts, must use one repository-wide manuscript style profile applied through shared helpers in src/utils/plot.py.
 
-The repository standard theme is the Pibre Scientific theme. It must be implemented as reusable semantic style tokens rather than ad hoc per-figure overrides so the same appearance can be reproduced across line plots, scatter plots, bar charts, histograms, box plots, violin plots, heatmaps, contour plots, parity plots, residual plots, time-series plots, pair plots, and future plot types.
+The repository standard profile is the manuscript earth-and-mineral profile aligned to docs/DCHE-D-26-00020/figure_style_guide.md and the retained figure set referenced by docs/DCHE-D-26-00020/manuscript.tex and docs/DCHE-D-26-00020/supplementary_material.tex. Style tokens must be semantic and centralized in src/utils/plot.py. Ad hoc notebook-local and script-local style stacks are not allowed for persisted manuscript assets.
 
-Minimum theme requirements:
+Mandatory profile tokens:
 
-- figure or canvas background: off-white #F7F4EA
+- figure and canvas background: white #FFFFFF
 - axes background: white #FFFFFF
-- primary text and primary spine color: charcoal #22303C
-- secondary text color: muted slate #5B6770
-- major grid color: #D8DEE6
-- minor grid color: #EEF2F5
-- default qualitative data cycle, in order: #0072B2, #E69F00, #009E73, #D55E00, #CC79A7, #56B4E9, #F0E442, #4D4D4D
+- primary text: charcoal #22303C
+- secondary text: muted slate #5B6770
+- major grid color: #CAD2D9
+- minor grid color: #E6EBEF
+- qualitative cycle (ordered): #264653, #2A9D8F, #E9C46A, #F4A261, #E76F51, #6D597A, #577590, #BC4749, #8D99AE, #ADB5BD
+- reserved emphasis color for ICSOR and focal manuscript series: #6D597A
+- missing or masked values: neutral gray #ADB5BD
 - default sequential colormap: cividis
-- default diverging colormap: a blue-white-vermilion scale anchored at #0072B2, #F7F7F7, and #D55E00, with the midpoint explicitly centered on the reference value
-- missing, masked, or out-of-domain values: neutral gray #B0B7BF that is visually distinct from active data colors
+- default diverging colormap: repository earth diverging map with explicit center at the reference value
+
+Mandatory typography and geometry defaults:
+
+- font family must be repository-wide sans-serif defaults from src/utils/plot.py
+- default font size hierarchy must be manuscript-readable (base 10, title 13, labels 11, ticks 9)
+- default line width must be 1.8 and marker edge width 0.75
+- emphasized focal-series line width must be 2.7
+- default uncertainty-band alpha must be 0.12 and emphasized focal-series band alpha 0.24
+- grids must be low-ink dotted grids with alpha 0.35 by default
+- top and right spines are disabled by default; visible spines must stay subtle
+
+Required figure-size presets in src/utils/plot.py:
+
+- learning curve: (10.2, 6.0)
+- runtime curve: (10.2, 6.0)
+- main heatmap: (8.8, 5.6)
+- target atlas: (8.4, 12.8)
 
 Theme application requirements:
 
-- all plotting code must apply the repository theme from a shared entry point in src/utils/plot.py before drawing data
-- matplotlib, seaborn, and pandas plotting code must load repository rcParams or equivalent shared defaults from src/utils/plot.py
-- any plotting library that cannot consume those rcParams directly must map the same semantic colors, typography, backgrounds, line widths, marker defaults, and grid styling through an equivalent adapter in src/utils/plot.py
-- local style overrides are allowed only when required by the plot type, accessibility, or publication constraints, and the override must preserve the repository theme's semantic color roles
+- all plotting code must call shared helpers in src/utils/plot.py before drawing persisted figures
+- matplotlib, seaborn, and pandas plotting paths must consume repository rcParams or shared equivalents exposed from src/utils/plot.py
+- any library that cannot consume matplotlib rcParams directly must map the same semantic tokens through an adapter in src/utils/plot.py
+- local style overrides are allowed only when required by accessibility or publication constraints and must preserve semantic color roles and focal-series emphasis behavior
+- direct local plt.rcParams.update blocks, hard-coded color cycles, and notebook-local colormap contracts for persisted manuscript assets are not allowed
 
-Default style requirements for all plots:
+Manuscript-specific rules:
 
-- use DejaVu Sans or an explicitly configured repository-wide sans-serif fallback
-- title text, axis labels, ticks, and legends must use the repository text colors
-- axis labels and legend labels must use clear sentence case, and units must be included whenever the plotted quantity has units
-- default line width must be 2.0 and default marker edge width must be 0.75 unless a plot type requires a different visual density
-- gridlines must remain visible but subordinate to the data, with a light visual weight and an effective alpha between 0.35 and 0.55
-- top and right spines should be removed unless they are necessary for interpretation, while left and bottom spines must remain subtle rather than heavy black borders
-- saved static figures must not use an export resolution below 120 dpi
+- any persisted figure for docs/DCHE-D-26-00020 must route through shared plotting and shared export helpers in src/utils/plot.py
+- scalar-field plots (heatmaps, contour maps, atlases) must include a colorbar when color encodes magnitude
+- legends for dense multi-model line plots should default to bottom-outside placement when this improves plot readability
+- export paths for manuscript and supplementary assets must produce PDF outputs through shared helpers
+- draft-only footer text may be used during illustration runs but must be removed from final submission outputs
 
 Color-consistency and accessibility rules:
 
-- categorical colors must be assigned by semantic meaning consistently across figures whenever a category recurs
-- when an observed and predicted pair, train and test pair, baseline and model pair, or measured and simulated pair recurs, the same colors must be reused across all figures in the repository
-- critical distinctions must not rely on color alone when line style, marker shape, annotation, hatching, or direct labeling can provide redundant interpretation support
-- rainbow or jet colormaps, saturated neon colors, and arbitrary per-figure palette changes are not allowed
-- heatmaps and other scalar-field plots must include a colorbar or another explicit scalar legend whenever color encodes magnitude
+- recurring semantic pairs (train vs test, observed vs predicted, baseline vs model) must retain consistent colors across figures
+- critical distinctions must not rely only on color when line style, marker shape, annotations, or labels can provide redundancy
+- rainbow or jet colormaps, neon palettes, and arbitrary per-figure palette swaps are not allowed
 
 ## 13. Simulation Dataset Output Contract
 

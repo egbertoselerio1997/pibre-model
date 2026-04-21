@@ -2404,18 +2404,40 @@ def collate_model_analysis_results(
 			}
 		)
 
-	prediction_diagnostics = summarize_prediction_diagnostics(
-		all_prediction_tables,
-		model_labels=resolved_model_labels,
-		model_families=resolved_model_families,
-		model_order=resolved_model_order,
-	)
-	prediction_target_diagnostics = summarize_prediction_diagnostics_by_target(
-		all_prediction_tables,
-		model_labels=resolved_model_labels,
-		model_families=resolved_model_families,
-		model_order=resolved_model_order,
-	)
+	if all_prediction_tables:
+		prediction_diagnostics = summarize_prediction_diagnostics(
+			all_prediction_tables,
+			model_labels=resolved_model_labels,
+			model_families=resolved_model_families,
+			model_order=resolved_model_order,
+		)
+		prediction_target_diagnostics = summarize_prediction_diagnostics_by_target(
+			all_prediction_tables,
+			model_labels=resolved_model_labels,
+			model_families=resolved_model_families,
+			model_order=resolved_model_order,
+		)
+	else:
+		prediction_diagnostics = pd.DataFrame()
+		prediction_target_diagnostics = pd.DataFrame()
+
+	prediction_diagnostic_sort_columns = [
+		"model_order",
+		"dataset_size_total",
+		"repeat_index",
+		"split_name",
+	]
+	prediction_target_diagnostic_sort_columns = [
+		"model_order",
+		"dataset_size_total",
+		"repeat_index",
+		"split_name",
+		"target",
+	]
+	if prediction_diagnostics.empty:
+		prediction_diagnostics = pd.DataFrame(columns=prediction_diagnostic_sort_columns)
+	if prediction_target_diagnostics.empty:
+		prediction_target_diagnostics = pd.DataFrame(columns=prediction_target_diagnostic_sort_columns)
 
 	return {
 		"analysis_configs": pd.DataFrame(analysis_config_rows).sort_values("model_order").reset_index(drop=True),
@@ -2425,10 +2447,10 @@ def collate_model_analysis_results(
 		"effective_aggregate_metrics": pd.concat(effective_aggregate_metric_frames, ignore_index=True),
 		"per_target_metrics": pd.concat(per_target_metric_frames, ignore_index=True),
 		"prediction_diagnostics": prediction_diagnostics.sort_values(
-			["model_order", "dataset_size_total", "repeat_index", "split_name"]
+			prediction_diagnostic_sort_columns
 		).reset_index(drop=True),
 		"prediction_target_diagnostics": prediction_target_diagnostics.sort_values(
-			["model_order", "dataset_size_total", "repeat_index", "split_name", "target"]
+			prediction_target_diagnostic_sort_columns
 		).reset_index(drop=True),
 	}
 
