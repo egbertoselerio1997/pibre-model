@@ -1,0 +1,342 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{lineno}
+
+\begin{document}
+
+\linenumbers
+
+\title{An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}
+\author{}
+
+\maketitle
+
+\section*{Nomenclature}
+\begin{tabbing}
+\hspace{2.5cm} \= \kill
+$A$ \> Full-row-rank invariant matrix defining the null space of the stoichiometric matrix \\
+$B$ \> Second-order driver coefficient matrix \\
+$c_{aff}$ \> Invariant-consistent affine correction used before constrained deployment \\
+$c_{in}$ \> Influent ASM component concentration vector ($c_{in} \in \mathbb{R}^{F}$) \\
+$c_{out}$ \> True steady-state effluent ASM component concentration vector ($c_{out} \in \mathbb{R}^{F}$) \\
+$c_{raw}$ \> Unconstrained coupled component prediction before affine presolve \\
+$\hat{c}$ \> Final deployed ICSOR ASM component prediction \\
+$\widehat{C}$ \> Fitted non-negative component prediction matrix used in training \\
+$D$ \> Total dimension of the second-order feature map \\
+$F$ \> Number of mechanistic ASM components \\
+$\Gamma$ \> Learned ASM component coupling matrix \\
+$I_{comp}$ \> Composition matrix mapping ASM components to measured composites ($I_{comp} \in \mathbb{R}^{K \times F}$) \\
+$K$ \> Number of measured composite variables \\
+$\lambda_B$ \> Ridge regularization weight on $B$ \\
+$\lambda_\Gamma$ \> Ridge regularization weight on $\Gamma$ \\
+$\lambda_{inv}$ \> Invariant-residual penalty weight in the training objective \\
+$\lambda_{sys}$ \> Coupled-system consistency penalty weight in the training objective \\
+$M_{op}$ \> Number of operational variables \\
+$N_{rxn}$ \> Number of reactions in the mechanistic model \\
+$R$ \> Coupled-system matrix, $R = I_F - \Gamma$ \\
+$u$ \> Operational input vector ($u \in \mathbb{R}^{M_{op}}$) \\
+$w_c$ \> Componentwise weight vector used in deployed correction \\
+$y_{ext}$ \> Reported measured effluent composite vector ($y_{ext} \in \mathbb{R}^{K}$) \\
+$\hat{y}_{ext}$ \> Reported composite prediction, $\hat{y}_{ext} = I_{comp}\hat{c}$ \\
+$\nu$ \> Stoichiometric matrix ($\nu \in \mathbb{R}^{N_{rxn} \times F}$) \\
+$\xi$ \> Net reaction progress vector \\
+$\phi$ \> Partitioned second-order feature map \\
+$\otimes$ \> Kronecker product \\
+\end{tabbing}
+
+\section{Introduction}
+
+Water pollution presents a critical environmental and public health challenge worldwide, with particularly severe repercussions in developing nations (Lin et al., 2022; Madhav et al., 2020). Biological wastewater treatment systems, particularly those based on the activated sludge process, are the dominant approach applied to combat this issue (Duan et al., 2022). However, their modeling and analysis present formidable engineering and computational challenges (Xiao et al., 2025). The underlying biophysical mechanisms are governed by the Activated Sludge Models (ASM) (Henze et al., 2006), which rely on coupled, multiplicative non-linear kinetic expressions to describe microbial growth and substrate consumption. This inherent non-linearity limits the practical application of transparent analytical methods for process design, frequently forcing engineers to rely on iterative trial-and-error approaches or computationally expensive heuristic algorithms (Aboagye et al., 2021; Padron-Paez et al., 2020).
+
+In response to the computational and mathematical complexity inherent in non-linear Activated Sludge Models, research has increasingly focused on developing surrogate models to approximate the behavior of biological wastewater treatment systems (Bhosekar \& Ierapetritou, 2018; Durkin et al., 2024; Tsochatzidi et al., 2025). Traditional approaches have explored linearization techniques (Li et al., 2020; Yang et al., 2014) and multivariable polynomial fitting (Ahn et al., 2014; Kim et al., 2009; Lim et al., 2011). While linear methods like Partial Least Squares (PLS) offer interpretable mappings, they inherently struggle to capture the severe non-linearities of microbial kinetics without extensive feature engineering. To overcome these limitations, the machine learning (ML) paradigm has emerged as a powerful route for approximating highly non-linear wastewater-treatment behavior (Croll et al., 2023; Nazlabadi et al., 2021). Recent wastewater evidence further shows that, when predictive accuracy alone is the criterion, modern ML models can outperform mechanistic ASM baselines for effluent nitrogen prediction (Wang et al., 2025). A wide array of data-driven algorithms---ranging from distance-based methods like k-Nearest Neighbors (k-NN) and PLS (Khatri et al., 2020; Wold et al., 2001), to kernel methods like Support Vector Regression (SVR) (Fang et al., 2011), tree-based ensembles such as Random Forest (RF), AdaBoost, XGBoost, LightGBM, and CatBoost (Sadri Moghaddam \& Mesghali, 2023; Wang et al., 2025; Yang et al., 2025), and Artificial Neural Networks (ANN) (Asadi et al., 2017; Bagherzadeh et al., 2021; Mao et al., 2024)---have demonstrated strong predictive capabilities for effluent quality. 
+
+Despite their predictive accuracy, these standard ML algorithms remain structurally blind to a central physical requirement of activated sludge systems: material cannot be created or destroyed arbitrarily across the modeled control volume. A surrogate may fit observed effluent behavior well while still implying an impossible redistribution of the underlying ASM components, thereby violating the mass balances that govern COD, nitrogen, or phosphorus transfer. Related composition-preserving ML studies show that even accurate tree-based predictors can exhibit persistent unphysical conservation residuals unless an explicit corrective mechanism is imposed (Sturm \& Silva, 2025). At the same time, physically admissible concentration states must remain componentwise non-negative. These two requirements are inseparable in practice. A surrogate that conserves mass but predicts negative concentrations is still unusable, and a surrogate that preserves non-negativity while violating mass conservation remains physically misleading.
+
+Recent scientific-ML literature shows that satisfying both requirements simultaneously is nontrivial. A substantial class of methods enforces conservation alone through conservative flux formulations, stoichiometric architectures, projection operators, Bayesian reconciliation, or completion strategies, but does not guarantee non-negativity of the corrected state (Beucler et al., 2021; Geiss et al., 2022; Hansen et al., 2024; Harder et al., 2022; Sturm \& Silva, 2025; Sturm \& Wexler, 2020, 2022). In that broader literature, completion methods reconstruct withheld variables to satisfy linear equality constraints (Beucler et al., 2021), Bayesian reconciliation treats conservation as a probabilistic update (Hansen et al., 2024), and recent atmospheric-composition studies use stoichiometric null-space constructions and invariant-restoring nudges to keep learned states on the conservation manifold (Sturm \& Silva, 2025; Sturm \& Wexler, 2020, 2022). Closely related soft-constraint approaches, such as physics-informed neural networks, can encourage physically plausible behavior but generally provide neither exact conservation nor strict positivity guarantees; more generally, soft-penalty conservation treatments need not drive residual violations to zero at deployment (Hansen et al., 2024; Raissi et al., 2019). Positivity-only output transformations can prevent negative states, but without an accompanying conservation mechanism they do not by themselves enforce global material balance. Conversely, conservative projection steps that ignore positivity can still generate infeasible negative states in practice, which is precisely why joint enforcement remains difficult (Kircher \& Votsmeier, 2025).
+
+A smaller body of work has reported simultaneous enforcement of conservation and non-negativity. Kircher and Votsmeier (2025) develop positivity-preserving conservative corrections for mechanistic kinetics surrogates in atmospheric chemistry and heterogeneous catalysis, while Sturm et al. (2023) show in aerosol transport that mass-preserving scaling can maintain both total conservation and non-negativity for advected aerosol superspecies. Min et al. (2024) and Utkarsh et al. (2025) likewise propose hard-constrained learning frameworks that can impose equality and inequality constraints together in more general machine-learning settings. These results demonstrate that dual physical guarantees are achievable, but they arise in application settings whose state definitions, constraints, and deployment objectives differ substantially from those of activated sludge process surrogates.
+
+This gap is consequential for wastewater engineering. Activated sludge models couple multiple conserved material inventories with biologically and chemically constrained component states, so violations of either mass conservation or non-negativity can distort interpretation, confound process optimization, and undermine confidence in surrogate-assisted design. A physically constrained data-driven model would therefore offer several practical benefits: it would preserve the bookkeeping needed for COD, nitrogen, and phosphorus analysis, prevent impossible negative component concentrations, reduce reliance on ad hoc clipping or reconciliation, and yield predictions that remain more defensible as operating conditions and influent loads vary. Yet, to our knowledge, no prior activated sludge surrogate has provided hard guarantees of both stoichiometric mass conservation and componentwise non-negativity within a single interpretable steady-state framework.
+
+This study addresses that need through the development of Invariant-Constrained Second-Order Regression (ICSOR), a physics-informed surrogate framework for steady-state activated sludge systems. ICSOR is designed to answer a practical question: given a steady-state influent condition and operating point, what effluent state should be predicted if the surrogate is required to remain physically admissible by construction? Rather than treating physical consistency as a soft regularizer or a purely diagnostic afterthought, the framework is built so that deployed predictions satisfy both mass-conservation requirements and non-negativity requirements simultaneously.
+
+To do so, ICSOR couples an interpretable second-order surrogate with a hard physical correction performed in ASM component space. The regression structure retains transparent operating-condition, influent, and interaction effects, while the deployment step removes states that would violate the admissible physical region. The result is a surrogate that remains analytically structured and data-driven, yet is constrained to return only physically meaningful steady-state predictions.
+
+The objective of this article is to formulate the ICSOR framework as an analytically structured surrogate and to evaluate its efficacy on a standalone Continuous Stirred Tank Reactor (CSTR). By comparing ICSOR against established unconstrained baselines, this study assesses whether the proposed model can achieve competitive predictive accuracy while explicitly guaranteeing the parsimony, interpretability, and rigorous physical consistency required for reliable process analysis. The framework presented herein is strictly bounded to steady-state predictions; while it guarantees mass conservation and non-negativity, it does not claim to enforce full kinetic or thermodynamic feasibility, nor does it replace dynamic trajectory simulators. Instead, it occupies a necessary middle ground: a surrogate simple enough to be estimated transparently from data, yet mathematically constrained to respect the fundamental physical constraints of wastewater engineering.
+
+\section{Theory and Calculation}
+
+\subsection{Physical Scope, State Spaces, and Notation}
+
+A fixed reactor block or process unit represented by steady-state samples is considered. The system boundary used to define influent and effluent states is identical to the boundary used to define stoichiometric conservation. Any external source or sink that crosses that boundary must therefore be represented in the adopted stoichiometric model; otherwise, it lies outside the present conservation claim.
+
+ICSOR is formulated natively in ASM component space. Its scientific output is the effluent component vector itself, not a measured aggregate. Measured composites are obtained only afterward through an external composition matrix. This choice is deliberate because mass conservation and componentwise non-negativity are both defined in ASM component coordinates.
+
+Let $M_{op}$ be the number of operational variables, $F$ the number of ASM components, $K$ the number of reported composite variables, and $N_{rxn}$ the number of reactions. Single-sample vectors are written as column vectors. The following state spaces and operators are defined:
+\begin{itemize}
+    \item $u \in \mathbb{R}^{M_{op}}$: Operational input vector (e.g., hydraulic retention time, aeration intensity).
+    \item $c_{in} \in \mathbb{R}^{F}$: Influent ASM component concentration vector.
+    \item $c_{out} \in \mathbb{R}^{F}$: True steady-state effluent ASM component concentration vector.
+    \item $\hat{c} \in \mathbb{R}^{F}$: Final deployed ICSOR component prediction.
+    \item $y_{ext} \in \mathbb{R}^{K}$: Reported measured composite vector.
+    \item $I_{comp} \in \mathbb{R}^{K \times F}$: Composition matrix mapping ASM component concentrations to reported composites, such that $y_{ext} = I_{comp}c_{out}$.
+    \item $\nu \in \mathbb{R}^{N_{rxn} \times F}$: Stoichiometric matrix.
+\end{itemize}
+
+The linear composition map $I_{comp}$ remains external to the model itself. In the common wastewater-reporting case where its rows are entrywise non-negative, non-negative component predictions imply non-negative reported composites automatically. Thus ICSOR places the hard non-negativity guarantee where it is physically meaningful, namely on the predicted ASM component state.
+
+\subsection{Stoichiometric Structure and Conserved Quantities}
+
+Let $\nu \in \mathbb{R}^{N_{rxn} \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. For a steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{N_{rxn}}$, scaled into concentration-equivalent units, such that the net change across the control volume is:
+\begin{equation}
+ c_{out} - c_{in} = \nu^T \xi
+\end{equation}
+The vector $\xi$ is rarely observed directly. To eliminate it and isolate the conserved quantities, a full-row-rank matrix $A \in \mathbb{R}^{q \times F}$ is introduced whose rows span the left null space of $\nu$, so that $A\nu^T = 0$. Multiplying the stoichiometric change relation by $A$ yields:
+\begin{equation}
+ A(c_{out} - c_{in}) = A \nu^T \xi = 0 \quad \implies \quad A c_{out} = A c_{in}
+\end{equation}
+This invariant-matrix construction follows the same mathematical idea used by Sturm and Wexler (2020) in mass-conserving photochemical surrogates, where a null-space matrix is used to preserve elemental inventories exactly. In the present setting, the conserved rows of $A$ represent wastewater-material inventories implied by the adopted ASM reaction network and system boundary rather than atmospheric atom counts.
+Each row of $A$ represents one independent conserved combination of ASM components implied by the adopted reaction network and system boundary. The basis of $A$ is not unique, but once it is fixed, the invariant relation $Ac_{out} = Ac_{in}$ defines the exact conservation law that deployed ICSOR predictions must satisfy.
+
+\subsection{Coupled Second-Order Driver and Prediction-Space Training}
+
+Operational variables $u$ alter the process environment, whereas influent concentrations $c_{in}$ determine the material inventory presented to that environment. ICSOR keeps these roles explicit by using a partitioned second-order feature map:
+\begin{equation}
+\phi(u, c_{in}) = \begin{bmatrix}
+1 \\
+ u \\
+ c_{in} \\
+ u \otimes u \\
+ c_{in} \otimes c_{in} \\
+ u \otimes c_{in}
+\end{bmatrix} \in \mathbb{R}^{D}
+\end{equation}
+where $\otimes$ denotes the Kronecker product under column-wise vectorization and $D = 1 + M_{op} + F + M_{op}^2 + F^2 + M_{op}F$.
+
+The feature map drives a latent component-space forcing vector rather than the final deployed prediction directly:
+\begin{equation}
+ r(u, c_{in}) = B \phi(u, c_{in})
+\end{equation}
+Using a latent driver rather than predicting the deployed state directly is also consistent with stoichiometry-driven flux-to-tendency architectures such as the conservation-law neural-network formulation of Sturm and Wexler (2022). The present article adopts that separation in a different way: ICSOR keeps the driver explicitly linear-quadratic and interpretable, then combines it with a learned coupling matrix and a separate constrained deployment step rather than embedding a fixed stoichiometric layer inside a deep network.
+
+Using the same partitioned basis, the driver can be written blockwise as
+\[
+ r(u, c_{in}) = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in}),
+\]
+with $b \in \mathbb{R}^{F}$, $W_u \in \mathbb{R}^{F \times M_{op}}$, $W_{in} \in \mathbb{R}^{F \times F}$, $\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$, $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$, and $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$.
+
+Cross-component dependence is introduced explicitly through a learned coupling matrix $\Gamma \in \mathbb{R}^{F \times F}$. In this study, $\Gamma$ is estimated in an admissible set that fixes its diagonal to zero, bounds its off-diagonal entries, and rejects choices that make $R = I_F - \Gamma$ poorly conditioned. The coupled relation is written as
+\begin{equation}
+ R c = r(u, c_{in}), \qquad R = I_F - \Gamma
+\end{equation}
+
+The sign of $B$ is not constrained. That choice is deliberate: increasing and decreasing effects are both allowed in the latent driver, while non-negativity is enforced later where it matters physically, on the predicted component state itself.
+
+Over a dataset of $N$ steady-state samples, let $\Phi \in \mathbb{R}^{N \times D}$ collect the feature rows, let $C_{in} \in \mathbb{R}_{+}^{N \times F}$ collect influent component states, and let $C_{out} \in \mathbb{R}_{+}^{N \times F}$ collect effluent component targets. ICSOR introduces a fitted non-negative component prediction matrix $\widehat{C} \in \mathbb{R}_{+}^{N \times F}$ and estimates $(B, \Gamma, \widehat{C})$ through the coupled objective
+\[
+\begin{aligned}
+(\widehat{B}, \widehat{\Gamma}, \widehat{C}) = {}&
+\arg\min_{B,\, \Gamma \in \mathcal{G},\, \widehat{C} \in \mathbb{R}_{+}^{N \times F}}
+\Bigl\|
+C_{out} - \widehat{C}
+\Bigr\|_F^2 \\
+&+ \lambda_{inv}
+\Bigl\|
+(\widehat{C} - C_{in})A^T
+\Bigr\|_F^2 \\
+&+ \lambda_{sys}
+\Bigl\|
+\widehat{C}(I_F - \Gamma)^T - \Phi B^T
+\Bigr\|_F^2 \\
+&+ \lambda_B \|B\|_F^2
++ \lambda_\Gamma \|\Gamma\|_F^2.
+\end{aligned}
+\]
+
+Each term has a distinct role. The first term fits effluent ASM components directly. The second penalizes invariant mismatch in component space. The third forces consistency between the fitted states and the coupled driver relation. The ridge penalties stabilize the driver and coupling estimates.
+
+\subsection{Deployment-Time Inference with Exact Conservation and Non-Negativity}
+
+Training determines $\widehat{B}$ and $\widehat{\Gamma}$. Deployment then predicts a new component state by solving a second mathematical program. For a new sample $(u_*, c_{in,*})$, define
+\[
+\phi_* = \phi(u_*, c_{in,*}), \qquad d_* = \widehat{B}\phi_*, \qquad \widehat{R} = I_F - \widehat{\Gamma}.
+\]
+
+Whenever $\widehat{R}$ is nonsingular, the unconstrained coupled state is
+\[
+ c_{raw} = \widehat{R}^{-1} d_*.
+\]
+
+A cheap affine presolve then restores exact invariants without yet enforcing non-negativity:
+\[
+ c_{aff} = \arg\min_{c \in \mathbb{R}^{F}} \; \|c - c_{raw}\|_2^2 \quad \text{subject to} \quad A c = A c_{in,*}.
+\]
+This affine presolve plays the role of a conservation-restoring nudge: like the species-weighted correction proposed by Sturm and Silva (2025), it returns the nearest invariant-consistent state to the raw predictor. Here, however, the affine correction is treated as a cheap intermediate stage rather than the final deployed output, because exact invariants alone do not preclude negative ASM component concentrations.
+
+If $c_{raw}$ already satisfies the invariants and remains non-negative, ICSOR can deploy it directly. If $c_{raw}$ is infeasible but $c_{aff}$ is non-negative, the affine presolve is already sufficient. Only when the affine state still contains negative components does ICSOR activate the full correction program:
+\begin{equation}
+\begin{aligned}
+\hat{c} = {}& \arg\min_{c \in \mathbb{R}^{F},\, \rho \in \mathbb{R}^{F}} \; w_c^T \rho \\
+\text{subject to} \quad {}& A c = A c_{in,*}, \\
+& c \ge 0, \\
+& -\rho \le c - c_{aff} \le \rho, \\
+& \rho \ge 0
+\end{aligned}
+\end{equation}
+with fixed componentwise correction weights $w_c \in \mathbb{R}_{+}^{F}$. Equation~(6) is the deployed ICSOR predictor. It enforces exact invariant preservation and componentwise non-negativity simultaneously while keeping the final state as close as possible to the coupled affine reference in a weighted $L_1$ sense.
+That second stage reflects the same central lesson emphasized by Kircher and Votsmeier (2025): a conservative correction is only physically useful if positivity is preserved at the same time. Their scaled-space formulation is specifically designed to keep small predicted concentrations from crossing into negative values during correction. The present adoption targets steady-state activated sludge component predictions rather than atmospheric chemistry or heterogeneous catalysis, and it uses a weighted $L_1$ correction about the affine invariant reference rather than the exact scaling strategy proposed there.
+
+Under the adopted non-negative component basis, $c_{in,*}$ is feasible whenever the influent state itself is physically admissible. The deployed problem is therefore not an afterthought but the mechanism by which ICSOR closes the following gap: every deployed prediction preserves the adopted conserved quantities and remains non-negative componentwise. The raw-check, affine-presolve, then LP-correction sequence is also practically important because it reserves the general optimizer for the subset of samples whose non-negativity constraints are genuinely active.
+
+\subsection{External Reporting and Blockwise Interpretability}
+
+If reported measured composites are needed after deployment, they are computed externally by
+\[
+\hat{y}_{ext} = I_{comp}\hat{c}.
+\]
+This collapse is not part of the regression model itself. It is a reporting operator applied to the deployed component prediction. Keeping it external matters because different internal ASM component states can produce the same measured aggregates. The learned scientific object is therefore $\hat{c}$, not the reported collapse alone.
+
+Interpretability is retained at two levels. First, the six blocks of $B$ have direct engineering meaning in the latent driver: $b$ is the baseline forcing, $W_u$ and $W_{in}$ encode first-order operating and influent effects, $\Theta_{uu}$ and $\Theta_{cc}$ encode within-subspace curvature, and $\Theta_{uc}$ encodes operation-loading interaction effects. Second, $\Gamma$ describes how that driver is redistributed across ASM components through the coupled system matrix $R = I_F - \Gamma$. The deployed prediction must therefore be read as the result of a driver, a coupling structure, and a constrained inference solve acting together.
+
+These coefficients are motivated by plant operation rather than by algebraic convenience. The operating block $W_u$ corresponds to levers that wastewater engineers actually move, such as aeration intensity and hydraulic retention time. For example, a driver coefficient linking stronger aeration to oxygen-sensitive channels is practically consistent with the familiar observation that additional aeration supports nitrification, suppresses soluble oxygen demand from biodegradable COD fractions, and changes how quickly ammonium-rich influent is converted toward oxidized nitrogen forms. The influent block $W_{in}$ captures first-order loading carry-through. Larger influent $S_{NH4}$ can increase the forcing on nitrifier-related states and nitrogen-conversion pathways; larger $S_{PO4}$, $X_{PAO}$, $X_{PP}$, or $X_{PHA}$ can intensify the phosphorus-removal subproblem; and larger readily biodegradable fractions such as $S_F$ or $S_A$ can shift heterotrophic activity and oxygen consumption.
+
+The quadratic blocks are equally practical. $\Theta_{uu}$ allows the same operating action to have different marginal effects at different settings, which is exactly what plant staff observe when aeration moves from oxygen-limited to oxygen-sufficient regimes. $\Theta_{uc}$ encodes the fact that an operational change does not act on every influent equally: increasing aeration under high ammonium loading is not the same intervention as increasing aeration under low ammonium loading, and longer residence time matters differently for particulate substrate-rich influent than for a mostly soluble feed. $\Theta_{cc}$ captures coupled loading regimes such as biodegradable COD arriving simultaneously with ammonium, or phosphate arriving with PAO-related storage fractions, where one compound changes the practical meaning of another. In that sense, the block structure of $B$ is motivated by the compound-compound and compound-operation interactions that dominate real diagnoses of nitrification loss, carbon limitation, or phosphorus breakthrough. More generally, recent hard-constrained learning frameworks also emphasize that nonlinear interaction structure must be retained if one wants expressive surrogates after equality and inequality constraints are imposed (Utkarsh et al., 2025).
+
+The coupling coefficients in $\Gamma$ serve a different but equally practical purpose. They do not describe how the operating point generates forcing; they describe how one ASM component balance borrows from or offsets the others once that forcing has been created. A stable coupling between dissolved oxygen and nitrifier biomass channels reflects the operational fact that oxygen availability and nitrifier response cannot be interpreted independently. Coupling among ammonium, nitrite, and nitrate channels reflects the serial structure of nitrification and denitrification. Coupling among $S_{PO4}$, $X_{PAO}$, $X_{PP}$, and $X_{PHA}$ reflects the storage and release mechanisms behind biological phosphorus removal. Likewise, coupling between soluble and particulate COD-bearing states reflects the linked hydrolysis-and-uptake behavior that operators observe as simultaneous shifts in soluble load, biomass response, and solids production. The sign of a coupling coefficient indicates whether that linked component enters the balance in a reinforcing or compensating direction, while its magnitude indicates how strongly the redistribution must be represented to reproduce the observed state pattern. A persistent entry of $\Gamma$ is therefore practically relevant because it encodes a recurring material linkage in plant operation rather than a purely statistical artifact.
+
+\subsection{Deterministic Recursive Coupled-QP Estimation and Modeling Boundaries}
+
+This article adopts the recursive coupled-QP training route rather than a generic stochastic first-order optimizer such as Adam. That choice is deliberate. For fixed $(\Gamma, \widehat{C})$, the $B$ update is a ridge-regularized linear least-squares solve. For fixed $(B, \widehat{C})$, the $\Gamma$ update is a convex box-constrained quadratic program. For fixed $(B, \Gamma)$, the $\widehat{C}$ update is a convex non-negative quadratic program with the invariant penalty retained. The training loop therefore consists of deterministic Gauss-Seidel sweeps over exact block solutions.
+
+One practical reason is the matrix $R = I_F - \Gamma$ itself. Deployment requires $R$ to remain invertible, and in practice it must remain well conditioned because both the raw coupled state and the subsequent correction depend on solving through $R$. A nearly singular $R$ would amplify numerical noise, distort the affine presolve, and make the deployed correction unstable. The recursive coupled-QP route can control this requirement explicitly: each $\Gamma$ update is box-constrained, its diagonal is fixed at zero, and the candidate is accepted only if $\kappa(I_F - \Gamma)$ stays below a prescribed conditioning threshold. If that threshold is violated, the candidate can be shrunk toward the origin and, if necessary, replaced by a safe fallback. Stochastic methods such as Adam, and indeed other generic first-order solvers, do not provide that admissibility guarantee by themselves. They may lower the objective while still visiting or returning nearly singular coupling matrices unless an additional conditioning projection is imposed externally.
+
+This architecture is preferred here over generic stochastic first-order training for three reasons. First, each exact block update cannot increase the coupled objective, so the objective sequence within a restart is monotone non-increasing and converges in value to a stationary point. Second, the optimization variables remain attached to interpretable convex subproblems instead of being absorbed into one optimizer trajectory with learning-rate, momentum, clipping, or epoch-count sensitivity. Third, with fixed initialization, restart policy, and solver tolerances, the recursive coupled-QP route is reproducible in a way that stochastic training need not be.
+
+The solver choices follow the same principle of structural fidelity. OSQP is used for the convex QP subproblems because the $\Gamma$ and $\widehat{C}$ blocks are sparse, box- and non-negativity-constrained quadratic programs. The deployment problem in Eq.~(6) is solved with HiGHS because, once $c_{aff}$ is fixed, the deployed correction is a linear program rather than a quadratic one. A second computational advantage comes from the hierarchical presolve described in Section~2.4: the raw coupled state is checked first, the affine invariant correction is checked second, and the LP is reserved only for states whose non-negativity constraints remain active after those cheaper steps. The manuscript therefore presents one definite ICSOR contract: direct component-space prediction, explicit learned coupling, invariant-aware training, exact constrained deployment, and deterministic recursive coupled-QP estimation.
+
+The iterative estimator and the accelerated deployment logic can be summarized as follows.
+
+\begin{quote}
+\noindent\textbf{Pseudocode 1. Deterministic recursive coupled-QP training}
+\begin{tabbing}
+\hspace{0.6cm}\=\hspace{0.6cm}\=\hspace{0.6cm}\=\kill
+\textbf{Input:} $\Phi$, $C_{in}$, $C_{out}$, $A$, solver settings \\
+\textbf{for} restart $s = 1, \dots, S$ \textbf{do} \\
+\> initialize admissible $\Gamma^{(0,s)}$ and non-negative $\widehat{C}^{(0,s)}$ \\
+\> compute $B^{(0,s)}$ from the corresponding ridge solve \\
+\> \textbf{for} $t = 0, \dots, T_{\max}-1$ \textbf{do} \\
+\>\> update $B^{(t+1,s)}$ by ridge least squares \\
+\>\> update $\Gamma^{(t+1,s)}$ by constrained QP \\
+\>\> enforce zero diagonal, box bounds, and $\kappa(I_F - \Gamma^{(t+1,s)}) \le \kappa_{\max}$ \\
+\>\> update $\widehat{C}^{(t+1,s)}$ by non-negative invariant-aware QP \\
+\>\> record the objective value and its running minimum \\
+\>\> \textbf{if} the trailing objective slope is below tolerance \textbf{then stop the restart} \\
+\> \textbf{end for} \\
+\textbf{end for} \\
+retain the feasible restart with the smallest recorded objective \\
+\textbf{Output:} $\widehat{B}$, $\widehat{\Gamma}$, $\widehat{C}$
+\end{tabbing}
+\end{quote}
+
+\begin{quote}
+\noindent\textbf{Pseudocode 2. Hierarchical deployment with affine presolve}
+\begin{tabbing}
+\hspace{0.6cm}\=\hspace{0.6cm}\=\hspace{0.6cm}\=\kill
+\textbf{Input:} $u_*$, $c_{in,*}$, $\widehat{B}$, $\widehat{\Gamma}$, $A$ \\
+form $\phi_*$ and compute the raw coupled state $c_{raw} = (I_F - \widehat{\Gamma})^{-1}\widehat{B}\phi_*$ \\
+\textbf{if} $c_{raw}$ is invariant-consistent and non-negative \textbf{then return} $c_{raw}$ \\
+form the affine invariant correction $c_{aff}$ \\
+\textbf{if} $c_{aff}$ is non-negative \textbf{then return} $c_{aff}$ \\
+solve the deployment LP in Eq.~(6) with $c_{aff}$ as the reference state \\
+\textbf{return} the projected state $\hat{c}$
+\end{tabbing}
+\end{quote}
+
+\section*{References}
+
+\noindent Aboagye, E. A., Burnham, S. M., Dailey, J., Zia, R., Tran, C., Desai, M., \& Yenkie, K. M. (2021). Systematic design, optimization, and sustainability assessment for generation of efficient wastewater treatment networks. \textit{Water, 13}(9), 1326.
+
+\noindent Ahn, J. Y., Chu, K. H., Yoo, S. S., Mang, J. S., Sung, B. W., \& Ko, K. B. (2014). Determination of optimal operating factors via modeling for livestock wastewater treatment: Comparison of simulated and experimental data. \textit{International Biodeterioration \& Biodegradation, 95}, 46--54.
+
+\noindent Asadi, A., Verma, A., Yang, K., \& Mejabi, B. (2017). Wastewater treatment aeration process optimization: A data mining approach. \textit{Journal of Environmental Management, 203}, 630--639.
+
+\noindent Bagherzadeh, F., Mehrani, M. J., Basirifard, M., \& Roostaei, J. (2021). Comparative study on total nitrogen prediction in wastewater treatment plant and effect of various feature selection methods on machine learning algorithms performance. \textit{Journal of Water Process Engineering, 41}, 102033.
+
+\noindent Beucler, T., Pritchard, M., Rasp, S., Ott, J., Baldi, P., \& Gentine, P. (2021). Enforcing analytic constraints in neural networks emulating physical systems. \textit{Physical Review Letters, 126}(9), 098302.
+
+\noindent Bhosekar, A., \& Ierapetritou, M. (2018). Advances in surrogate based modeling, feasibility analysis, and optimization: A review. \textit{Computers \& Chemical Engineering, 108}, 250--267.
+
+\noindent Croll, H. C., Ikuma, K., Ong, S. K., \& Sarkar, S. (2023). Reinforcement learning applied to wastewater treatment process control optimization: Approaches, challenges, and path forward. \textit{Critical Reviews in Environmental Science and Technology, 53}(20), 1775--1794.
+
+\noindent Duan, S., Zhang, Y., \& Zheng, S. (2022). Heterotrophic nitrifying bacteria in wastewater biological nitrogen removal systems: A review. \textit{Critical Reviews in Environmental Science and Technology, 52}(13), 2302--2338.
+
+\noindent Durkin, A., Otte, L., \& Guo, M. (2024). Surrogate-based optimisation of process systems to recover resources from wastewater. \textit{Computers \& Chemical Engineering, 182}, 108584.
+
+\noindent Fang, F., Ni, B., Li, W., Sheng, G., \& Yu, H. (2011). A simulation-based integrated approach to optimize the biological nutrient removal process in a full-scale wastewater treatment plant. \textit{Chemical Engineering Journal, 174}(2--3), 635--643.
+
+\noindent Geiss, A., Silva, S. J., \& Hardin, J. C. (2022). Downscaling atmospheric chemistry simulations with physically consistent deep learning. \textit{Geoscientific Model Development, 15}(17), 6677--6694.
+
+\noindent Harder, P., Watson-Parris, D., Stier, P., Strassel, D., Gauger, N. R., \& Keuper, J. (2022). Physics-informed learning of aerosol microphysics. \textit{Environmental Data Science, 1}, e20.
+
+\noindent Hansen, D., Maddix, D. C., Alizadeh, S., Gupta, G., \& Mahoney, M. W. (2024). Learning physical models that can respect conservation laws. \textit{Physica D: Nonlinear Phenomena, 457}, 133952.
+
+\noindent Henze, M., Gujer, W., Mino, T., \& van Loosedrecht, M. (2006). Activated Sludge Models ASM1, ASM2, ASM2d and ASM3. \textit{Water Intelligence Online, 5}(0).
+
+\noindent Khatri, P., Gupta, K. K., \& Gupta, R. K. (2020). A review of partial least squares modeling (PLSM) for water quality analysis. \textit{Modeling Earth Systems and Environment, 6}, 1419--1426.
+
+\noindent Kim, M., Rao, A. S., \& Yoo, C. (2009). Dual Optimization Strategy for N and P Removal in a Biological Wastewater Treatment Plant. \textit{Industrial and Engineering Chemistry Research, 48}(13), 6363--6371.
+
+\noindent Kircher, J., \& Votsmeier, M. (2025). Machine learning surrogate models for mechanistic kinetics: Embedding atom balance and positivity. \textit{The Journal of Physical Chemistry Letters, 16}(19), 4715--4723.
+
+\noindent Li, M., Hu, S., Xia, J., Wang, J., Song, X., \& Shen, H. (2020). Dissolved Oxygen Model Predictive Control for Activated Sludge Process Model Based on the Fuzzy C-means Cluster Algorithm. \textit{International Journal of Control, Automation and Systems, 18}(9), 2435--2444.
+
+\noindent Lim, J., Lee, Y., Ataei, A., \& Yoo, C. (2011). Exploration of dual optimal conditions for COD and nitrogen removal in an MBR. \textit{Asia-Pacific Journal of Chemical Engineering, 6}(3), 433--440.
+
+\noindent Lin, L., Yang, H., \& Xu, X. (2022). Effects of Water Pollution on Human Health and Disease Heterogeneity: A Review. \textit{Frontiers in Environmental Science, 10}, 880246.
+
+\noindent Madhav, S., Ahamad, A., Singh, A. K., Kushawaha, J., Chauhan, J. S., Sharma, S., \& Singh, P. (2020). \textit{Water Pollutants: Sources and Impact on the Environment and Human Health}.
+
+\noindent Mao, Z., Li, X., Zhang, X., Li, D., Lu, J., Li, J., \& Zheng, F. (2024). Optimization of effluent quality and energy consumption of aeration process in wastewater treatment plants using artificial intelligence. \textit{Journal of Water Process Engineering, 63}, 105384.
+
+\noindent Min, Y., Sonar, A., \& Azizan, N. (2024). Hard-constrained neural networks with universal approximation guarantees. \textit{arXiv preprint arXiv:2410.10807}.
+
+\noindent Nazlabadi, E., Niaragh, E. K., \& Moghaddam, M. R. A. (2021). A systematic and critical review of two decades' application of response surface methodology in biological wastewater treatment processes. \textit{Desalination and Water Treatment, 228}, 92--120.
+
+\noindent Padron-Paez, J. I., Almaraz, S. D. L., \& Rom\'an-Mart\'inez, A. (2020). Sustainable wastewater treatment plants design through multiobjective optimization. \textit{Computers \& Chemical Engineering, 140}, 106850.
+
+\noindent Raissi, M., Perdikaris, P., \& Karniadakis, G. E. (2019). Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations. \textit{Journal of Computational Physics, 378}, 686--707.
+
+\noindent Sadri Moghaddam, S., \& Mesghali, H. (2023). A new hybrid ensemble approach for the prediction of effluent total nitrogen from a full-scale wastewater treatment plant using a combined trickling filter-activated sludge system. \textit{Environmental Science and Pollution Research, 30}(1), 1622--1639.
+
+\noindent Sturm, P. M., Cappa, C. D., \& Wexler, A. S. (2023). Advecting superspecies: Efficiently modeling transport of organic aerosol with a mass-conserving dimensionality reduction method. \textit{Journal of Advances in Modeling Earth Systems, 15}(3), e2022MS003235.
+
+\noindent Sturm, P. M., \& Silva, S. J. (2025). A nudge to the truth: Atom conservation as a hard constraint in models of atmospheric composition using a species-weighted correction. \textit{ACS ES\&T Air, 5}(1), 279--289.
+
+\noindent Sturm, P. M., \& Wexler, A. S. (2020). A mass- and energy-conserving framework for using machine learning to speed computations: A photochemistry example. \textit{Geoscientific Model Development, 13}(9), 4435--4442.
+
+\noindent Sturm, P. M., \& Wexler, A. S. (2022). Conservation laws in a neural network architecture: Enforcing the atom balance of a Julia-based photochemical model (v0.2.0). \textit{Geoscientific Model Development, 15}(9), 3417--3431.
+
+\noindent Tsochatzidi, A., Cenci, F., Aroniada, M., \& Papageorgiou, L. G. (2025). A novel surrogate-based optimisation framework for pharmaceutical process systems. \textit{International Journal of Pharmaceutics, 682}, 125861.
+
+\noindent Utkarsh, Maddix, D. C., Ma, R., Mahoney, M. W., \& Wang, Y. (2025). End-to-end probabilistic framework for learning with hard constraints. \textit{arXiv preprint}.
+
+\noindent Wang, Y., Li, T., Bai, L., Yu, H., \& Qu, F. (2025). Comparison of interpretable machine learning models and mechanistic model for predicting effluent nitrogen in WWTP. \textit{Journal of Water Process Engineering, 77}, 108344.
+
+\noindent Wold, S., Sj\"ostr\"om, M., \& Eriksson, L. (2001). PLS-regression: a basic tool of chemometrics. \textit{Chemometrics and Intelligent Laboratory Systems, 58}(2), 109--130.
+
+\noindent Xiao, Y., Zhao, B., Zhang, X., \& Yue, X. (2025). A new paradigm in activated sludge management: an interpretable framework integrating mechanistic dynamics with a data-driven surrogate model. \textit{Environmental Research}, 123435.
+
+\noindent Yang, T., Qiu, W., Ma, Y., Chadli, M., \& Zhang, L. (2014). Fuzzy model-based predictive control of dissolved oxygen in activated sludge processes. \textit{Neurocomputing, 136}, 88--95.
+
+\noindent Yang, S. J., Kim, J., Eom, J., Kim, M., Lee, M., \& Lee, K. H. (2025). Machine learning based prediction of waste activated sludge generation for optimization of WWTP operational efficiency. \textit{Environmental Research}, 122990.
+
+\end{document}

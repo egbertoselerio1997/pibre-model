@@ -1,0 +1,110 @@
+\relax 
+\def\@LN@column{1}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{2}{}\protected@file@percent }
+\def\@LN@column{1}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Theory and Calculation}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Physical Scope, State Spaces, and Notation}{4}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Stoichiometric Structure and Conserved Quantities}{5}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Coupled Second-Order Driver and Prediction-Space Training}{6}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Deployment-Time Inference with Exact Conservation and Non-Negativity}{7}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}External Reporting and Blockwise Interpretability}{8}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Deterministic Recursive Coupled-QP Estimation and Modeling Boundaries}{9}{}\protected@file@percent }
+\def\@LN@column{1}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Methodology}{11}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Mechanistic Dataset and Simulation Domain}{11}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Influent ASM2d-TSN state variable sampling ranges. All concentrations are expressed in the native ASM2d units: g~COD/m\textsuperscript  {3} for organic and biomass fractions, g~N/m\textsuperscript  {3} for nitrogen species, g~P/m\textsuperscript  {3} for phosphorus species, mol/m\textsuperscript  {3} for alkalinity, g~O\textsubscript  {2}/m\textsuperscript  {3} for dissolved oxygen, and g~TSS/m\textsuperscript  {3} for solids fractions.}}{12}{}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:influent_ranges}{{1}{12}{}{table.1}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Construction of the Benchmark Dataset and Constraint Operators}{13}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Preprocessing and Split Management}{14}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Hyperparameter Optimization}{14}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Optuna-optimized hyperparameters for the classical benchmark regressors. ICSOR used the fixed recursive coupled-QP configuration described in Section~2.}}{15}{}\protected@file@percent }
+\newlabel{tab:optuna_hyperparameters}{{2}{15}{}{table.2}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Benchmark Models}{16}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.1}ICSOR}{16}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.2}Classical Regressors}{16}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Multilayer perceptron architectures used in the classical benchmark. Each box denotes a fully connected layer followed by the specified activation function. The numbers indicate the layer width (number of neurons). The shallow architecture uses ReLU activation, while the medium and deep architectures use logistic (sigmoid) activation. All three architectures map 23 inputs to 6 measured outputs.}}{17}{}\protected@file@percent }
+\newlabel{fig:mlp_architectures}{{1}{17}{}{figure.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}Prediction Taxonomy and Metric Definitions}{17}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.1}Raw and Projected Predictions}{17}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.2}Effective Metrics}{18}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.6.3}Regression Metrics}{18}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.7}Evaluation Protocol}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.8}Repeated Dataset-Size Analysis}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.9}Comparative Analysis}{19}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.9.1}Normalized Area Under the Learning Curve (NAULC)}{19}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.9.2}Average Rank}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.9.3}Generalization Gap}{20}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.9.4}Per-Target Leaderboards}{20}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Results and Discussion}{21}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Overall Model Ranking at Maximum Training Size}{21}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Effective test metrics at the full training size (8{,}000 training samples, 2{,}000 test samples), sorted by effective test RMSE rank. ICSOR uses the projected prediction $\hat  {y}_{ext} = I_{comp}\,\hat  {c}$; all classical models use their raw measured-space output.}}{21}{}\protected@file@percent }
+\newlabel{tab:leaderboard}{{3}{21}{}{table.3}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Consistency Across Metrics and Training Sizes: Average Rank Analysis}{22}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Average rank heatmap across all training sizes, measured output targets, and metrics. Lower average rank (darker shading) indicates more consistent top performance across the full evaluation protocol.}}{23}{}\protected@file@percent }
+\newlabel{fig:avg_rank_heatmap}{{2}{23}{}{figure.2}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Sample Efficiency: Learning Curve Analysis}{24}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Effective test RMSE and MAE learning curves across training sizes (400--8{,}000 samples). Lines denote the mean across resampling repetitions; shaded bands represent the interquartile range. All twelve models share identical train-test partitions at each size.}}{24}{}\protected@file@percent }
+\newlabel{fig:lc_rmse_mae}{{3}{24}{}{figure.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Effective test $R^2$ and MAPE learning curves across training sizes (400--8{,}000 samples). Higher $R^2$ is better; lower MAPE is better.}}{25}{}\protected@file@percent }
+\newlabel{fig:lc_r2_mape}{{4}{25}{}{figure.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Normalized Area Under the Learning Curve (NAULC) for each model and metric, computed by trapezoidal integration of the effective test metric over the training-size axis and normalized by the training-size span. For RMSE, MAE, MAPE, and MSE, lower is better; for $R^2$, higher is better. Models are sorted by RMSE NAULC.}}{25}{}\protected@file@percent }
+\newlabel{tab:naulc}{{4}{25}{}{table.4}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Per-Target Performance Analysis}{26}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Effective test RMSE by measured output target at the full training size (8{,}000 training samples). Bold denotes the best model for each target. Models are sorted by overall effective test RMSE rank (Table~\ref {tab:leaderboard}).}}{27}{}\protected@file@percent }
+\newlabel{tab:per_target}{{5}{27}{}{table.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Per-target diagnostic heatmaps at the largest training size (8{,}000 samples). (a)~Effective test RMSE for each model and measured output target. (b)~Percentage of predicted values below zero for each model and target. Models are ordered by overall average rank (best at top).}}{27}{}\protected@file@percent }
+\newlabel{fig:target_heatmaps}{{5}{27}{}{figure.5}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Generalization Gap Analysis}{28}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Effective RMSE generalization gap ($\Delta _{\mathrm  {RMSE}} = \overline  {\mathrm  {RMSE}}_{\mathrm  {test}} - \overline  {\mathrm  {RMSE}}_{\mathrm  {train}}$) as a function of training size. Smaller gaps indicate better generalization. ICSOR (bold) maintains one of the smallest gaps across all training sizes.}}{29}{}\protected@file@percent }
+\newlabel{fig:gen_gap}{{6}{29}{}{figure.6}{}}
+\def\@LN@column{1}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Effective RMSE generalization gap at the full training size (8{,}000 training samples). The gap is defined as $\Delta _{\mathrm  {RMSE}} = \mathrm  {RMSE}_{\mathrm  {test}} - \mathrm  {RMSE}_{\mathrm  {train}}$. The percentage is normalized by $\mathrm  {RMSE}_{\mathrm  {train}}$. Models are sorted by gap percentage.}}{30}{}\protected@file@percent }
+\newlabel{tab:gen_gap}{{6}{30}{}{table.6}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Physical Plausibility Diagnostics}{31}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.1}Negative Prediction Rates}{31}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.2}Raw-to-Projected Correction Magnitude}{31}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces ICSOR-specific physical diagnostics across training sizes. (a)~L2 norm of the correction applied by the stoichiometric invariant projection and non-negativity quadratic program. The decreasing trend indicates that the raw surrogate $c_{raw} = \setbox \z@ \hbox {\mathsurround \z@ $\textstyle B$}\mathaccent "0362{B}_{ls}\,\phi (u,c_{in})$ progressively aligns with the physical constraint structure as training data grows. (b)~L2 norm of the constraint residual $Ac^* - Ac_{in}$, confirming machine-precision satisfaction of the stoichiometric invariant at all training sizes.}}{32}{}\protected@file@percent }
+\newlabel{fig:icsor_diagnostics}{{7}{32}{}{figure.7}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.3}Constraint Satisfaction Residuals}{33}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.7}Interpretability of the ICSOR Affine Core}{33}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces ICSOR coefficient density analysis for the identifiable affine core $M$. A coefficient in target equation $y$ is counted as retained when $|\beta | \ge 0.001 \max _{\beta ' \in \mathcal  {E}_y} |\beta '|$, so the threshold adapts to the native scale of each target equation.}}{34}{}\protected@file@percent }
+\newlabel{tab:icsor_density}{{7}{34}{}{table.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces First-order coefficient plots of the identifiable ICSOR affine core in measured space. The displayed quantities correspond to the ICSOR blocks defined in Section~2.5.}}{34}{}\protected@file@percent }
+\newlabel{fig:icsor_coeff_first_order}{{8}{34}{}{figure.8}{}}
+\def\@LN@column{1}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Second-order coefficient plots of the identifiable ICSOR affine core in measured space. These plots separate pure operating curvature, mixed operating-influent interactions, and pure influent interactions, enabling a direct engineering reading of the model structure developed in Section~2.}}{35}{}\protected@file@percent }
+\newlabel{fig:icsor_coeff_second_order}{{9}{35}{}{figure.9}{}}
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.8}Synthesis and Discussion}{36}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.8.1}Predictive Accuracy}{36}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.8.2}Stability and Generalization}{37}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.8.3}Sample Efficiency and Target Robustness}{37}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.8.4}Physical Plausibility}{38}{}\protected@file@percent }
+\def\@LN@column{1}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.8.5}Interpretability and Engineering Transparency}{39}{}\protected@file@percent }
+\gdef \@abspage@last{39}
