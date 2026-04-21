@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -1679,12 +1680,14 @@ def run_model_dataset_size_analysis(
 				if extra_runner_kwargs is not None:
 					runner_kwargs.update(dict(extra_runner_kwargs))
 				clean_runner_kwargs = {key: value for key, value in runner_kwargs.items() if value is not None}
+				run_started_at = time.perf_counter()
 				result = model_runner(
 					dataset_splits.train,
 					dataset_splits.test,
 					A_matrix,
 					**clean_runner_kwargs,
 				)
+				run_elapsed_seconds = float(time.perf_counter() - run_started_at)
 
 				run_metadata = _resolve_run_metadata(
 					model_name=model_name,
@@ -1728,6 +1731,7 @@ def run_model_dataset_size_analysis(
 				run_rows.append(
 					{
 						**run_metadata,
+						"elapsed_seconds": run_elapsed_seconds,
 						"artifact_model_bundle_path": None if artifact_paths.get("model_bundle") is None else str(artifact_paths["model_bundle"]),
 						"artifact_metrics_path": None if artifact_paths.get("metrics") is None else str(artifact_paths["metrics"]),
 						"artifact_optuna_path": None if artifact_paths.get("optuna") is None else str(artifact_paths["optuna"]),
