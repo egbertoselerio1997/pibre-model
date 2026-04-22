@@ -1029,7 +1029,7 @@
       "min_total_samples": 500,
       "max_total_samples": 10000,
       "total_sample_step": 950,
-      "n_repeats": 100,
+      "n_repeats": 5,
       "test_fraction": 0.2,
       "icsor_response_surface": {
         "grid_points_per_axis": 100,

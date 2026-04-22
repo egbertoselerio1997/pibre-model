@@ -1,0 +1,11 @@
+Model,RMSE,MAE,R2,MAPE
+ICSOR,,,,
+XGBoost,,,,
+LightGBM,,,,
+CatBoost,,,,
+AdaBoost,,,,
+Random Forest,,,,
+SVR,,,,
+k-NN,,,,
+PLS,,,,
+MLP,,,,
