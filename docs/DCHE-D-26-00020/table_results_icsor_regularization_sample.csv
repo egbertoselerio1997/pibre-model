@@ -1,0 +1,9 @@
+Coefficient block,Total coeffs.,Retained coeffs.,% Retained
+b,1,1,100.0
+W_u,2,2,100.0
+W_in,20,20,100.0
+Theta_uu,4,4,100.0
+Theta_uc,40,18,45.0
+Theta_cc,400,59,14.75
+Gamma,380,356,93.6842
+Overall summary,847,460,54.3093
