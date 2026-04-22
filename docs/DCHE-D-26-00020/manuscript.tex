@@ -547,183 +547,182 @@ and reporting the corresponding mean, standard deviation, and rank.
 
 Physical-admissibility diagnostics were evaluated on the same final component-space predictions, because mass conservation and non-negativity are defined before external composition collapse. For a final component prediction $\tilde{c}$, mass-conservation violation was quantified by $v_{mc} = \|A(\tilde{c} - c_{in})\|_2$, and non-negativity violation was quantified by $v_{nn} = \|\min(\tilde{c}, 0)\|_1$, where the minimum is taken componentwise. A sample was counted as violating mass conservation or non-negativity when the corresponding quantity exceeded a numerical tolerance of $10^{-10}$. For each model, violation frequency was reported as the percentage of test samples that violated each condition.
 
-\section{Results and Discussion Outline}
-
-This section is an implementation scaffold for the final Results and Discussion section that will follow the methodology. The subsection order, paragraph roles, tables, and figures are arranged to match the evaluation protocol above while staying compatible with the flat-folder submission rules in the local submission guideline. Every figure file referenced below is stored directly in this submission folder with a manuscript-safe flat filename. The numerical values in the sample tables and figures are illustrative layout values only and should be replaced in place by the final benchmark exports.
+\section{Results and Discussion}
 
 \subsection{Overall Benchmark Performance on the Fixed Train-Test Split}
 
-\noindent\textbf{Paragraph 1: Framing the benchmark.} Open the final prose with one short paragraph that restates the fixed 80--20 benchmark at a high level, points the reader to Table~\ref{tab:results_benchmark_sample}, and reminds the reader that every model is compared in the same externally reported composite space. This paragraph should identify the primary comparison metric used to order models in the narrative, which should remain aggregate test RMSE unless the final rerun shows a materially different discriminator.
+Table~\ref{tab:results_benchmark_sample} summarizes the fixed 80--20 benchmark after each model's predicted ASM component state has been collapsed through the same external composition map to COD, TN, TP, and TSS. Aggregate test RMSE is adopted as the primary ordering metric because it measures error in the same reported-composite space used throughout the comparison. On that criterion, the retained models separate into a leading group and a trailing group. The MLP attains the lowest aggregate RMSE (4.3756), MAE (2.5473), $R^2$ (0.9915), and MAPE (0.0123); LightGBM follows at RMSE 5.2971; and SVR and ICSOR are closely spaced at 5.9734 and 5.9768, respectively.
 
 \begin{table}[H]
 \centering
-\caption{Illustrative layout for the fixed-split benchmark summary. Replace the sample values with the final 80--20 test metrics for the retained model set before submission.}
+\caption{Fixed-split 80--20 test performance of the retained model set in the reported-composite space. Metrics are computed after external composition collapse from the predicted ASM component states.}
 \label{tab:results_benchmark_sample}
 \scriptsize
 \begin{tabular}{lcccc}
 \hline
 Model & RMSE & MAE & $R^2$ & MAPE \\
 \hline
-MLP & 4.887 & 2.305 & 0.9854 & 0.0156 \\
-SVR & 5.772 & 3.111 & 0.9791 & 0.0223 \\
-LightGBM & 6.500 & 3.681 & 0.9768 & 0.0246 \\
-CatBoost & 6.514 & 3.746 & 0.9742 & 0.0269 \\
-XGBoost & 6.824 & 3.955 & 0.9733 & 0.0270 \\
-ICSOR & 6.942 & 3.929 & 0.9724 & 0.0266 \\
-PLS & 10.348 & 6.271 & 0.9436 & 0.0420 \\
-AdaBoost & 15.151 & 9.867 & 0.8815 & 0.0726 \\
-Random Forest & 16.266 & 10.036 & 0.8806 & 0.0693 \\
-$k$-NN & 18.166 & 11.913 & 0.7956 & 0.0941 \\
+MLP & 4.3756 & 2.5473 & 0.9915 & 0.0123 \\
+LightGBM & 5.2971 & 3.2128 & 0.9806 & 0.0203 \\
+SVR & 5.9734 & 3.4884 & 0.9713 & 0.0244 \\
+ICSOR & 5.9768 & 3.7012 & 0.9700 & 0.0256 \\
+XGBoost & 6.0997 & 3.7928 & 0.9733 & 0.0243 \\
+CatBoost & 6.4534 & 4.0689 & 0.9727 & 0.0250 \\
+AdaBoost & 21.2741 & 13.1522 & 0.8643 & 0.0653 \\
+$k$-NN & 23.6072 & 13.8736 & 0.8535 & 0.0557 \\
+PLS & 28.2402 & 17.0467 & 0.7808 & 0.0681 \\
+Random Forest & 28.9996 & 16.9344 & 0.7934 & 0.0632 \\
 \hline
 \end{tabular}
 \end{table}
 
-\noindent\textbf{Paragraph 2: Aggregate ranking and headline comparison.} Use the next paragraph to identify the best aggregate performer, place ICSOR relative to the strongest unconstrained baseline, and quantify the primary gap in the headline metric. Table~\ref{tab:results_benchmark_sample} should carry this discussion directly because it already contains the ranking metric together with the supporting secondary metrics, so a separate ranking figure would only restate the same evidence.
+In terms of predictive accuracy on the fixed split, the MLP attains the lowest error among the retained baselines and LightGBM attains the lowest among the tree-based methods. ICSOR does not attain the lowest aggregate RMSE, but it remains within 0.6797 of LightGBM and within 0.0034 of SVR, while producing a lower aggregate RMSE than XGBoost and CatBoost. This placement is noteworthy because ICSOR operates under the physical constraints examined in Section~4.3, whereas the unconstrained baselines are not subject to conservation or non-negativity requirements during training or deployment.
 
-\noindent\textbf{Paragraph 3: Target-specific interpretation.} The third paragraph should explain whether the aggregate ranking hides target-specific reversals across COD, TN, TP, and TSS, using Table~\ref{tab:results_target_sample} as the anchor. This is the right place to state whether ICSOR is especially competitive on a physically constrained target, whether the unconstrained baselines dominate the carbon or solids targets, and whether any ranking reversals are large enough to change the take-home message from the aggregate table.
+Table~\ref{tab:results_target_sample} indicates that the aggregate ordering is driven primarily by COD, TN, and TSS. The MLP attains the lowest RMSE on all three of those composites, while LightGBM attains the lowest among the non-neural methods. On COD alone, ICSOR (RMSE 7.5146) is within 0.0602 of LightGBM and below XGBoost, CatBoost, SVR, and the remaining baselines. Its larger TN and TSS errors, however, prevent that COD performance from translating into a correspondingly favorable aggregate rank. TP contributes negligibly to model differentiation: every retained method falls within the narrow RMSE band 0.081095--0.081143. The per-target decomposition therefore suggests that, once phosphorus prediction is effectively saturated, the observable model separation arises from carbon, nitrogen, and suspended-solids behavior.
 
 \begin{table}[htbp]
 \centering
-\caption{Illustrative layout for the per-target RMSE table at the largest training size. Replace the sample values with the final reported-composite RMSE values from the retained benchmark run.}
+\caption{Per-target fixed-split test RMSE for the retained models in the reported-composite space.}
 \label{tab:results_target_sample}
 \scriptsize
 \begin{tabular}{lcccc}
 \hline
 Model & COD & TN & TP & TSS \\
 \hline
-MLP & 7.647 & 1.047 & 0.473 & 6.434 \\
-SVR & 8.638 & 1.594 & 0.453 & 7.747 \\
-LightGBM & 10.597 & 1.685 & 0.470 & 8.234 \\
-CatBoost & 10.191 & 1.798 & 0.563 & 8.604 \\
-XGBoost & 11.106 & 1.742 & 0.484 & 8.701 \\
-ICSOR & 10.993 & 1.646 & 0.396 & 8.922 \\
-PLS & 16.947 & 1.996 & 0.490 & 13.360 \\
-AdaBoost & 27.406 & 2.821 & 1.449 & 17.011 \\
-Random Forest & 31.979 & 3.985 & 2.328 & 16.419 \\
-$k$-NN & 32.922 & 6.527 & 3.410 & 20.201 \\
+MLP & 6.7973 & 1.5327 & 0.081100 & 6.0565 \\
+LightGBM & 7.4544 & 2.7277 & 0.081102 & 6.9256 \\
+SVR & 8.4677 & 3.4488 & 0.081107 & 7.2521 \\
+ICSOR & 7.5146 & 3.5284 & 0.081113 & 8.4930 \\
+XGBoost & 8.6141 & 3.2010 & 0.081109 & 8.0324 \\
+CatBoost & 8.8007 & 3.1276 & 0.081105 & 8.3384 \\
+AdaBoost & 38.4413 & 5.4026 & 0.081143 & 18.1134 \\
+$k$-NN & 38.5307 & 4.1813 & 0.081095 & 27.4791 \\
+PLS & 42.3080 & 5.0720 & 0.081131 & 36.1969 \\
+Random Forest & 45.2838 & 3.9084 & 0.081099 & 35.3201 \\
 \hline
 \end{tabular}
 \end{table}
 
-\noindent\textbf{Paragraph 4: Transition to the repeated-size analysis.} Close the fixed-split subsection with one short transition paragraph that explains why the full argument cannot stop at one split. This paragraph should signal that the next subsection evaluates sample efficiency, ranking stability, and overfitting behavior across repeated resampling rather than revisiting one-shot benchmark numbers.
+Because the leading fixed-split models remain closely spaced on aggregate RMSE, a single train-test partition does not suffice to characterize sample efficiency or ranking stability. The repeated dataset-size study described below provides a broader basis for distinguishing models whose performance on one split may not generalize from those that remain competitive as the amount of training data varies.
 
 \subsection{Sample Efficiency, Ranking Stability, and Generalization}
 
-\noindent\textbf{Paragraph 1: Learning-curve overview.} Open this subsection by explaining the repeated dataset-size protocol in one sentence and immediately pointing the reader to Figure~\ref{fig:results_learning_curve_sample}. This retained figure has a unique purpose in the outline: it is the only compact way to show how model separation evolves with sample size. The final prose should describe how quickly the leading models improve with sample size, whether ICSOR is more competitive in the low-data regime, and whether the ranking becomes more or less stable as the training set grows.
+Figure~\ref{fig:results_learning_curve_sample} shows a pattern that the fixed split alone does not capture: at the smallest training size of 400 samples, ICSOR attains the lowest mean test RMSE (10.7850) among the retained models, followed by XGBoost (11.2583) and LightGBM (11.4537), while the MLP ranks fifth (13.2567). As the training size increases, however, the ordering shifts. By 8000 training samples, the MLP attains the lowest RMSE (4.6169), followed by LightGBM (5.2681), SVR (5.8359), and ICSOR (5.9390). These results suggest that ICSOR offers comparatively favorable sample efficiency in the low-data regime, but that the more flexible unconstrained baselines can surpass it once sufficient training data are available.
 
 \begin{figure}
 \centering
 \includegraphics[width=0.92\textwidth]{figure2_rmse_learning_curve.pdf}
-\caption{Illustrative layout for the repeated dataset-size learning-curve figure. Replace this sample asset with the final RMSE learning-curve export from the retained benchmark sweep.}
+\caption{Repeated dataset-size learning curves for effective test RMSE. Lines show the repeat-averaged test RMSE across the retained train-size sweep, and shaded bands show the interquartile range over 100 repeated resamples at each size.}
 \label{fig:results_learning_curve_sample}
 \end{figure}
 
-\noindent\textbf{Paragraph 2: Compact ranking summary.} Use the second paragraph to interpret Table~\ref{tab:results_scaling_sample} rather than opening separate narrative threads for every metric. This table has a distinct role from Figure~\ref{fig:results_learning_curve_sample}: it compresses the multi-metric ranking, the final-size point estimate, and the generalization summary into one exact reference surface. The final prose should explain how these quantities together support or challenge the fixed-split ranking.
+Table~\ref{tab:results_scaling_sample} condenses the repeated-size sweep into four summary statistics. ICSOR attains the lowest RMSE nAUC (6.3338), indicating that its average RMSE profile across the full range of training sizes is favorable even though it does not attain the lowest final-size RMSE. LightGBM attains the lowest sample-average rank (2.1909) and the MLP is second (2.5227), indicating that when the evaluation is broadened across all reported metrics, targets, and train sizes, the unconstrained baselines with the lowest pointwise errors also tend to rank well on a broader set of criteria. ICSOR's sample-average rank of 4.2955 is comparable to that of XGBoost (4.2591), suggesting that its low-data advantage, while observable, does not translate into a dominant rank across the full evaluation grid.
 
 \begin{table}[htbp]
 \centering
-\caption{Illustrative layout for the repeated-size summary table. Replace the sample values with the final retained-model exports for the learning-curve summary used in the manuscript.}
+\caption{Summary of the repeated dataset-size benchmark. Final RMSE and $\Delta$RMSE are evaluated at the largest retained training size, and lower values are better for all columns except that a smaller $\Delta$RMSE indicates less train-test separation.}
 \label{tab:results_scaling_sample}
 \scriptsize
 \begin{tabular}{lcccc}
 \hline
 Model & Final RMSE & RMSE nAUC & Sample Avg. Rank & $\Delta$RMSE \\
 \hline
-MLP & 4.887 & 6.350 & 2.40 & 2.105 \\
-SVR & 5.772 & 8.832 & 3.60 & 2.075 \\
-LightGBM & 6.500 & 8.369 & 4.60 & 2.769 \\
-CatBoost & 6.514 & 8.983 & 5.80 & 1.286 \\
-XGBoost & 6.824 & 8.893 & 6.80 & 1.865 \\
-ICSOR & 6.942 & 8.117 & 3.80 & 0.172 \\
-PLS & 10.348 & 14.336 & 5.40 & -0.206 \\
-AdaBoost & 15.151 & 21.462 & 8.60 & 0.101 \\
-Random Forest & 16.266 & 18.715 & 9.80 & 13.017 \\
-$k$-NN & 18.166 & 21.854 & 10.60 & 18.166 \\
+MLP & 4.6169 & 6.7524 & 2.5227 & 0.6493 \\
+LightGBM & 5.2681 & 6.3545 & 2.1909 & 1.9861 \\
+SVR & 5.8359 & 6.8958 & 3.9909 & 1.1930 \\
+ICSOR & 5.9390 & 6.3338 & 4.2955 & 0.2194 \\
+XGBoost & 6.1033 & 7.0056 & 4.2591 & 1.4393 \\
+CatBoost & 6.2608 & 7.6010 & 5.0091 & 0.6880 \\
+AdaBoost & 21.4189 & 20.2876 & 8.1864 & 0.2308 \\
+$k$-NN & 23.7551 & 25.7719 & 6.9682 & 23.6581 \\
+PLS & 27.9553 & 30.1733 & 9.3955 & 0.3824 \\
+Random Forest & 28.7812 & 30.3100 & 8.1818 & 18.7071 \\
 \hline
 \end{tabular}
 \end{table}
 
-\noindent\textbf{Paragraph 3: Overfitting and stability.} The next paragraph should turn from average performance to generalization behavior. This is where the final text should interpret the train-test RMSE gap, identify which models appear to win by raw capacity alone, and explain whether ICSOR's structure yields a practically important stability advantage even when it does not win the absolute point-estimate ranking.
+The generalization behavior observed in Table~\ref{tab:results_scaling_sample} warrants separate attention. The train-test RMSE gap of ICSOR at the largest training size is 0.2194, which is the smallest among the competitively accurate models and considerably lower than those of LightGBM (1.9861), XGBoost (1.4393), SVR (1.1930), and the MLP (0.6493). PLS also exhibits a small gap (0.3824), but its train and test errors are both large, consistent with systematic underfitting. The repeated-size analysis therefore suggests that the structural restrictions imposed by ICSOR tend to reduce overfitting relative to the unconstrained baselines without a proportionate loss in predictive accuracy; at the full 8000-row training scale the model remains within the range of SVR and XGBoost while exhibiting a smaller train-test separation.
 
-\noindent\textbf{Paragraph 4: Runtime scaling and cost interpretation.} Close the subsection by pointing the reader to Figure~\ref{fig:results_runtime_sample}, which is now a required part of the outline rather than an optional supplement. This figure has a distinct role from Figure~\ref{fig:results_learning_curve_sample} and Table~\ref{tab:results_scaling_sample}: it shows how the computational cost of each model grows across the repeated dataset-size sweep, making it possible to discuss whether a model is merely accurate, or accurate at a practical training cost. The final prose should explain whether ICSOR's recursive constrained estimation carries a meaningful runtime penalty, whether that penalty scales smoothly with dataset size, and whether the cost is justified by the gains in feasibility or low-data stability.
+Figure~\ref{fig:results_runtime_sample} shows that this favorable generalization comes at a cost in training time. At 400 training samples, ICSOR requires a mean of 21.5~s, compared with 4.72~s for LightGBM, 3.16~s for XGBoost, and 4.99~s for the MLP. At 8000 training samples, ICSOR rises to 94.4~s, which is slower than the tree-based models (4.13--8.13~s), PLS (0.228~s), and $k$-NN (2.70~s), but remains below AdaBoost (117.7~s), SVR (136.8~s), and the MLP (161.6~s). The recursive coupled-QP route is therefore more expensive than the fastest retained methods at every training size examined, but it does not become the costliest option at the larger training scales and remains practical for offline surrogate fitting.
 
 \begin{figure}
 \centering
 \includegraphics[width=0.92\textwidth]{figure3_runtime_learning_curve.pdf}
-\caption{Illustrative layout for the runtime learning-curve figure. Replace this sample asset with the final runtime export from the retained repeated dataset-size benchmark sweep. The y-axis is plotted on a logarithmic scale so training-time differences remain readable across the full model set.}
+\caption{Repeated dataset-size runtime curves for the retained models. Lines show the repeat-averaged training time and shaded bands show the interquartile range over 100 repeated resamples; the y-axis is logarithmic to keep the full cost spread readable.}
 \label{fig:results_runtime_sample}
 \end{figure}
 
 \subsection{Physical Admissibility and Deployment Behavior}
 
-\noindent\textbf{Paragraph 1: Hard-constraint outcome.} Anchor this subsection with Table~\ref{tab:results_physical_sample}. The final prose should state clearly whether ICSOR achieves exact mass-conservation and non-negativity compliance on the benchmark test predictions and how often the unconstrained baselines violate either condition.
+Table~\ref{tab:results_physical_sample} reports the physical-admissibility outcome. ICSOR is the only retained model that produces 0.0\% mass-conservation violations and 0.0\% non-negativity violations on the final component-space test predictions. Every unconstrained baseline violates conservation on 100\% of the test samples. Non-negativity violation frequencies vary across models, ranging from 0.0\% for AdaBoost, Random Forest, and $k$-NN to 70.1\% for CatBoost, 68.65\% for SVR, 64.05\% for XGBoost, 58.2\% for the MLP, 48.7\% for PLS, and 46.0\% for LightGBM.
 
 \begin{table}[htbp]
 \centering
-\caption{Illustrative layout for the physical-admissibility summary. Replace the sample values with the final violation frequencies reported on the final component-space predictions.}
+\caption{Physical-admissibility violation frequencies evaluated on the final component-space test predictions. Mass conservation and non-negativity are assessed before external composition collapse.}
 \label{tab:results_physical_sample}
 \scriptsize
 \begin{tabular}{lcc}
 \hline
 Model & Mass-Conservation Violations (\%) & Non-Negativity Violations (\%) \\
 \hline
-MLP & 78.0 & 0.0 \\
-SVR & 81.0 & 0.2 \\
-LightGBM & 85.0 & 0.1 \\
-CatBoost & 86.0 & 0.1 \\
-XGBoost & 87.0 & 0.2 \\
+MLP & 100.0 & 58.20 \\
+LightGBM & 100.0 & 46.00 \\
+SVR & 100.0 & 68.65 \\
 ICSOR & 0.0 & 0.0 \\
-PLS & 90.0 & 0.8 \\
-AdaBoost & 93.0 & 1.5 \\
-Random Forest & 96.0 & 2.1 \\
-$k$-NN & 98.0 & 3.0 \\
+XGBoost & 100.0 & 64.05 \\
+CatBoost & 100.0 & 70.10 \\
+AdaBoost & 100.0 & 0.0 \\
+$k$-NN & 100.0 & 0.0 \\
+PLS & 100.0 & 48.70 \\
+Random Forest & 100.0 & 0.0 \\
 \hline
 \end{tabular}
 \end{table}
 
-\noindent\textbf{Paragraph 2: Why the violations matter.} Use the next paragraph to explain why even low-frequency violations remain unacceptable in the activated-sludge setting. Table~\ref{tab:results_physical_sample} should remain the sole main-text evidence panel here because the retained quantities are only two frequencies and are easier to compare exactly in tabular form than in a redundant bar chart. The final prose should connect these diagnostics to material bookkeeping, process interpretation, and optimization reliability rather than treating them as abstract machine-learning penalties.
+These diagnostics illustrate why predictive accuracy in the reported composite space does not by itself ensure physically interpretable component-level predictions. AdaBoost, Random Forest, and $k$-NN remain nonnegative on the test set, yet all three still violate the stoichiometric invariants on every sample; positivity alone therefore does not recover consistent material bookkeeping. Conversely, several of the models with the lowest aggregate RMSE, including the MLP and LightGBM, violate the conserved material inventories on every test sample and produce negative component concentrations on a substantial fraction of the test set. A surrogate may thus appear accurate in the reported composite space while producing component-level states that are not physically admissible.
 
-\noindent\textbf{Paragraph 3: Deployment-stage interpretation.} The third paragraph should explain how the hierarchical deployment rule behaved in practice. Once the final rerun is complete, add one sentence on how often the raw prediction was already feasible, how often the affine presolve was sufficient, and how often the LP stage was activated. If that stage-frequency summary becomes too long for the main paper, move the detailed counts to supplementary material and keep only the deployment takeaway here.
+The staged deployment logic of ICSOR can also be examined at the level of individual correction stages. None of the raw coupled test predictions were simultaneously invariant-consistent and nonnegative: raw feasibility was 0.0\%, raw conservation compliance was 0.0\%, and 21.7\% of raw states were nonnegative. The affine presolve restored invariants for all samples and was itself sufficient for 21.8\% of the test set (436 of 2000 samples). The remaining 78.2\% (1564 samples) required the final LP correction, which converged in a mean of 23.5 HiGHS iterations with a maximum of 40. The final projected prediction was feasible for 100\% of the test cases, confirming that the deployment pipeline maintained the physical guarantees without requiring a computationally expensive solve on every sample.
 
-\noindent\textbf{Paragraph 4: Accuracy-versus-feasibility synthesis.} Close the subsection by tying the admissibility diagnostics back to the benchmark metrics. This is the core argumentative paragraph for the paper: it should state whether the feasibility guarantee appears to require only a moderate loss in predictive accuracy and whether that tradeoff is acceptable for steady-state wastewater surrogate deployment.
+Taken together, these results suggest a moderate accuracy-feasibility tradeoff within the present benchmark. When the objective is minimizing pointwise error in the reported composite space, the MLP and LightGBM remain the preferable options. When the objective includes deployed predictions that satisfy both invariant conservation and component non-negativity, ICSOR is the only model in the retained set that provides those guarantees, and it does so while remaining within the upper portion of the competitive accuracy range on aggregate RMSE.
 
 \subsection{Interpretable Structure of the Learned ICSOR Model}
 
-\noindent\textbf{Paragraph 1: COD $\Theta_{cc}$ figure anchor.} Open the interpretability subsection by pointing the reader to Figure~\ref{fig:results_interpretability_sample}. In the main manuscript, this retained figure should now be limited to the COD $\Theta_{cc}$ block only, because that single panel isolates the cross-influent interaction structure most directly tied to carbon-loading interpretation without repeating the full multi-block atlas in the main paper. The final prose should explain that the complete COD, TN, TP, and TSS coefficient atlases are presented in supplementary material and that the main text uses the COD $\Theta_{cc}$ panel as the representative interpretability anchor.
+Figure~\ref{fig:results_interpretability_sample} presents the COD-specific $\Theta_{cc}$ block extracted from the fitted ICSOR driver. The full COD, TN, TP, and TSS atlases are provided as Supplementary Figures S1--S4. The main manuscript presents this COD panel because it provides a direct view of how influent-influent curvature is allocated once the operational main effects, influent main effects, and coupling matrix have absorbed the lower-order structure.
 
 \begin{figure}
 \centering
 \includegraphics[width=0.94\textwidth]{figure4_icsor_structure.pdf}
-\caption{Illustrative layout for the COD-specific $\Theta_{cc}$ heatmap. Replace this sample asset with the final COD $\Theta_{cc}$ panel selected for the retained manuscript narrative, and move the full COD, TN, TP, and TSS coefficient atlases to supplementary material.}
+\caption{COD-specific $\Theta_{cc}$ heatmap from the fitted ICSOR driver. Rows and columns enumerate the influent ASM components, and color encodes the sign and magnitude of the second-order COD curvature. The full COD, TN, TP, and TSS target atlases are reported in Supplementary Figures S1--S4.}
 \label{fig:results_interpretability_sample}
 \end{figure}
 
-\noindent\textbf{Paragraph 2: COD $\Theta_{cc}$ interpretation.} Use the second paragraph to interpret the COD-specific $\Theta_{cc}$ heatmap in engineering terms. The final prose should identify the strongest COD cross-loading interactions, explain whether the dominant retained entries cluster around soluble-carbon, particulate-COD, biomass, or phosphorus-bearing states, and connect those patterns to the expected carbon-limitation and storage regimes of the reactor.
+The retained COD interactions are concentrated around dissolved oxygen and nitrogen-linked states rather than spread uniformly across all 400 possible influent-pair entries. The largest-magnitude coefficient is the negative $S_O$--$S_O$ self-curvature term ($-2.3899 \times 10^{-2}$), followed by the symmetric negative cross-interactions $S_O$--$S_{N2}$ and $S_O$--$S_{NO2}$ ($-2.1845 \times 10^{-2}$ and $-1.4691 \times 10^{-2}$, respectively). Smaller terms link $S_O$ to $X_{NOB}$, $X_{AOB}$, $X_{MeOH}$, and $X_{PP}$, while positive diagonal curvature appears for $S_{N2}$, $X_{AOB}$, and $X_{NOB}$. In engineering terms, the fitted COD driver indicates that second-order COD behavior in this reactor is associated primarily with the redox environment and nitrifier-linked loading interactions rather than with a broad field of carbon-only cross terms.
 
 \begin{table}[htbp]
 \centering
-\caption{Illustrative layout for the COD blockwise retained-feature summary used to support the ICSOR regularization and feature-selection discussion. Replace the sample counts with the final retained-coefficient totals reported for each COD coefficient block.}
+\caption{COD blockwise retained-coefficient counts using the export threshold applied in the comparison notebook. The table summarizes which fitted coefficients remain materially active in the reported COD structure.}
 \label{tab:results_icsor_regularization_sample}
 \scriptsize
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{p{3.0cm}p{2.0cm}p{2.0cm}p{2.0cm}}
+\begin{tabular}{p{3.0cm}p{2.1cm}p{2.4cm}p{2.0cm}}
 \hline
-Coefficient block & \makecell[l]{Total\\coeffs.} & \makecell[l]{Retained\\coeffs.} & \makecell[l]{\%\\Retained} \\
+Coefficient block & Total coeffs. & Retained coeffs. & \% Retained \\
 \hline
 $b$ & 1 & 1 & 100.0 \\
 $W_u$ & 2 & 2 & 100.0 \\
-$W_{in}$ & 20 & 9 & 45.0 \\
-$\Theta_{uu}$ & 4 & 3 & 75.0 \\
-$\Theta_{uc}$ & 40 & 11 & 27.5 \\
-$\Theta_{cc}$ & 400 & 58 & 14.5 \\
-Overall summary & 467 & 84 & 18.0 \\
+$W_{in}$ & 20 & 20 & 100.0 \\
+$\Theta_{uu}$ & 4 & 4 & 100.0 \\
+$\Theta_{uc}$ & 40 & 18 & 45.0 \\
+$\Theta_{cc}$ & 400 & 59 & 14.75 \\
+$\Gamma$ & 380 & 356 & 93.6842 \\
+Overall summary & 847 & 460 & 54.3093 \\
 \hline
 \end{tabular}
 \end{table}
 
-\noindent\textbf{Paragraph 3: Regularization and feature-selection summary.} Anchor the next paragraph with Table~\ref{tab:results_icsor_regularization_sample}. The final prose should argue that ICSOR is regularized first by its model structure: bias, operational main effects, influent main effects, operational curvature, operation-influent interactions, influent curvature, and residual coupling are separated into distinct coefficient blocks with fixed physical meaning and sharply different dimensionality. That decomposition already narrows the admissible hypothesis class before any penalty is tuned, so the table should be used to show that feature selection emerges as a blockwise retention pattern rather than as an arbitrary search over all possible dense interactions. If the fitted COD model still uses ridge penalties, note that the penalty stabilizes coefficient magnitude, but emphasize that the more important interpretability claim is architectural: only a limited subset of entries remains materially active in the higher-dimensional blocks, especially $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$, because the ICSOR structure itself suppresses unnecessary interactions and concentrates attention on the physically meaningful ones.
+Table~\ref{tab:results_icsor_regularization_sample} shows that this interpretability does not arise from a uniformly sparse model, but from a structured separation between sparse high-order driver terms and a comparatively dense cross-component coupling layer. Under the COD export threshold, every low-dimensional block is retained in full ($b$, $W_u$, $W_{in}$, and $\Theta_{uu}$), whereas only 18 of 40 $\Theta_{uc}$ terms and 59 of 400 $\Theta_{cc}$ terms remain above the reporting threshold. By contrast, 356 of 380 $\Gamma$ entries are retained. The model therefore compresses nonlinear influent curvature while preserving a broad redistribution layer across ASM components. Overall, 54.3\% of the candidate coefficients remain above the reporting threshold, and most of that retained fraction resides in the coupling matrix rather than in the highest-order quadratic block.
 
-\noindent\textbf{Paragraph 4: Main-text versus supplementary boundary.} Close the section by stating the compression rule for the final manuscript explicitly: keep only the COD $\Theta_{cc}$ panel and the short regularization/screening table in the main text, and move the complete COD, TN, TP, and TSS coefficient atlases together with any additional blockwise response-surface diagnostics to supplementary material. This paragraph should explain that the main paper uses the COD interaction surface as the representative interpretability example, while the supplement preserves full coefficient-atlas completeness for all reported composites.
+This separation between a sparse quadratic driver and a comparatively dense coupling matrix is why Figure~\ref{fig:results_interpretability_sample} can present a compact curvature surface without omitting important model structure. The COD $\Theta_{cc}$ panel serves as the representative interpretability surface, while Supplementary Figures S1--S4 preserve the full target-by-target atlases for completeness. Presenting the main discussion at the COD-block level therefore highlights the curvature structure that is most relevant to process interpretation while acknowledging that the complete ICSOR coefficient structure is distributed across $B$ and $\Gamma$ together.
 
 \section*{References}
 
