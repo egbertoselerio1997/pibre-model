@@ -52,7 +52,7 @@
       "residual_tolerance": 1e-09,
       "variable_tolerance": 1e-09,
       "gradient_tolerance": 1e-09,
-      "acceptance_residual_max": 5.0,
+      "acceptance_residual_max": 1e-09,
       "max_nfev": 1200
     },
     "influent_state_ranges": {

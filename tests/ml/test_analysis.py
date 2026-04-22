@@ -248,13 +248,16 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertEqual(set(result["per_target_metrics"]["split_name"]), {"train", "test"})
 		self.assertEqual(set(result["aggregate_metrics"]["prediction_type"]), {"raw", "projected"})
 		self.assertEqual(int(result["analysis_config"]["n_repeats"]), 2)
+		self.assertIn("elapsed_seconds", result["run_metadata"].columns)
+		self.assertTrue((result["run_metadata"]["elapsed_seconds"] >= 0.0).all())
+		self.assertTrue(np.isfinite(result["run_metadata"]["elapsed_seconds"]).all())
 
 		first_prediction_table = result["prediction_tables"][0]
 		self.assertIn("Actual_Out_A", first_prediction_table.columns)
 		self.assertIn("Raw_Out_A", first_prediction_table.columns)
 		self.assertIn("Projected_Out_A", first_prediction_table.columns)
 		self.assertIn("ConstraintReference_Out_A", first_prediction_table.columns)
-		self.assertIn("measured_adjustment_l2", first_prediction_table.columns)
+		self.assertIn("native_adjustment_l2", first_prediction_table.columns)
 
 		train_sizes = set(result["run_metadata"]["train_size"])
 		test_sizes = set(result["run_metadata"]["test_size"])
@@ -289,6 +292,7 @@ class AnalysisHelperTests(unittest.TestCase):
 		self.assertIn("ConstraintReference_Out_A", first_prediction_table.columns)
 		self.assertNotIn("Projected_Out_A", first_prediction_table.columns)
 		self.assertNotIn("measured_adjustment_l2", first_prediction_table.columns)
+		self.assertIn("elapsed_seconds", result["run_metadata"].columns)
 
 	def test_add_effective_metric_columns_prefers_projected_and_falls_back_to_raw(self) -> None:
 		metric_frame = pd.DataFrame(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -1679,12 +1680,14 @@ def run_model_dataset_size_analysis(
 				if extra_runner_kwargs is not None:
 					runner_kwargs.update(dict(extra_runner_kwargs))
 				clean_runner_kwargs = {key: value for key, value in runner_kwargs.items() if value is not None}
+				run_started_at = time.perf_counter()
 				result = model_runner(
 					dataset_splits.train,
 					dataset_splits.test,
 					A_matrix,
 					**clean_runner_kwargs,
 				)
+				run_elapsed_seconds = float(time.perf_counter() - run_started_at)
 
 				run_metadata = _resolve_run_metadata(
 					model_name=model_name,
@@ -1728,6 +1731,7 @@ def run_model_dataset_size_analysis(
 				run_rows.append(
 					{
 						**run_metadata,
+						"elapsed_seconds": run_elapsed_seconds,
 						"artifact_model_bundle_path": None if artifact_paths.get("model_bundle") is None else str(artifact_paths["model_bundle"]),
 						"artifact_metrics_path": None if artifact_paths.get("metrics") is None else str(artifact_paths["metrics"]),
 						"artifact_optuna_path": None if artifact_paths.get("optuna") is None else str(artifact_paths["optuna"]),
@@ -2400,18 +2404,40 @@ def collate_model_analysis_results(
 			}
 		)
 
-	prediction_diagnostics = summarize_prediction_diagnostics(
-		all_prediction_tables,
-		model_labels=resolved_model_labels,
-		model_families=resolved_model_families,
-		model_order=resolved_model_order,
-	)
-	prediction_target_diagnostics = summarize_prediction_diagnostics_by_target(
-		all_prediction_tables,
-		model_labels=resolved_model_labels,
-		model_families=resolved_model_families,
-		model_order=resolved_model_order,
-	)
+	if all_prediction_tables:
+		prediction_diagnostics = summarize_prediction_diagnostics(
+			all_prediction_tables,
+			model_labels=resolved_model_labels,
+			model_families=resolved_model_families,
+			model_order=resolved_model_order,
+		)
+		prediction_target_diagnostics = summarize_prediction_diagnostics_by_target(
+			all_prediction_tables,
+			model_labels=resolved_model_labels,
+			model_families=resolved_model_families,
+			model_order=resolved_model_order,
+		)
+	else:
+		prediction_diagnostics = pd.DataFrame()
+		prediction_target_diagnostics = pd.DataFrame()
+
+	prediction_diagnostic_sort_columns = [
+		"model_order",
+		"dataset_size_total",
+		"repeat_index",
+		"split_name",
+	]
+	prediction_target_diagnostic_sort_columns = [
+		"model_order",
+		"dataset_size_total",
+		"repeat_index",
+		"split_name",
+		"target",
+	]
+	if prediction_diagnostics.empty:
+		prediction_diagnostics = pd.DataFrame(columns=prediction_diagnostic_sort_columns)
+	if prediction_target_diagnostics.empty:
+		prediction_target_diagnostics = pd.DataFrame(columns=prediction_target_diagnostic_sort_columns)
 
 	return {
 		"analysis_configs": pd.DataFrame(analysis_config_rows).sort_values("model_order").reset_index(drop=True),
@@ -2421,10 +2447,10 @@ def collate_model_analysis_results(
 		"effective_aggregate_metrics": pd.concat(effective_aggregate_metric_frames, ignore_index=True),
 		"per_target_metrics": pd.concat(per_target_metric_frames, ignore_index=True),
 		"prediction_diagnostics": prediction_diagnostics.sort_values(
-			["model_order", "dataset_size_total", "repeat_index", "split_name"]
+			prediction_diagnostic_sort_columns
 		).reset_index(drop=True),
 		"prediction_target_diagnostics": prediction_target_diagnostics.sort_values(
-			["model_order", "dataset_size_total", "repeat_index", "split_name", "target"]
+			prediction_target_diagnostic_sort_columns
 		).reset_index(drop=True),
 	}
 

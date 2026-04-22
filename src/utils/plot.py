@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any, Sequence
 
 import matplotlib as mpl
@@ -20,27 +21,25 @@ from .simulation import make_simulation_timestamp, render_notebook_plot_artifact
 
 
 PIBRE_THEME_TOKENS: dict[str, Any] = {
-	"figure_background": "#F7F4EA",
+	"figure_background": "#FFFFFF",
 	"axes_background": "#FFFFFF",
 	"primary_text": "#22303C",
 	"secondary_text": "#5B6770",
-	"major_grid": "#D8DEE6",
-	"minor_grid": "#EEF2F5",
+	"major_grid": "#CAD2D9",
+	"minor_grid": "#E6EBEF",
 	"qualitative_cycle": [
-		"#0072B2",
-		"#D55E00",
-		"#009E73",
-		"#7F3C8D",
-		"#E69F00",
-		"#CC79A7",
-		"#56B4E9",
-		"#A73030",
-		"#F0E442",
-		"#4D4D4D",
-		"#11A579",
-		"#3969AC",
-		"#C97B00",
+		"#264653",
+		"#2A9D8F",
+		"#E9C46A",
+		"#F4A261",
+		"#E76F51",
+		"#6D597A",
+		"#577590",
+		"#BC4749",
+		"#8D99AE",
+		"#ADB5BD",
 	],
+	"icsor_color": "#6D597A",
 	"line_marker_cycle": ["o", "s", "^", "D", "P", "X", "v", "<", ">", "h", "p", "8"],
 	"line_style_cycle": [
 		"-",
@@ -56,7 +55,18 @@ PIBRE_THEME_TOKENS: dict[str, Any] = {
 		(0, (9, 2, 1, 2)),
 		(0, (2, 1)),
 	],
-	"missing_color": "#B0B7BF",
+	"missing_color": "#ADB5BD",
+	"default_linewidth": 1.8,
+	"emphasis_linewidth": 2.7,
+	"default_band_alpha": 0.12,
+	"emphasis_band_alpha": 0.24,
+	"figure_size_profiles": {
+		"learning_curve": (10.2, 6.0),
+		"runtime_curve": (10.2, 6.0),
+		"main_heatmap": (8.8, 5.6),
+		"target_atlas": (8.4, 12.8),
+	},
+	"draft_footer_text": "Illustrative sample layout only; replace with final benchmark exports.",
 }
 
 PROJECTED_METRIC_COLUMNS = (
@@ -73,43 +83,78 @@ SUPPORTED_METRIC_COLUMNS = PROJECTED_METRIC_COLUMNS + RAW_METRIC_COLUMNS
 
 def _build_diverging_colormap() -> LinearSegmentedColormap:
 	return LinearSegmentedColormap.from_list(
-		"pibre_blue_white_vermilion",
-		["#0072B2", "#F7F7F7", "#D55E00"],
+		"pibre_earth_diverging",
+		["#264653", "#577590", "#F7F7F7", "#F4A261", "#E76F51"],
+		N=256,
 	)
 
 
+def _is_emphasis_series(group_name: str) -> bool:
+	return str(group_name).strip().upper() == "ICSOR"
+
+
+def _resolve_series_color(
+	group_name: str,
+	*,
+	tokens: dict[str, Any],
+	fallback_index: int,
+) -> str:
+	if _is_emphasis_series(group_name):
+		return str(tokens["icsor_color"])
+	qualitative_cycle = list(tokens["qualitative_cycle"])
+	if not qualitative_cycle:
+		raise ValueError("PIBRE_THEME_TOKENS['qualitative_cycle'] must contain at least one color.")
+	emphasis_color = str(tokens["icsor_color"]).lower()
+	non_emphasis_cycle = [
+		str(color)
+		for color in qualitative_cycle
+		if str(color).lower() != emphasis_color
+	]
+	if not non_emphasis_cycle:
+		non_emphasis_cycle = [str(color) for color in qualitative_cycle]
+	return str(non_emphasis_cycle[fallback_index % len(non_emphasis_cycle)])
+
+
 def apply_pibre_plot_theme() -> dict[str, Any]:
-	"""Apply the repository-wide Pibre Scientific plotting theme."""
+	"""Apply the repository-wide manuscript plotting theme."""
 
 	tokens = dict(PIBRE_THEME_TOKENS)
 	mpl.rcParams.update(
 		{
 			"figure.facecolor": tokens["figure_background"],
-			"figure.dpi": 140,
+			"figure.dpi": 180,
 			"axes.facecolor": tokens["axes_background"],
-			"axes.edgecolor": tokens["primary_text"],
+			"axes.edgecolor": "#6B7280",
 			"axes.labelcolor": tokens["primary_text"],
 			"axes.titlecolor": tokens["primary_text"],
+			"axes.titlesize": 13,
+			"axes.labelsize": 11,
+			"axes.titlepad": 8,
 			"axes.grid": True,
 			"axes.axisbelow": True,
 			"axes.spines.top": False,
 			"axes.spines.right": False,
-			"axes.linewidth": 0.8,
+			"axes.linewidth": 0.6,
 			"axes.prop_cycle": cycler(color=tokens["qualitative_cycle"]),
+			"font.size": 10,
 			"font.family": ["DejaVu Sans"],
 			"font.sans-serif": ["DejaVu Sans"],
+			"xtick.labelsize": 9,
+			"ytick.labelsize": 9,
 			"grid.color": tokens["major_grid"],
-			"grid.alpha": 0.45,
+			"grid.alpha": 0.35,
+			"grid.linestyle": ":",
 			"grid.linewidth": 0.8,
 			"image.cmap": "cividis",
 			"legend.facecolor": tokens["axes_background"],
 			"legend.edgecolor": tokens["major_grid"],
-			"legend.frameon": True,
+			"legend.frameon": False,
 			"legend.fontsize": 10,
-			"lines.linewidth": 2.0,
+			"lines.linewidth": tokens["default_linewidth"],
 			"lines.markeredgewidth": 0.75,
-			"savefig.dpi": 140,
+			"savefig.dpi": 180,
 			"savefig.facecolor": tokens["figure_background"],
+			"savefig.bbox": "tight",
 			"text.color": tokens["primary_text"],
 			"xtick.color": tokens["primary_text"],
 			"ytick.color": tokens["primary_text"],
@@ -118,6 +163,27 @@ def apply_pibre_plot_theme() -> dict[str, Any]:
 	tokens["diverging_colormap"] = _build_diverging_colormap()
 	tokens["sequential_colormap"] = plt.get_cmap("cividis")
 	return tokens
+
+
+def _resolve_figure_size(
+	figure_size: tuple[float, float] | None,
+	*,
+	tokens: dict[str, Any],
+	profile_name: str,
+) -> tuple[float, float]:
+	if figure_size is not None:
+		return tuple(float(value) for value in figure_size)
+	figure_profiles = dict(tokens.get("figure_size_profiles", {}))
+	if profile_name not in figure_profiles:
+		raise KeyError(f"Unknown figure size profile '{profile_name}'.")
+	return tuple(float(value) for value in figure_profiles[profile_name])
+
+
+def _style_matrix_axis(axis: Any, *, tokens: dict[str, Any]) -> None:
+	axis.tick_params(length=0, pad=1.5, colors=tokens["primary_text"])
+	for spine in axis.spines.values():
+		spine.set_color("#94A3B8")
+		spine.set_linewidth(0.6)
 
 
 def _format_metric_label(metric_name: str) -> str:
@@ -827,7 +893,10 @@ def plot_metric_summary_lines(
 		figure = ax.figure
 
 	resolved_group_order = list(dict.fromkeys(summary_frame[str(group_column)].astype(str).tolist()))
-	resolved_color_cycle = list(color_cycle) if color_cycle is not None else list(tokens["qualitative_cycle"])
+	resolved_color_cycle = [
+		str(color)
+		for color in (list(color_cycle) if color_cycle is not None else list(tokens["qualitative_cycle"]))
+	]
 	resolved_marker_cycle = list(marker_cycle) if marker_cycle is not None else [marker]
 	resolved_linestyle_cycle = list(linestyle_cycle) if linestyle_cycle is not None else ["-"]
 	line_artists: list[Any] = []
@@ -841,7 +910,13 @@ def plot_metric_summary_lines(
 		if group_frame.empty:
 			continue
 
-		color = resolved_color_cycle[group_index % len(resolved_color_cycle)]
+		is_emphasis = _is_emphasis_series(group_name)
+		if color_cycle is not None:
+			color = str(tokens["icsor_color"]) if is_emphasis else resolved_color_cycle[group_index % len(resolved_color_cycle)]
+		else:
+			color = _resolve_series_color(group_name, tokens=tokens, fallback_index=group_index)
+		line_width = float(tokens["emphasis_linewidth"] if is_emphasis else tokens["default_linewidth"])
+		band_alpha = float(tokens["emphasis_band_alpha"] if is_emphasis else tokens["default_band_alpha"])
 		marker_value = resolved_marker_cycle[group_index % len(resolved_marker_cycle)]
 		linestyle_value = resolved_linestyle_cycle[group_index % len(resolved_linestyle_cycle)]
 		x_values = group_frame[str(x_column)].to_numpy(dtype=float)
@@ -852,11 +927,11 @@ def plot_metric_summary_lines(
 			color=color,
 			linestyle=linestyle_value,
 			marker=marker_value,
-			markersize=6.2,
+			markersize=6.8 if is_emphasis else 6.2,
 			markerfacecolor=color,
 			markeredgecolor=tokens["primary_text"],
 			markeredgewidth=0.7,
-			linewidth=2.25,
+			linewidth=line_width,
 			label=group_name,
 		)[0]
 		line_artists.append(line_artist)
@@ -869,7 +944,7 @@ def plot_metric_summary_lines(
 				lower_values,
 				upper_values,
 				color=color,
-				alpha=0.1,
+				alpha=band_alpha,
 				linewidth=0.0,
 			)
 			band_artists.append(band_artist)
@@ -1163,6 +1238,250 @@ def plot_train_test_parity_panels(
 	return figure, axes
 
 
+def plot_icsor_target_atlas(
+	block_mapping: dict[str, Any],
+	*,
+	target_name: str,
+	operational_labels: Sequence[str],
+	state_labels: Sequence[str],
+	title: str | None = None,
+	colorbar_label: str = "Coefficient value",
+	figure_size: tuple[float, float] | None = None,
+	include_footer: bool = False,
+	footer_text: str | None = None,
+	annotate_small_blocks: bool = True,
+) -> Any:
+	"""Plot a manuscript-style ICSOR coefficient atlas for one measured target."""
+
+	required_blocks = ("b", "W_u", "Theta_uu", "W_in", "Theta_uc", "Theta_cc", "Gamma")
+	missing_blocks = [block_name for block_name in required_blocks if block_name not in block_mapping]
+	if missing_blocks:
+		missing_display = ", ".join(missing_blocks)
+		raise KeyError(f"block_mapping is missing required blocks: {missing_display}")
+
+	operational_label_list = [str(label) for label in operational_labels]
+	state_label_list = [str(label) for label in state_labels]
+	if not operational_label_list:
+		raise ValueError("operational_labels must include at least one label.")
+	if not state_label_list:
+		raise ValueError("state_labels must include at least one label.")
+
+	tokens = apply_pibre_plot_theme()
+	resolved_figure_size = _resolve_figure_size(figure_size, tokens=tokens, profile_name="target_atlas")
+
+	b_matrix = _validate_coefficient_array(block_mapping["b"], expected_ndim=2, value_name="block_mapping['b']")
+	w_u_matrix = _validate_coefficient_array(block_mapping["W_u"], expected_ndim=2, value_name="block_mapping['W_u']")
+	theta_uu_matrix = _validate_coefficient_array(block_mapping["Theta_uu"], expected_ndim=2, value_name="block_mapping['Theta_uu']")
+	w_in_matrix = _validate_coefficient_array(block_mapping["W_in"], expected_ndim=2, value_name="block_mapping['W_in']")
+	theta_uc_matrix = _validate_coefficient_array(block_mapping["Theta_uc"], expected_ndim=2, value_name="block_mapping['Theta_uc']")
+	theta_cc_matrix = _validate_coefficient_array(block_mapping["Theta_cc"], expected_ndim=2, value_name="block_mapping['Theta_cc']")
+	gamma_matrix = _validate_coefficient_array(block_mapping["Gamma"], expected_ndim=2, value_name="block_mapping['Gamma']")
+
+	if b_matrix.shape != (1, 1):
+		raise ValueError("block_mapping['b'] must have shape (1, 1).")
+	if w_u_matrix.shape != (1, len(operational_label_list)):
+		raise ValueError(
+			"block_mapping['W_u'] must have shape (1, len(operational_labels))."
+		)
+	if theta_uu_matrix.shape != (len(operational_label_list), len(operational_label_list)):
+		raise ValueError(
+			"block_mapping['Theta_uu'] must have shape (len(operational_labels), len(operational_labels))."
+		)
+	if w_in_matrix.shape != (1, len(state_label_list)):
+		raise ValueError(
+			"block_mapping['W_in'] must have shape (1, len(state_labels))."
+		)
+	if theta_uc_matrix.shape != (len(operational_label_list), len(state_label_list)):
+		raise ValueError(
+			"block_mapping['Theta_uc'] must have shape (len(operational_labels), len(state_labels))."
+		)
+	if theta_cc_matrix.shape != (len(state_label_list), len(state_label_list)):
+		raise ValueError(
+			"block_mapping['Theta_cc'] must have shape (len(state_labels), len(state_labels))."
+		)
+	if gamma_matrix.shape != (len(state_label_list), len(state_label_list)):
+		raise ValueError(
+			"block_mapping['Gamma'] must have shape (len(state_labels), len(state_labels))."
+		)
+
+	norm = _build_centered_diverging_norm(
+		np.concatenate(
+			[
+				b_matrix.ravel(),
+				w_u_matrix.ravel(),
+				theta_uu_matrix.ravel(),
+				w_in_matrix.ravel(),
+				theta_uc_matrix.ravel(),
+				theta_cc_matrix.ravel(),
+				gamma_matrix.ravel(),
+			],
+		)
+	)
+
+	figure = plt.figure(figsize=resolved_figure_size, dpi=180)
+	grid = figure.add_gridspec(
+		nrows=5,
+		ncols=4,
+		height_ratios=[0.95, 1.05, 1.25, 3.1, 3.1],
+		width_ratios=[1.0, 1.0, 1.0, 0.08],
+		wspace=0.28,
+		hspace=0.72,
+	)
+
+	ax_b = figure.add_subplot(grid[0, 0])
+	ax_wu = figure.add_subplot(grid[0, 1])
+	ax_theta_uu = figure.add_subplot(grid[0, 2])
+	ax_win = figure.add_subplot(grid[1, 0:3])
+	ax_theta_uc = figure.add_subplot(grid[2, 0:3])
+	ax_theta_cc = figure.add_subplot(grid[3, 0:3])
+	ax_gamma = figure.add_subplot(grid[4, 0:3])
+	colorbar_axis = figure.add_subplot(grid[:, 3])
+
+	def draw_block(
+		axis: Any,
+		values: np.ndarray,
+		*,
+		title_text: str,
+		x_labels: list[str],
+		y_labels: list[str],
+		x_rotation: float,
+		x_ha: str = "right",
+	) -> Any:
+		image = axis.imshow(
+			values,
+			cmap=tokens["diverging_colormap"],
+			norm=norm,
+			origin="lower",
+			aspect="auto",
+			interpolation="nearest",
+		)
+		axis.set_title(title_text)
+		axis.set_xticks(np.arange(len(x_labels), dtype=float))
+		axis.set_xticklabels(x_labels, rotation=x_rotation, ha=x_ha)
+		axis.set_yticks(np.arange(len(y_labels), dtype=float))
+		axis.set_yticklabels(y_labels)
+		_style_matrix_axis(axis, tokens=tokens)
+
+		if annotate_small_blocks and values.size <= 16:
+			for row_index in range(values.shape[0]):
+				for column_index in range(values.shape[1]):
+					axis.text(
+						column_index,
+						row_index,
+						f"{float(values[row_index, column_index]):+.2f}",
+						ha="center",
+						va="center",
+						fontsize=6.5,
+						color=tokens["primary_text"],
+					)
+		return image
+
+	image = draw_block(
+		ax_b,
+		b_matrix,
+		title_text="b",
+		x_labels=[str(target_name)],
+		y_labels=[str(target_name)],
+		x_rotation=0.0,
+		x_ha="center",
+	)
+	draw_block(
+		ax_wu,
+		w_u_matrix,
+		title_text=r"$W_u$",
+		x_labels=operational_label_list,
+		y_labels=[str(target_name)],
+		x_rotation=0.0,
+		x_ha="center",
+	)
+	draw_block(
+		ax_theta_uu,
+		theta_uu_matrix,
+		title_text=r"$\Theta_{uu}$",
+		x_labels=operational_label_list,
+		y_labels=operational_label_list,
+		x_rotation=0.0,
+		x_ha="center",
+	)
+	draw_block(
+		ax_win,
+		w_in_matrix,
+		title_text=r"$W_{in}$",
+		x_labels=state_label_list,
+		y_labels=[str(target_name)],
+		x_rotation=62.0,
+	)
+	draw_block(
+		ax_theta_uc,
+		theta_uc_matrix,
+		title_text=r"$\Theta_{uc}$",
+		x_labels=state_label_list,
+		y_labels=operational_label_list,
+		x_rotation=62.0,
+	)
+	draw_block(
+		ax_theta_cc,
+		theta_cc_matrix,
+		title_text=r"$\Theta_{cc}$",
+		x_labels=state_label_list,
+		y_labels=state_label_list,
+		x_rotation=62.0,
+	)
+	draw_block(
+		ax_gamma,
+		gamma_matrix,
+		title_text=r"$\Gamma$",
+		x_labels=state_label_list,
+		y_labels=state_label_list,
+		x_rotation=62.0,
+	)
+
+	colorbar = figure.colorbar(image, cax=colorbar_axis)
+	colorbar.set_label(colorbar_label)
+	colorbar.ax.tick_params(colors=tokens["primary_text"])
+	figure.suptitle(title or f"{target_name}-specific ICSOR coefficient atlas", y=0.995)
+
+	if include_footer:
+		figure.text(
+			0.99,
+			0.01,
+			str(footer_text) if footer_text is not None else str(tokens["draft_footer_text"]),
+			ha="right",
+			va="bottom",
+			fontsize=8,
+			color="#555555",
+		)
+
+	setattr(
+		figure,
+		"_pibre_icsor_target_atlas",
+		{
+			"axes": {
+				"b": ax_b,
+				"W_u": ax_wu,
+				"Theta_uu": ax_theta_uu,
+				"W_in": ax_win,
+				"Theta_uc": ax_theta_uc,
+				"Theta_cc": ax_theta_cc,
+				"Gamma": ax_gamma,
+			},
+			"colorbar": colorbar,
+			"norm": norm,
+			"block_mapping": {
+				"b": b_matrix,
+				"W_u": w_u_matrix,
+				"Theta_uu": theta_uu_matrix,
+				"W_in": w_in_matrix,
+				"Theta_uc": theta_uc_matrix,
+				"Theta_cc": theta_cc_matrix,
+				"Gamma": gamma_matrix,
+			},
+		},
+	)
+
+	return figure
+
+
 def persist_figure_artifacts(
 	figure: Any,
 	artifact_group: str,
@@ -1170,8 +1489,8 @@ def persist_figure_artifacts(
 	*,
 	repo_root: str | Path | None = None,
 	timestamp: str | None = None,
-	extensions: Sequence[str] = ("png", "svg"),
-	dpi: int = 140,
+	extensions: Sequence[str] = ("pdf", "png", "svg"),
+	dpi: int = 180,
 ) -> dict[str, Path]:
 	"""Persist one figure in multiple configured formats under a shared timestamp."""
 
@@ -1195,6 +1514,20 @@ def persist_figure_artifacts(
 	return persisted_paths
 
 
+def save_figure_pdf(
+	figure: Any,
+	output_path: str | Path,
+	*,
+	dpi: int = 180,
+) -> Path:
+	"""Persist one figure as a PDF through shared repository export behavior."""
+
+	resolved_path = Path(output_path)
+	if resolved_path.suffix.lower() != ".pdf":
+		raise ValueError("output_path must end with '.pdf'.")
+	return save_matplotlib_figure(resolved_path, figure, dpi=dpi)
+
+
 __all__ = [
 	"PIBRE_THEME_TOKENS",
 	"PROJECTED_METRIC_COLUMNS",
@@ -1202,6 +1535,8 @@ __all__ = [
 	"SUPPORTED_METRIC_COLUMNS",
 	"apply_pibre_plot_theme",
 	"persist_figure_artifacts",
+	"save_figure_pdf",
+	"plot_icsor_target_atlas",
 	"plot_coefficient_bar_chart",
 	"plot_coefficient_heatmap",
 	"plot_coefficient_tensor_heatmaps",

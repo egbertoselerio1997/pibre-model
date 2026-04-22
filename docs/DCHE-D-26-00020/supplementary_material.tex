@@ -1,0 +1,53 @@
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{capt-of}
+
+\graphicspath{{./}{docs/DCHE-D-26-00020/}}
+\renewcommand{\thefigure}{S\arabic{figure}}
+
+\title{Supplementary Material\\An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Target-Wise Interpretability Atlases}
+
+This supplementary file collects the complete target-wise ICSOR interpretability atlases that are not retained in the main manuscript. Figure~4 of the manuscript is now reserved for the COD $\Theta_{cc}$ block only, so the paper can discuss one representative interaction surface without repeating four dense multi-block panels in the main text. Figures~\ref{fig:supp_cod_interpretability}--\ref{fig:supp_tss_interpretability} provide the full COD, TN, TP, and TSS atlases.
+
+Each atlas presents the full set of retained blocks for one reported target: the scalar bias term $b$, the first-order operational block $W_u$, the first-order influent block $W_{in}$, the operational-curvature block $\Theta_{uu}$, the operation-influent interaction block $\Theta_{uc}$, the influent-curvature block $\Theta_{cc}$, and the coupling matrix $\Gamma$. The ASM component basis is kept complete in every panel, and the heatmaps are drawn from the lower origin so the operational axes begin at HRT and then Aeration.
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS1_cod_icsor_structure.pdf}
+\caption{Illustrative COD-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final COD atlas selected for the supplementary narrative.}
+\label{fig:supp_cod_interpretability}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS2_tn_icsor_structure.pdf}
+\caption{Illustrative TN-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final TN atlas selected for the supplementary narrative.}
+\label{fig:supp_tn_interpretability}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS3_tp_icsor_structure.pdf}
+\caption{Illustrative TP-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final TP atlas selected for the supplementary narrative.}
+\label{fig:supp_tp_interpretability}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS4_tss_icsor_structure.pdf}
+\caption{Illustrative TSS-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final TSS atlas selected for the supplementary narrative.}
+\label{fig:supp_tss_interpretability}
+\end{figure}
+
+\end{document}
