@@ -43,21 +43,24 @@
 \author{}
 
 \begin{abstract}
-Activated sludge models provide a mechanistic basis for wastewater-process analysis, but their coupled non-linear kinetics limit the practical use of transparent surrogates for rapid design, analysis, and optimization. Standard machine-learning surrogates can improve predictive efficiency, yet they generally do not guarantee two basic physical requirements of steady-state activated sludge systems: exact conservation of the stoichiometrically implied material inventories and componentwise non-negativity of the predicted ASM state. This article develops Invariant-Constrained Second-Order Regression (ICSOR), an interpretable surrogate framework that addresses both requirements within a single steady-state formulation. ICSOR uses a partitioned second-order feature map over operational variables and influent ASM components, a learned coupled component-space driver, and deterministic recursive coupled-QP estimation to retain a transparent coefficient structure. At deployment, the method applies a hierarchical correction sequence consisting of a raw coupled prediction, an affine invariant restoration, and a final linear program that enforces exact conservation and non-negativity simultaneously. Because the model is formulated directly in ASM component space, reported effluent composites are obtained only through an external composition map after deployment. The study is developed for a standalone continuous stirred tank reactor and is positioned for comparison against unconstrained surrogate baselines to assess whether physically admissible predictions can be obtained without sacrificing interpretability or competitive predictive performance.
+Standard machine-learning surrogates of activated sludge systems can predict effluent composites accurately, yet their component-space predictions need not satisfy exact stoichiometric mass conservation or componentwise non-negativity. This article develops Invariant-Constrained Second-Order Regression (ICSOR), an interpretable surrogate that enforces both requirements within a single steady-state formulation through a partitioned second-order feature map, a learned cross-component coupling matrix, deterministic recursive coupled-QP estimation, and a hierarchical deployment rule combining a closed-form affine invariant projection with a linear program. On a 10,000-sample ASM2d-TSN continuous stirred tank reactor benchmark, ICSOR was compared against nine unconstrained baselines spanning gradient-boosted trees (XGBoost, LightGBM, CatBoost), other ensembles (Random Forest, AdaBoost), Support Vector Regression, $k$-Nearest Neighbors, Partial Least Squares, and a multilayer perceptron. ICSOR was the only model that produced no mass-conservation violations and no non-negativity violations on the test set, whereas every unconstrained baseline violated conservation on all test samples. Despite operating under these physical constraints, ICSOR maintained competitive aggregate accuracy in the reported composite space, attained the lowest normalized area under the RMSE learning curve across the full training-size sweep, and exhibited the smallest train-test RMSE gap among the competitively accurate models. The framework is developed for steady-state prediction within the studied operating domain and does not claim kinetic or thermodynamic feasibility.
 \end{abstract}
 
 \begin{graphicalabstract}
-\mbox{}
+\centering
+\includegraphics[width=0.98\linewidth]{graphical_abstract}
 \end{graphicalabstract}
 
 \begin{highlights}
-\item \mbox{}
-\item \mbox{}
-\item \mbox{}
+\item ICSOR enforces exact mass conservation and non-negativity in one surrogate.
+\item Only model with zero conservation and non-negativity violations on all test samples.
+\item Lowest test RMSE at the smallest training size among all ten retained models.
+\item Lowest normalized area under the RMSE learning curve across training sizes.
+\item Smallest train-test RMSE gap among competitively accurate surrogate models.
 \end{highlights}
 
 \begin{keywords}
-Activated sludge \sep Surrogate modeling \sep Interpretable machine learning \sep Mass conservation \sep Non-negativity constraints \sep Second-order regression
+Wastewater treatment \sep Activated sludge model \sep Physics-informed machine learning \sep Surrogate modeling \sep Constrained optimization \sep Stoichiometric mass conservation \sep Interpretable regression
 \end{keywords}
 
 \maketitle
@@ -66,8 +69,9 @@ Activated sludge \sep Surrogate modeling \sep Interpretable machine learning \se
 \begin{tabbing}
 \hspace{2.5cm} \= \kill
 $A$ \> Full-row-rank invariant matrix defining the null space of the stoichiometric matrix \\
+$b$ \> Baseline forcing vector of the blockwise driver ($b \in \mathbb{R}^{F}$) \\
 $B$ \> Second-order driver coefficient matrix \\
-$c_{aff}$ \> Invariant-consistent affine correction used before constrained deployment \\
+$c_{aff}$ \> Affine invariant projection of the raw coupled state onto the conservation manifold \\
 $c_{in}$ \> Influent ASM component concentration vector ($c_{in} \in \mathbb{R}^{F}$) \\
 $c_{out}$ \> True steady-state effluent ASM component concentration vector ($c_{out} \in \mathbb{R}^{F}$) \\
 $c_{raw}$ \> Unconstrained coupled component prediction before affine presolve \\
@@ -75,14 +79,17 @@ $\hat{c}$ \> Final deployed ICSOR ASM component prediction \\
 $\widehat{C}$ \> Fitted non-negative component prediction matrix used in training \\
 $D$ \> Total dimension of the second-order feature map \\
 $F$ \> Number of mechanistic ASM components \\
+$\mathcal{G}$ \> Admissible set for $\Gamma$ (zero diagonal, box bounds, conditioning threshold) \\
 $\Gamma$ \> Learned ASM component coupling matrix \\
 $I_{comp}$ \> Composition matrix mapping ASM components to measured composites ($I_{comp} \in \mathbb{R}^{K \times F}$) \\
 $K$ \> Number of measured composite variables \\
+$\kappa(\cdot)$ \> Matrix condition number \\
 $\lambda_B$ \> Ridge regularization weight on $B$ \\
 $\lambda_\Gamma$ \> Ridge regularization weight on $\Gamma$ \\
 $\lambda_{inv}$ \> Invariant-residual penalty weight in the training objective \\
 $\lambda_{sys}$ \> Coupled-system consistency penalty weight in the training objective \\
 $M_{op}$ \> Number of operational variables \\
+$N$ \> Number of steady-state training samples \\
 $N_{rxn}$ \> Number of reactions in the mechanistic model \\
 $R$ \> Coupled-system matrix, $R = I_F - \Gamma$ \\
 $u$ \> Operational input vector ($u \in \mathbb{R}^{M_{op}}$) \\
@@ -91,7 +98,13 @@ $y_{ext}$ \> Reported measured effluent composite vector ($y_{ext} \in \mathbb{R
 $\hat{y}_{ext}$ \> Reported composite prediction, $\hat{y}_{ext} = I_{comp}\hat{c}$ \\
 $\nu$ \> Stoichiometric matrix ($\nu \in \mathbb{R}^{N_{rxn} \times F}$) \\
 $\xi$ \> Net reaction progress vector \\
+$\Phi$ \> Feature matrix collecting $\phi$ row-wise over the training set ($\Phi \in \mathbb{R}^{N \times D}$) \\
 $\phi$ \> Partitioned second-order feature map \\
+$\Theta_{cc}$ \> Influent--influent second-order driver block ($\Theta_{cc} \in \mathbb{R}^{F \times F^2}$) \\
+$\Theta_{uc}$ \> Operating--influent interaction driver block ($\Theta_{uc} \in \mathbb{R}^{F \times (M_{op}F)}$) \\
+$\Theta_{uu}$ \> Operating--operating second-order driver block ($\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$) \\
+$W_{in}$ \> First-order influent driver block ($W_{in} \in \mathbb{R}^{F \times F}$) \\
+$W_u$ \> First-order operating driver block ($W_u \in \mathbb{R}^{F \times M_{op}}$) \\
 $\otimes$ \> Kronecker product \\
 \end{tabbing}
 
@@ -215,7 +228,7 @@ Each term has a distinct role. The first term fits effluent ASM components direc
 
 \subsection{Deployment-Time Inference with Exact Conservation and Non-Negativity}
 
-Training determines $\widehat{B}$ and $\widehat{\Gamma}$. Deployment then predicts a new component state by solving a second mathematical program. For a new sample $(u_*, c_{in,*})$, define
+Training determines $\widehat{B}$ and $\widehat{\Gamma}$. Deployment then predicts a new component state through a staged inference rule: a direct coupled evaluation, a closed-form affine projection, and, only when non-negativity is still violated, a final linear program. For a new sample $(u_*, c_{in,*})$, define
 \begin{equation}
 \label{eq:deployment-definitions}
 \phi_* = \phi(u_*, c_{in,*}), \qquad d_* = \widehat{B}\phi_*, \qquad \widehat{R} = I_F - \widehat{\Gamma}.
@@ -227,12 +240,17 @@ Whenever $\widehat{R}$ is nonsingular, the unconstrained coupled state is
  c_{raw} = \widehat{R}^{-1} d_*.
 \end{equation}
 
-A cheap affine presolve then restores exact invariants without yet enforcing non-negativity:
+A cheap affine presolve then restores exact invariants without yet enforcing non-negativity. The nearest invariant-consistent state to the raw predictor is
 \begin{equation}
 \label{eq:affine-presolve}
  c_{aff} = \arg\min_{c \in \mathbb{R}^{F}} \; \|c - c_{raw}\|_2^2 \quad \text{subject to} \quad A c = A c_{in,*}.
 \end{equation}
-This affine presolve plays the role of a conservation-restoring nudge: like the species-weighted correction proposed by Sturm and Silva (2025), it returns the nearest invariant-consistent state to the raw predictor. Here, however, the affine correction is treated as a cheap intermediate stage rather than the final deployed output, because exact invariants alone do not preclude negative ASM component concentrations.
+Because $A$ is full row rank, $AA^T$ is invertible and the Lagrange conditions yield a closed-form solution:
+\begin{equation}
+\label{eq:affine-closed-form}
+ c_{aff} = c_{raw} - A^T(AA^T)^{-1}A\,(c_{raw} - c_{in,*}).
+\end{equation}
+The affine presolve is therefore the orthogonal projection of $c_{raw}$ onto the invariant-consistent affine set $\{c : Ac = Ac_{in,*}\}$ and requires only a single matrix--vector multiplication at deployment. This closed-form correction plays the role of a conservation-restoring nudge: like the species-weighted correction proposed by Sturm and Silva (2025), it returns the nearest invariant-consistent state to the raw predictor. Here, however, the affine projection is treated as a cheap intermediate stage rather than the final deployed output, because exact invariants alone do not preclude negative ASM component concentrations.
 
 If $c_{raw}$ already satisfies the invariants and remains non-negative, ICSOR can deploy it directly. If $c_{raw}$ is infeasible but $c_{aff}$ is non-negative, the affine presolve is already sufficient. Only when the affine state still contains negative components does ICSOR activate the full correction program:
 \begin{equation}
@@ -273,7 +291,7 @@ One practical reason is the matrix $R = I_F - \Gamma$ itself. Deployment require
 
 This architecture is preferred here over generic stochastic first-order training for three reasons. First, each exact block update cannot increase the coupled objective, so the objective sequence within a restart is monotone non-increasing and converges in value to a stationary point. Second, the optimization variables remain attached to interpretable convex subproblems instead of being absorbed into one optimizer trajectory with learning-rate, momentum, clipping, or epoch-count sensitivity. Third, with fixed initialization, restart policy, and solver tolerances, the recursive coupled-QP route is reproducible in a way that stochastic training need not be.
 
-The solver choices follow the same principle of structural fidelity. OSQP is used for the convex QP subproblems because the $\Gamma$ and $\widehat{C}$ blocks are sparse, box- and non-negativity-constrained quadratic programs. The deployment problem in Eq.~\eqref{eq:deployment-lp} is solved with HiGHS because, once $c_{aff}$ is fixed, the deployed correction is a linear program rather than a quadratic one. A second computational advantage comes from the hierarchical presolve described in Section~2.4: the raw coupled state is checked first, the affine invariant correction is checked second, and the LP is reserved only for states whose non-negativity constraints remain active after those cheaper steps. The manuscript therefore presents one definite ICSOR contract: direct component-space prediction, explicit learned coupling, invariant-aware training, exact constrained deployment, and deterministic recursive coupled-QP estimation.
+The solver choices follow the same principle of structural fidelity. OSQP is used for the convex QP subproblems because the $\Gamma$ and $\widehat{C}$ blocks are sparse, box- and non-negativity-constrained quadratic programs. The deployment problem in Eq.~\eqref{eq:deployment-lp} is solved with HiGHS because, once $c_{aff}$ is fixed, the deployed correction is a linear program rather than a quadratic one. A second computational advantage comes from the hierarchical deployment rule described in Section~2.4: the raw coupled state is checked first, the closed-form affine projection is evaluated second, and the LP is reserved only for states whose non-negativity constraints remain active after those cheaper steps. The manuscript therefore presents one definite ICSOR contract: direct component-space prediction, explicit learned coupling, invariant-aware training, exact constrained deployment, and deterministic recursive coupled-QP estimation.
 
 The iterative estimator and the accelerated deployment logic can be summarized as follows.
 
@@ -314,7 +332,7 @@ retain the feasible restart with the smallest recorded objective \\
 \textbf{Input:} $u_*$, $c_{in,*}$, $\widehat{B}$, $\widehat{\Gamma}$, $A$ \\
 form $\phi_*$ and compute the raw coupled state $c_{raw} = (I_F - \widehat{\Gamma})^{-1}\widehat{B}\phi_*$ \\
 \textbf{if} $c_{raw}$ is invariant-consistent and non-negative \textbf{then return} $c_{raw}$ \\
-form the affine invariant correction $c_{aff}$ \\
+compute the closed-form affine invariant projection $c_{aff}$ via Eq.~\eqref{eq:affine-closed-form} \\
 \textbf{if} $c_{aff}$ is non-negative \textbf{then return} $c_{aff}$ \\
 solve the deployment LP in Eq.~\eqref{eq:deployment-lp} with $c_{aff}$ as the reference state \\
 \textbf{return} the projected state $\hat{c}$
@@ -681,7 +699,7 @@ Random Forest & 100.0 & 0.0 \\
 
 These diagnostics illustrate why predictive accuracy in the reported composite space does not by itself ensure physically interpretable component-level predictions. AdaBoost, Random Forest, and $k$-NN remain nonnegative on the test set, yet all three still violate the stoichiometric invariants on every sample; positivity alone therefore does not recover consistent material bookkeeping. Conversely, several of the models with the lowest aggregate RMSE, including the MLP and LightGBM, violate the conserved material inventories on every test sample and produce negative component concentrations on a substantial fraction of the test set. A surrogate may thus appear accurate in the reported composite space while producing component-level states that are not physically admissible.
 
-The staged deployment logic of ICSOR can also be examined at the level of individual correction stages. None of the raw coupled test predictions were simultaneously invariant-consistent and nonnegative: raw feasibility was 0.0\%, raw conservation compliance was 0.0\%, and 21.7\% of raw states were nonnegative. The affine presolve restored invariants for all samples and was itself sufficient for 21.8\% of the test set (436 of 2000 samples). The remaining 78.2\% (1564 samples) required the final LP correction, which converged in a mean of 23.5 HiGHS iterations with a maximum of 40. The final projected prediction was feasible for 100\% of the test cases, confirming that the deployment pipeline maintained the physical guarantees without requiring a computationally expensive solve on every sample.
+The staged deployment logic of ICSOR can also be examined at the level of individual correction stages. None of the raw coupled test predictions were simultaneously invariant-consistent and nonnegative: raw feasibility was 0.0\%, raw conservation compliance was 0.0\%, and 21.7\% of raw states were nonnegative. The closed-form affine projection restored invariants for all samples and was itself sufficient for 21.8\% of the test set (436 of 2000 samples), resolving those cases without invoking any numerical optimizer. The remaining 78.2\% (1564 samples) required the final LP correction, which converged in a mean of 23.5 HiGHS iterations with a maximum of 40. The final projected prediction was feasible for 100\% of the test cases, confirming that the deployment pipeline maintained the physical guarantees without requiring a computationally expensive solve on every sample.
 
 Taken together, these results suggest a moderate accuracy-feasibility tradeoff within the present benchmark. When the objective is minimizing pointwise error in the reported composite space, the MLP and LightGBM remain the preferable options. When the objective includes deployed predictions that satisfy both invariant conservation and component non-negativity, ICSOR is the only model in the retained set that provides those guarantees, and it does so while remaining within the upper portion of the competitive accuracy range on aggregate RMSE.
 
@@ -723,6 +741,14 @@ Overall summary & 847 & 460 & 54.3093 \\
 Table~\ref{tab:results_icsor_regularization_sample} shows that this interpretability does not arise from a uniformly sparse model, but from a structured separation between sparse high-order driver terms and a comparatively dense cross-component coupling layer. Under the COD export threshold, every low-dimensional block is retained in full ($b$, $W_u$, $W_{in}$, and $\Theta_{uu}$), whereas only 18 of 40 $\Theta_{uc}$ terms and 59 of 400 $\Theta_{cc}$ terms remain above the reporting threshold. By contrast, 356 of 380 $\Gamma$ entries are retained. The model therefore compresses nonlinear influent curvature while preserving a broad redistribution layer across ASM components. Overall, 54.3\% of the candidate coefficients remain above the reporting threshold, and most of that retained fraction resides in the coupling matrix rather than in the highest-order quadratic block.
 
 This separation between a sparse quadratic driver and a comparatively dense coupling matrix is why Figure~\ref{fig:results_interpretability_sample} can present a compact curvature surface without omitting important model structure. The COD $\Theta_{cc}$ panel serves as the representative interpretability surface, while Supplementary Figures S1--S4 preserve the full target-by-target atlases for completeness. Presenting the main discussion at the COD-block level therefore highlights the curvature structure that is most relevant to process interpretation while acknowledging that the complete ICSOR coefficient structure is distributed across $B$ and $\Gamma$ together.
+
+\section{Conclusion}
+
+This study developed Invariant-Constrained Second-Order Regression (ICSOR), an interpretable surrogate framework for steady-state activated sludge systems that enforces exact stoichiometric mass conservation and componentwise non-negativity within a single formulation. The framework combines a partitioned second-order feature map, a learned cross-component coupling matrix, deterministic recursive coupled-QP estimation, and a hierarchical deployment correction consisting of a raw feasibility check, a closed-form affine invariant projection, and a final linear program. In the ASM2d-TSN continuous stirred tank reactor benchmark examined here, ICSOR was the only retained model that produced no mass-conservation violations and no non-negativity violations on the final component-space test predictions, whereas every unconstrained baseline violated conservation on all test samples and several exhibited negative component concentrations on a substantial fraction of the test set.
+
+These physical guarantees were obtained with a moderate predictive tradeoff. On the fixed 80--20 split, ICSOR attained an aggregate test RMSE of 5.9768 in the reported composite space, which remained within the range of SVR and XGBoost but did not match the lower errors achieved by the MLP (4.3756) and LightGBM (5.2971) when unconstrained accuracy alone was the criterion. In the repeated dataset-size study, ICSOR attained the lowest mean test RMSE at the smallest training size examined and the lowest RMSE normalized area under the learning curve across the full size sweep, while exhibiting the smallest train-test RMSE gap (0.2194) among the competitively accurate models. Training cost was higher than that of the fastest tree-based methods at every size examined, though it remained below that of SVR and the MLP at the largest training scale.
+
+The conclusions drawn here are bounded by the scope of the present study. The framework was validated only on steady-state predictions from a standalone CSTR operating within the sampled influent and operating-condition ranges, and it does not claim to enforce full kinetic or thermodynamic feasibility. The invariant matrix used for conservation enforcement depends on the adopted stoichiometric model and system boundary, so any external source or sink not represented in that model lies outside the present conservation claim. Within these boundaries, the results suggest that physically admissible surrogate predictions can be maintained without forgoing interpretability or incurring a disproportionate loss in predictive accuracy. Whether this tradeoff remains favorable for more complex reactor configurations, broader operating envelopes, or integration into surrogate-assisted optimization and control workflows remains to be investigated in future work.
 
 \section*{References}
 
