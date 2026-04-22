@@ -1058,7 +1058,7 @@
       "nonnegativity_tolerance": 1e-10,
       "measured_deviation_weight": 1.0,
       "component_deviation_weight": 1.0,
-      "tradeoff_parameter": 0.000000001,
+      "tradeoff_parameter": 1e-6,
       "highs_presolve": true,
       "highs_max_iter": 10000,
       "highs_verbose": false,
