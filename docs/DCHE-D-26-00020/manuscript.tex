@@ -5,10 +5,55 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{capt-of}
+\usepackage{xcolor}
 \usepackage{float}
+\usepackage{mdframed}
 \usepackage{needspace}
 \usepackage{lineno}
 \graphicspath{{./}{docs/DCHE-D-26-00020/}}
+
+\definecolor{revDefault}{RGB}{0,0,255}
+\definecolor{revRoneTen}{RGB}{0,116,153}
+\definecolor{revRoneSixteen}{RGB}{217,95,2}
+\definecolor{revRoneTwentyFive}{RGB}{0,140,72}
+\definecolor{revRoneTwentySeven}{RGB}{140,81,10}
+\definecolor{revRtwoOne}{RGB}{171,71,188}
+\definecolor{revRtwoTwo}{RGB}{196,30,58}
+\definecolor{revRtwoFour}{RGB}{46,125,50}
+\definecolor{revRtwoFive}{RGB}{94,53,177}
+
+\newcommand{\rev}[1]{\textcolor{revDefault}{#1}}
+\newcommand{\revitem}[2]{\textcolor{#1}{#2}}
+\newenvironment{revblock}{\begingroup\color{revDefault}}{\endgroup}
+\newenvironment{revblockr110}{\begingroup\color{revRoneTen}}{\endgroup}
+\newenvironment{revblockr116}{\begingroup\color{revRoneSixteen}}{\endgroup}
+\newenvironment{revblockr125}{\begingroup\color{revRoneTwentyFive}}{\endgroup}
+\newenvironment{revblockr127}{\begingroup\color{revRoneTwentySeven}}{\endgroup}
+\newenvironment{revblockr21}{\begingroup\color{revRtwoOne}}{\endgroup}
+\newenvironment{revblockr22}{\begingroup\color{revRtwoTwo}}{\endgroup}
+\newenvironment{revblockr24}{\begingroup\color{revRtwoFour}}{\endgroup}
+\newenvironment{revblockr25}{\begingroup\color{revRtwoFive}}{\endgroup}
+
+\newmdenv[%
+    linecolor=revDefault,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrev}{}
+\newmdenv[%
+    linecolor=revRoneTwentyFive,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrevr125}{}
+\newmdenv[%
+    linecolor=revRtwoOne,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrevr21}{}
+\newmdenv[%
+    linecolor=revRtwoFive,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrevr25}{}
 
 %%% Author macros
 \def\tsc#1{\csdef{#1}{\textsc{\lowercase{#1}}\xspace}}
@@ -38,34 +83,37 @@
 \shorttitle{An Interpretable Statistical Surrogate of Activated Sludge Systems}
 \shortauthors{}
 
-\title[mode=title]{An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}
+\title[mode=title]{\rev{An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity}}
 
 \author{}
 
 \begin{abstract}
-Standard machine-learning surrogates of activated sludge systems can predict effluent composites accurately, yet their component-space predictions need not satisfy exact stoichiometric mass conservation or componentwise non-negativity. This article develops Invariant-Constrained Second-Order Regression (ICSOR), an interpretable surrogate that enforces both requirements within a single steady-state formulation through a partitioned second-order feature map, a learned cross-component coupling matrix, deterministic recursive coupled-QP estimation, and a hierarchical deployment rule combining a closed-form affine invariant projection with a linear program. On a 10,000-sample ASM2d-TSN continuous stirred tank reactor benchmark, ICSOR was compared against nine unconstrained baselines spanning gradient-boosted trees (XGBoost, LightGBM, CatBoost), other ensembles (Random Forest, AdaBoost), Support Vector Regression, $k$-Nearest Neighbors, Partial Least Squares, and a multilayer perceptron. ICSOR was the only model that produced no mass-conservation violations and no non-negativity violations on the test set, whereas every unconstrained baseline violated conservation on all test samples. Despite operating under these physical constraints, ICSOR maintained competitive aggregate accuracy in the reported composite space, attained the lowest normalized area under the RMSE learning curve across the full training-size sweep, and exhibited the smallest train-test RMSE gap among the competitively accurate models. The framework is developed for steady-state prediction within the studied operating domain and does not claim kinetic or thermodynamic feasibility.
+\rev{Standard machine-learning surrogates of activated sludge systems can predict effluent composites accurately, yet their component-space predictions need not satisfy exact stoichiometric mass conservation or componentwise non-negativity. This article develops Invariant-Constrained Second-Order Regression (ICSOR), an interpretable surrogate that enforces both requirements within a single steady-state formulation through a partitioned second-order feature map, a learned cross-component coupling matrix, deterministic recursive coupled-QP estimation, and a hierarchical deployment rule combining a closed-form affine invariant projection with a linear program. On a 10,000-sample ASM2d-TSN continuous stirred tank reactor benchmark, ICSOR was compared against nine unconstrained baselines spanning gradient-boosted trees (XGBoost, LightGBM, CatBoost), other ensembles (Random Forest, AdaBoost), Support Vector Regression, $k$-Nearest Neighbors, Partial Least Squares, and a multilayer perceptron. ICSOR was the only model that produced no mass-conservation violations and no non-negativity violations on the test set, whereas every unconstrained baseline violated conservation on all test samples. Despite operating under these physical constraints, ICSOR maintained competitive aggregate accuracy in the reported composite space, attained the lowest normalized area under the RMSE learning curve across the full dataset-size sweep, and exhibited the smallest train-validation RMSE gap among the competitively accurate models.}
 \end{abstract}
 
 \begin{graphicalabstract}
 \centering
+\begin{figrev}
 \includegraphics[width=0.98\linewidth]{graphical_abstract}
+\end{figrev}
 \end{graphicalabstract}
 
 \begin{highlights}
-\item ICSOR enforces exact mass conservation and non-negativity in one surrogate.
-\item Only model with zero conservation and non-negativity violations on all test samples.
-\item Lowest test RMSE at the smallest training size among all ten retained models.
-\item Lowest normalized area under the RMSE learning curve across training sizes.
-\item Smallest train-test RMSE gap among competitively accurate surrogate models.
+\item \rev{ICSOR enforces exact mass conservation and non-negativity in one surrogate.}
+\item \rev{Only model with zero conservation and non-negativity violations on all test samples.}
+\item \rev{Lowest mean held-out RMSE at the smallest retained dataset size among all ten models.}
+\item \rev{Lowest normalized area under the RMSE learning curve across dataset sizes.}
+\item \rev{Smallest train-validation RMSE gap among competitively accurate surrogate models.}
 \end{highlights}
 
 \begin{keywords}
-Wastewater treatment \sep Activated sludge model \sep Physics-informed machine learning \sep Surrogate modeling \sep Constrained optimization \sep Stoichiometric mass conservation \sep Interpretable regression
+\rev{Wastewater treatment \sep Activated sludge model \sep Physics-informed machine learning \sep Surrogate modeling \sep Constrained optimization \sep Stoichiometric mass conservation \sep Interpretable regression}
 \end{keywords}
 
 \maketitle
 
-\section*{Nomenclature}
+\section*{\revitem{revRoneTen}{Nomenclature}}
+\begin{revblockr110}
 \begin{tabbing}
 \hspace{2.5cm} \= \kill
 $A$ \> Full-row-rank invariant matrix defining the null space of the stoichiometric matrix \\
@@ -107,6 +155,7 @@ $W_{in}$ \> First-order influent driver block ($W_{in} \in \mathbb{R}^{F \times 
 $W_u$ \> First-order operating driver block ($W_u \in \mathbb{R}^{F \times M_{op}}$) \\
 $\otimes$ \> Kronecker product \\
 \end{tabbing}
+\end{revblockr110}
 
 \section{Introduction}
 
@@ -114,6 +163,7 @@ Water pollution presents a critical environmental and public health challenge wo
 
 In response to the computational and mathematical complexity inherent in non-linear Activated Sludge Models, research has increasingly focused on developing surrogate models to approximate the behavior of biological wastewater treatment systems (Bhosekar \& Ierapetritou, 2018; Durkin et al., 2024; Tsochatzidi et al., 2025). Traditional approaches have explored linearization techniques (Li et al., 2020; Yang et al., 2014) and multivariable polynomial fitting (Ahn et al., 2014; Kim et al., 2009; Lim et al., 2011). While linear methods like Partial Least Squares (PLS) offer interpretable mappings, they inherently struggle to capture the severe non-linearities of microbial kinetics without extensive feature engineering. To overcome these limitations, the machine learning (ML) paradigm has emerged as a powerful route for approximating highly non-linear wastewater-treatment behavior (Croll et al., 2023; Nazlabadi et al., 2021). Recent wastewater evidence further shows that, when predictive accuracy alone is the criterion, modern ML models can outperform mechanistic ASM baselines for effluent nitrogen prediction (Wang et al., 2025). A wide array of data-driven algorithms---ranging from distance-based methods like k-Nearest Neighbors (k-NN) and PLS (Khatri et al., 2020; Wold et al., 2001), to kernel methods like Support Vector Regression (SVR) (Fang et al., 2011), tree-based ensembles such as Random Forest (RF), AdaBoost, XGBoost, LightGBM, and CatBoost (Sadri Moghaddam \& Mesghali, 2023; Wang et al., 2025; Yang et al., 2025), and Artificial Neural Networks (ANN) (Asadi et al., 2017; Bagherzadeh et al., 2021; Mao et al., 2024)---have demonstrated strong predictive capabilities for effluent quality. 
 
+\begin{revblock}
 Despite their predictive accuracy, these standard ML algorithms remain structurally blind to a central physical requirement of activated sludge systems: material cannot be created or destroyed arbitrarily across the modeled control volume. A surrogate may fit observed effluent behavior well while still implying an impossible redistribution of the underlying ASM components, thereby violating the mass balances that govern COD, nitrogen, or phosphorus transfer. Related composition-preserving ML studies show that even accurate tree-based predictors can exhibit persistent unphysical conservation residuals unless an explicit corrective mechanism is imposed (Sturm \& Silva, 2025). At the same time, physically admissible concentration states must remain componentwise non-negative. These two requirements are inseparable in practice. A surrogate that conserves mass but predicts negative concentrations is still unusable, and a surrogate that preserves non-negativity while violating mass conservation remains physically misleading.
 
 Recent scientific-ML literature shows that satisfying both requirements simultaneously is nontrivial. A substantial class of methods enforces conservation alone through conservative flux formulations, stoichiometric architectures, projection operators, Bayesian reconciliation, or completion strategies, but does not guarantee non-negativity of the corrected state (Beucler et al., 2021; Geiss et al., 2022; Hansen et al., 2024; Harder et al., 2022; Sturm \& Silva, 2025; Sturm \& Wexler, 2020, 2022). In that broader literature, completion methods reconstruct withheld variables to satisfy linear equality constraints (Beucler et al., 2021), Bayesian reconciliation treats conservation as a probabilistic update (Hansen et al., 2024), and recent atmospheric-composition studies use stoichiometric null-space constructions and invariant-restoring nudges to keep learned states on the conservation manifold (Sturm \& Silva, 2025; Sturm \& Wexler, 2020, 2022). Closely related soft-constraint approaches, such as physics-informed neural networks, can encourage physically plausible behavior but generally provide neither exact conservation nor strict positivity guarantees; more generally, soft-penalty conservation treatments need not drive residual violations to zero at deployment (Hansen et al., 2024; Raissi et al., 2019). Positivity-only output transformations can prevent negative states, but without an accompanying conservation mechanism they do not by themselves enforce global material balance. Conversely, conservative projection steps that ignore positivity can still generate infeasible negative states in practice, which is precisely why joint enforcement remains difficult (Kircher \& Votsmeier, 2025).
@@ -127,8 +177,10 @@ This study addresses that need through the development of Invariant-Constrained 
 To do so, ICSOR couples an interpretable second-order surrogate with a hard physical correction performed in ASM component space. The regression structure retains transparent operating-condition, influent, and interaction effects, while the deployment step removes states that would violate the admissible physical region. The result is a surrogate that remains analytically structured and data-driven, yet is constrained to return only physically meaningful steady-state predictions.
 
 The objective of this article is to formulate the ICSOR framework as an analytically structured surrogate and to evaluate its efficacy on a standalone Continuous Stirred Tank Reactor (CSTR). By comparing ICSOR against established unconstrained baselines, this study assesses whether the proposed model can achieve competitive predictive accuracy while explicitly guaranteeing the parsimony, interpretability, and rigorous physical consistency required for reliable process analysis. The framework presented herein is strictly bounded to steady-state predictions; while it guarantees mass conservation and non-negativity, it does not claim to enforce full kinetic or thermodynamic feasibility, nor does it replace dynamic trajectory simulators. Instead, it occupies a necessary middle ground: a surrogate simple enough to be estimated transparently from data, yet mathematically constrained to respect the fundamental physical constraints of wastewater engineering.
+\end{revblock}
 
-\section{Theory and Calculation}
+\section{\rev{Theory and Calculation}}
+\begin{revblock}
 
 \subsection{Physical Scope, State Spaces, and Notation}
 
@@ -149,6 +201,7 @@ Let $M_{op}$ be the number of operational variables, $F$ the number of ASM compo
 
 The linear composition map $I_{comp}$ remains external to the model itself. In the common wastewater-reporting case where its rows are entrywise non-negative, non-negative component predictions imply non-negative reported composites automatically. Thus ICSOR places the hard non-negativity guarantee where it is physically meaningful, namely on the predicted ASM component state.
 
+\begin{revblockr22}
 \subsection{Stoichiometric Structure and Conserved Quantities}
 
 Let $\nu \in \mathbb{R}^{N_{rxn} \times F}$ be the stoichiometric matrix written in the adopted ASM component basis. For a steady-state sample, define the net reaction progress vector $\xi \in \mathbb{R}^{N_{rxn}}$, scaled into concentration-equivalent units, such that the net change across the control volume is:
@@ -163,6 +216,7 @@ The vector $\xi$ is rarely observed directly. To eliminate it and isolate the co
 \end{equation}
 This invariant-matrix construction follows the same mathematical idea used by Sturm and Wexler (2020) in mass-conserving photochemical surrogates, where a null-space matrix is used to preserve elemental inventories exactly. In the present setting, the conserved rows of $A$ represent wastewater-material inventories implied by the adopted ASM reaction network and system boundary rather than atmospheric atom counts.
 Each row of $A$ represents one independent conserved combination of ASM components implied by the adopted reaction network and system boundary. The basis of $A$ is not unique, but once it is fixed, the invariant relation $Ac_{out} = Ac_{in}$ defines the exact conservation law that deployed ICSOR predictions must satisfy.
+\end{revblockr22}
 
 \subsection{Coupled Second-Order Driver and Prediction-Space Training}
 
@@ -283,9 +337,28 @@ These coefficients are motivated by plant operation rather than by algebraic con
 
 The coupling coefficients in $\Gamma$ serve a different purpose. They do not describe how the operating point generates forcing; they describe how that forcing is redistributed across ASM component balances once created. Couplings among dissolved oxygen and nitrifier channels, among ammonium, nitrite, and nitrate, among $S_{PO4}$, $X_{PAO}$, $X_{PP}$, and $X_{PHA}$, or between soluble and particulate COD-bearing states correspond to recurring material linkages that operators already recognize in nitrification, denitrification, phosphorus storage, and hydrolysis-uptake behavior. The sign of a coupling coefficient indicates whether that linkage is reinforcing or compensating, and its magnitude indicates how strongly the redistribution must be represented to reproduce the observed state pattern. Persistent entries of $\Gamma$ are therefore interpretable as recurring process linkages rather than as purely statistical artifacts.
 
+\begin{revblockr127}
 \subsection{Deterministic Recursive Coupled-QP Estimation and Modeling Boundaries}
 
-This article adopts the recursive coupled-QP training route rather than a generic stochastic first-order optimizer such as Adam. That choice is deliberate. For fixed $(\Gamma, \widehat{C})$, the $B$ update is a ridge-regularized linear least-squares solve. For fixed $(B, \widehat{C})$, the $\Gamma$ update is a convex box-constrained quadratic program. For fixed $(B, \Gamma)$, the $\widehat{C}$ update is a convex non-negative quadratic program with the invariant penalty retained. The training loop therefore consists of deterministic Gauss-Seidel sweeps over exact block solutions.
+This article adopts the recursive coupled-QP training route rather than a generic stochastic first-order optimizer such as Adam. That choice is deliberate. Writing the training criterion in Eq.~\eqref{eq:training-objective} as $J(B,\Gamma,\widehat{C})$, each restart performs deterministic block-coordinate Gauss--Seidel sweeps of the form
+\begin{equation}
+\label{eq:recursive-update-b}
+B^{(t+1,s)} = \arg\min_{B} J\bigl(B, \Gamma^{(t,s)}, \widehat{C}^{(t,s)}\bigr),
+\end{equation}
+\begin{equation}
+\label{eq:recursive-update-gamma}
+\Gamma^{(t+1,s)} = \arg\min_{\Gamma \in \mathcal{G}} J\bigl(B^{(t+1,s)}, \Gamma, \widehat{C}^{(t,s)}\bigr),
+\end{equation}
+\begin{equation}
+\label{eq:recursive-update-chat}
+\widehat{C}^{(t+1,s)} = \arg\min_{\widehat{C} \in \mathbb{R}_{+}^{N \times F}} J\bigl(B^{(t+1,s)}, \Gamma^{(t+1,s)}, \widehat{C}\bigr).
+\end{equation}
+After each full cycle, the objective is evaluated as
+\begin{equation}
+\label{eq:recursive-update-objective}
+J^{(t+1,s)} = J\bigl(B^{(t+1,s)}, \Gamma^{(t+1,s)}, \widehat{C}^{(t+1,s)}\bigr).
+\end{equation}
+For fixed $(\Gamma, \widehat{C})$, the $B$ subproblem is a ridge-regularized linear least-squares solve. For fixed $(B, \widehat{C})$, the $\Gamma$ subproblem is a convex box-constrained quadratic program. For fixed $(B, \Gamma)$, the $\widehat{C}$ subproblem is a convex non-negative quadratic program with the invariant penalty retained.
 
 One practical reason is the matrix $R = I_F - \Gamma$ itself. Deployment requires $R$ to remain invertible, and in practice it must remain well conditioned because both the raw coupled state and the subsequent correction depend on solving through $R$. A nearly singular $R$ would amplify numerical noise, distort the affine presolve, and make the deployed correction unstable. The recursive coupled-QP route can control this requirement explicitly: each $\Gamma$ update is box-constrained, its diagonal is fixed at zero, and the candidate is accepted only if $\kappa(I_F - \Gamma)$ stays below a prescribed conditioning threshold. If that threshold is violated, the candidate can be shrunk toward the origin and, if necessary, replaced by a safe fallback. Stochastic methods such as Adam, and indeed other generic first-order solvers, do not provide that admissibility guarantee by themselves. They may lower the objective while still visiting or returning nearly singular coupling matrices unless an additional conditioning projection is imposed externally.
 
@@ -306,11 +379,11 @@ The iterative estimator and the accelerated deployment logic can be summarized a
 \> initialize admissible $\Gamma^{(0,s)}$ and non-negative $\widehat{C}^{(0,s)}$ \\
 \> compute $B^{(0,s)}$ from the corresponding ridge solve \\
 \> \textbf{for} $t = 0, \dots, T_{\max}-1$ \textbf{do} \\
-\>\> update $B^{(t+1,s)}$ by ridge least squares \\
-\>\> update $\Gamma^{(t+1,s)}$ by constrained QP \\
+\>\> update $B^{(t+1,s)}$ via Eq.~\eqref{eq:recursive-update-b} \\
+\>\> update $\Gamma^{(t+1,s)}$ via Eq.~\eqref{eq:recursive-update-gamma} \\
 \>\> enforce zero diagonal, box bounds, and $\kappa(I_F - \Gamma^{(t+1,s)}) \le \kappa_{\max}$ \\
-\>\> update $\widehat{C}^{(t+1,s)}$ by non-negative invariant-aware QP \\
-\>\> record the objective value and its running minimum \\
+\>\> update $\widehat{C}^{(t+1,s)}$ via Eq.~\eqref{eq:recursive-update-chat} \\
+\>\> compute $J^{(t+1,s)}$ via Eq.~\eqref{eq:recursive-update-objective} and record its running minimum \\
 \>\> \textbf{if} the trailing objective slope is below tolerance \textbf{then stop the restart} \\
 \> \textbf{end for} \\
 \textbf{end for} \\
@@ -340,7 +413,12 @@ solve the deployment LP in Eq.~\eqref{eq:deployment-lp} with $c_{aff}$ as the re
 \end{quote}
 \end{minipage}
 
-\section{Methodology}
+\end{revblockr127}
+
+\end{revblock}
+
+\section{\rev{Methodology}}
+\begin{revblock}
 
 \subsection{ASM2d-TSN Process Model, State Basis, and Reported Composites}
 
@@ -378,6 +456,7 @@ $S_{PO4}$ & [2.0, 18.0] & g P/m$^3$ & $X_{NOB}$ & [0.5, 8.0] & g COD/m$^3$ \\
 
 Within Table~\ref{tab:simulation_domain}, the first two rows define the controllable reactor settings and the remaining rows define the influent composition envelope. The soluble-state bounds cover oxygen, carbon, nitrogen, phosphorus, inert, and alkalinity loadings, while the particulate-state bounds cover inert solids, biodegradable substrate, biomass pools, storage polymers, and precipitated solids. That separation matters later when interpreting ICSOR coefficients, because the model treats operating conditions and influent components as distinct blocks in both feature construction and physical correction.
 
+\begin{revblockr116}
 \subsection{Simulation Protocol, Initialization, and Steady-State Acceptance}
 
 The 22-dimensional sampling domain, consisting of the two operating variables and the 20-component influent state, was explored by Latin hypercube sampling with random seed 42. Sampling continued until 10,000 valid steady states had been accepted. At every sampled operating-influent point, the steady-state ASM balance equations were solved under box constraints by nonlinear least squares with lower and upper state bounds of $10^{-8}$ and 1500, variable, residual, and gradient tolerances of $10^{-9}$, and a maximum of 1200 function evaluations. Up to 25 candidate attempts were permitted per target sample so that infeasible operating-influent draws could be replaced without changing the prescribed sample count.
@@ -410,7 +489,9 @@ Bounds & Clipped to $[10^{-6},1500]$ & Clipped to $[10^{-6},1500]$ \\
 \end{table}
 
 The structure of Table~\ref{tab:initial_conditions} reflects the intended solver behavior. The base-state row carries forward information from the previous accepted steady state when that information exists, which improves continuity across neighboring Latin hypercube samples. The substrate and biomass rows then bias the initialization toward biologically plausible regimes by partially depleting readily consumed substrates and preserving key biomass pools. The dissolved-oxygen row supplies a separate process-based estimate tied to hydraulic dilution and oxygen transfer, and the bounds row ensures that every initialization remains inside the admissible numerical domain before the nonlinear least-squares solve begins.
+\end{revblockr116}
 
+\begin{revblockr22}
 \subsection{Constraint Operators, Benchmark Dataset, and Common Training Targets}
 
 The invariant operator $A$ used by ICSOR was built from the same stoichiometric model that generated the dataset. Specifically, if $\nu \in \mathbb{R}^{28 \times 20}$ denotes the ASM2d-TSN Petersen matrix, then $A$ was obtained as a basis for the left null space of $\nu$ so that $A\nu^T=0$ and hence $Ac_{out}=Ac_{in}$ for admissible steady states. The null-space basis was obtained by singular value decomposition of $\nu^T$, after which the retained basis vectors were transposed into row form, rounded for numerical stability, thresholded to remove negligible coefficients, and normalized by the first non-zero coefficient in each row.
@@ -418,18 +499,24 @@ The invariant operator $A$ used by ICSOR was built from the same stoichiometric 
 A single benchmark dataset was constructed from the accepted steady states. Every model used the same exact 22 physical inputs, namely hydraulic retention time, aeration level, and the 20 influent ASM component concentrations. Every model was trained against the same 20-component effluent targets in ASM component space, and the same external composition map was then used to compute COD, TN, TP, and TSS from those predicted component states. The benchmark therefore holds fixed the sampled operating conditions, the training targets, and the composite-reporting rule across all model families. The methodological distinction lies only in the internal structure used to estimate the component state: ICSOR predicts the 20-component effluent state under invariant and non-negativity constraints using $c_{in}$ as the invariant reference in training and deployment, whereas the unconstrained regressors map the same 22-dimensional input directly to an unconstrained 20-component effluent prediction.
 
 This common component-space training target determines the comparison protocol. Because the classical regressors were fitted without explicit knowledge of the conservation and non-negativity constraints, their coefficients were not optimized inside the restricted feasible search space that defines ICSOR. One could, in principle, append post-prediction constraint treatments such as analytic projection, null-space completion, conservative reconciliation, Bayesian correction, or positivity-preserving conservative adjustment (Beucler et al., 2021; Hansen et al., 2024; Kircher \& Votsmeier, 2025; Min et al., 2024; Sturm \& Silva, 2025; Sturm \& Wexler, 2020, 2022; Utkarsh et al., 2025). Such a deployment protocol was not used here. Applying an external correction only after an unconstrained component-space fit would alter the benchmark by giving the classical regressors a post hoc feasibility filter that is not inherent to their training problem, whereas ICSOR imposes the physical constraints from training through deployment and therefore searches a much more restricted model class from the outset.
+\end{revblockr22}
 
+\begin{revblockr24}
 \subsection{Benchmark Models and Optuna Hyperparameter Design}
 
 The benchmark comprised ICSOR and nine unconstrained regressors: XGBoost, LightGBM, CatBoost, AdaBoost, Random Forest, Support Vector Regression, $k$-Nearest Neighbors, Partial Least Squares, and one fully connected multilayer perceptron (MLP). The MLP baseline contained three hidden layers of widths 128, 64, and 32, used logistic activation, and mapped the 22-dimensional input vector to the 20-component effluent state.
 
 Figure~\ref{fig:mlp_architecture} summarizes the retained MLP architecture so that its input stage, hidden layers, output stage, and dense inter-layer connectivity are visually distinguished from the other benchmark models. The Optuna configuration used to tune every retained model is summarized in Table~\ref{tab:optuna_design}. The selected ICSOR settings are then listed separately in Table~\ref{tab:optuna_icsor} because that model carries the additional coupled and constraint-aware hyperparameters that do not appear in the unconstrained baselines. For the remaining baselines, Table~\ref{tab:optuna_classical_a} groups the selected settings for the tree-based regressors, Table~\ref{tab:optuna_classical_b} groups the kernel, instance-based, and linear regressors, and Table~\ref{tab:optuna_mlp} reports the final MLP-specific configuration. Taken together, these tables document both the common tuning contract and the final model-specific settings used in the benchmark and repeated dataset-size study.
 
+\begin{revblockr125}
 \begin{center}
+\begin{figrevr125}
 \includegraphics[width=\textwidth]{figure1_mlp_architecture.pdf}
+\end{figrevr125}
 \captionof{figure}{Architecture of the retained fully connected MLP baseline. The input and output stages are shown as labeled rectangular blocks to distinguish them from the hidden-layer neurons, which are shown as circular vertices. Representative vertices are displayed for the 22-input stage, the three hidden layers of widths 128, 64, and 32, and the 20-component effluent output stage, while the edge pattern indicates dense inter-layer connectivity between successive layers.}
 \label{fig:mlp_architecture}
 \end{center}
+\end{revblockr125}
 
 All retained models were assigned Optuna studies under a common tuning design. Hyperparameter selection minimized validation mean squared error in the shared 20-component effluent prediction space using a seeded tree-structured Parzen estimator sampler, a no-pruning policy, and 100 trials per model. The authoritative 8,000-row training pool was first reduced to a 4,000-row tuning subset, corresponding to 50\% of the training pool, and that subset was then partitioned with a 20\% validation fraction, yielding 3,200 tuning-training rows and 800 tuning-validation rows. No wall-clock timeout was imposed. Once the Optuna studies were completed, the final selected hyperparameters were fixed and reused for the one-shot benchmark and the repeated dataset-size analysis.
 
@@ -536,36 +623,38 @@ early\_stopping & false \\
 \hline
 \end{tabular}
 \end{table}
+\end{revblockr24}
 
+\begin{revblockr25}
 \subsection{Evaluation Protocol}
 
-A single row-wise 80--20 train-test split with random seed 42 was used for the one-shot benchmark, yielding 8,000 training rows and 2,000 test rows. The unconstrained regressors were standardized by z-score transformations fit on the training split only, separately for the 22-input feature matrix and the 20-output effluent-component matrix, and their predictions were inverse-transformed before external composite calculation and metric evaluation. ICSOR was kept in physical coordinates so that the invariant operator $A$, the coupled deployment rule, and the external reporting map $I_{comp}$ remained aligned with the formulation of Section~2. For all models, COD, TN, TP, and TSS were computed from the predicted component states through the same composition map, after which aggregate and per-target $R^2$, mean squared error, root mean squared error, mean absolute error, and mean absolute percentage error were reported over those four composites.
+A single row-wise 80--20 train-test split with random seed 42 was used for the one-shot benchmark, yielding 8,000 training rows and 2,000 test rows. The unconstrained regressors were standardized by z-score transformations fit on the training split only, separately for the 22-input feature matrix and the 20-output effluent-component matrix, and their predictions were inverse-transformed before external composite calculation and metric evaluation. ICSOR was kept in physical coordinates so that the invariant operator $A$, the coupled deployment rule, and the external reporting map $I_{comp}$ remained aligned with the formulation of Section~2. For all models, COD, TN, TP, and TSS were computed from the predicted component states through the same composition map, after which aggregate $R^2$, root mean squared error, mean absolute error, and mean absolute percentage error and per-target root mean squared error were reported over those four composites.
 
 Only the final deployed component prediction of each model was used in the comparison. For ICSOR this is the constrained deployed component state, whereas for the classical regressors it is the direct unconstrained component prediction. Reported composite outputs were then obtained by applying the same external composition map to those final component states.
 
-Sample-efficiency, computational scaling, and ranking stability were examined through a repeated dataset-size analysis. The 10,000-sample benchmark was subsampled without replacement at total sizes of 500, 1450, 2400, 3350, 4300, 5250, 6200, 7150, 8100, 9050, and 10,000 rows. Each total size was repeated 100 times with reproducible seeds derived from the base seed 42, and each repeated sample was re-split with the same 20\% test fraction, yielding 1,100 train-test re-estimations per model. The Optuna-selected settings listed above were held fixed throughout this sweep so that the resulting learning curves isolated sample-size sensitivity and split variability rather than retuning noise. For every fit within this sweep, wall-clock training time was recorded, and computational scaling with training size was summarized from the distribution of training seconds across the 100 repeats at each sample size. Predictive-performance ranking was based primarily on test RMSE computed from the final reported composite outputs and was supplemented by test MAE, MSE, MAPE, $R^2$, normalized area under the learning curve, dense average rank across target-metric-size combinations, the train-test RMSE gap at the largest training size, and per-target leaderboards. Writing $\bar{M}_{i,m}(n)$ for the repeat-averaged test metric of model $i$ at training size $n$ and metric $m$, the normalized area under the learning curve was computed by
+Sample-efficiency, computational scaling, and ranking stability were examined through a repeated dataset-size analysis based on repeated random train-test evaluations at each retained size. The 10,000-sample benchmark was subsampled without replacement at total sizes of 500, 1450, 2400, 3350, 4300, 5250, 6200, 7150, 8100, 9050, and 10,000 rows. At each retained total size, ten independent subsamples were drawn from the full benchmark using deterministic seeds derived from the base seed 42, and each subsample was split row-wise into an 80\% training partition and a 20\% held-out test partition using the same deterministic seed for that run. All ten retained models were trained and evaluated under the same size schedule, seed construction, and train-test fraction, so that observed performance differences at a given size reflect model structure rather than differences in protocol. This study contract yielded 110 train-test re-estimations per model across the full size sweep (11 retained sizes $\times$ 10 repeated runs per size). The Optuna-selected settings listed above were held fixed throughout this sweep so that the resulting learning curves isolated sample-size sensitivity and run-to-run variability rather than retuning noise. For every fit within this sweep, wall-clock training time was recorded, and computational scaling with dataset size was summarized from the distribution of training seconds across the ten repeated runs at each retained size. Predictive-performance ranking was based primarily on the mean held-out RMSE over the repeated runs, computed from the final reported composite outputs, and was supplemented by held-out MAE, MSE, MAPE, $R^2$, normalized area under the learning curve, dense average rank across target-metric-size combinations, and the train-validation RMSE gap at the largest retained dataset size. Writing $\bar{M}_{i,m}(n)$ for the mean held-out metric of model $i$ at dataset size $n$ and metric $m$ over the repeated runs, the normalized area under the learning curve was computed by
 \begin{equation}
 \mathrm{nAUC}_{i,m} = \frac{1}{n_{\max} - n_{\min}} \int_{n_{\min}}^{n_{\max}} \bar{M}_{i,m}(n)\,dn,
 \end{equation}
-evaluated numerically by the trapezoidal rule over the sampled dataset sizes. For each metric $m$, target $k$, and size $n$, models were assigned a dense rank $r_{i,m,k}(n)$ from the repeat-averaged test metric, with lower-is-better ordering for RMSE, MAE, MAPE, and MSE and higher-is-better ordering for $R^2$; the metric-specific average rank and overall average rank were then
+evaluated numerically by the trapezoidal rule over the sampled dataset sizes. For each metric $m$, target $k$, and size $n$, models were assigned a dense rank $r_{i,m,k}(n)$ from the mean held-out metric over repeated runs, with lower-is-better ordering for RMSE, MAE, MAPE, and MSE and higher-is-better ordering for $R^2$; the metric-specific average rank and overall average rank were then
 \begin{equation}
 \bar{r}_{i,m} = \frac{1}{KS} \sum_{k=1}^{K} \sum_{s=1}^{S} r_{i,m,k}(n_s),
 \qquad
 \bar{r}_{i} = \frac{1}{|\mathcal{M}|} \sum_{m \in \mathcal{M}} \bar{r}_{i,m},
 \end{equation}
-where $\mathcal{M} = \{\mathrm{RMSE},\mathrm{MAE},R^2,\mathrm{MAPE},\mathrm{MSE}\}$. At the largest training size $n_{\max}$, the train-test RMSE gap was
+where $\mathcal{M} = \{\mathrm{RMSE},\mathrm{MAE},R^2,\mathrm{MAPE},\mathrm{MSE}\}$. At the largest retained dataset size $n_{\max}$, the train-validation RMSE gap was
 \begin{equation}
-\Delta_i^{\mathrm{RMSE}}(n_{\max}) = \overline{\mathrm{RMSE}}^{\mathrm{test}}_i(n_{\max}) - \overline{\mathrm{RMSE}}^{\mathrm{train}}_i(n_{\max}),
+\Delta_i^{\mathrm{RMSE}}(n_{\max}) = \overline{\mathrm{RMSE}}^{\mathrm{val}}_i(n_{\max}) - \overline{\mathrm{RMSE}}^{\mathrm{train}}_i(n_{\max}),
 \end{equation}
-so positive values indicate that the train split outperformed the test split. The per-target leaderboards were constructed by ranking models separately for each reported target $k$ at $n_{\max}$ using the repeat-averaged test RMSE,
-\begin{equation}
-r_{i,k}^{\mathrm{RMSE}}(n_{\max}) = \mathrm{DenseRank}_i\!\left(\overline{\mathrm{RMSE}}^{\mathrm{test}}_{i,k}(n_{\max})\right),
-\end{equation}
-and reporting the corresponding mean, standard deviation, and rank.
+so positive values indicate that the training partitions outperformed the held-out test partitions.
 
 Physical-admissibility diagnostics were evaluated on the same final component-space predictions, because mass conservation and non-negativity are defined before external composition collapse. For a final component prediction $\tilde{c}$, mass-conservation violation was quantified by $v_{mc} = \|A(\tilde{c} - c_{in})\|_2$, and non-negativity violation was quantified by $v_{nn} = \|\min(\tilde{c}, 0)\|_1$, where the minimum is taken componentwise. A sample was counted as violating mass conservation or non-negativity when the corresponding quantity exceeded a numerical tolerance of $10^{-10}$. For each model, violation frequency was reported as the percentage of test samples that violated each condition.
+\end{revblockr25}
 
-\section{Results and Discussion}
+\end{revblock}
+
+\section{\rev{Results and Discussion}}
+\begin{revblock}
 
 \subsection{Overall Benchmark Performance on the Fixed Train-Test Split}
 
@@ -623,22 +712,25 @@ Random Forest & 45.2838 & 3.9084 & 0.081099 & 35.3201 \\
 
 Because the leading fixed-split models remain closely spaced on aggregate RMSE, a single train-test partition does not suffice to characterize sample efficiency or ranking stability. The repeated dataset-size study described below provides a broader basis for distinguishing models whose performance on one split may not generalize from those that remain competitive as the amount of training data varies.
 
+\begin{revblockr25}
 \subsection{Sample Efficiency, Ranking Stability, and Generalization}
 
-Figure~\ref{fig:results_learning_curve_sample} shows a pattern that the fixed split alone does not capture: at the smallest training size of 400 samples, ICSOR attains the lowest mean test RMSE (10.7850) among the retained models, followed by XGBoost (11.2583) and LightGBM (11.4537), while the MLP ranks fifth (13.2567). As the training size increases, however, the ordering shifts. By 8000 training samples, the MLP attains the lowest RMSE (4.6169), followed by LightGBM (5.2681), SVR (5.8359), and ICSOR (5.9390). These results suggest that ICSOR offers comparatively favorable sample efficiency in the low-data regime, but that the more flexible unconstrained baselines can surpass it once sufficient training data are available.
+Figure~\ref{fig:results_learning_curve_sample} shows a pattern that the fixed split alone does not capture: at the smallest retained dataset size of 500 rows, ICSOR attains the lowest mean held-out RMSE (10.7850) among the retained models, followed by XGBoost (11.2583) and LightGBM (11.4537), while the MLP ranks fifth (13.2567). As dataset size increases, however, the ordering shifts. By the full 10,000-row dataset size, the MLP attains the lowest RMSE (4.6169), followed by LightGBM (5.2681), SVR (5.8359), and ICSOR (5.9390). These results suggest that ICSOR offers comparatively favorable sample efficiency in the low-data regime, but that the more flexible unconstrained baselines can surpass it once sufficient training data are available.
 
 \begin{figure}
 \centering
+\begin{figrevr25}
 \includegraphics[width=0.92\textwidth]{figure2_rmse_learning_curve.pdf}
-\caption{Repeated dataset-size learning curves for effective test RMSE. Lines show the repeat-averaged test RMSE across the retained train-size sweep, and shaded bands show the interquartile range over 100 repeated resamples at each size.}
+\end{figrevr25}
+\caption{Repeated dataset-size learning curves from the repeated random train-test evaluations at each retained size. Lines show the mean held-out RMSE across the retained dataset-size sweep, and shaded bands show the interquartile range across the ten repeated runs at each size.}
 \label{fig:results_learning_curve_sample}
 \end{figure}
 
-Table~\ref{tab:results_scaling_sample} condenses the repeated-size sweep into four summary statistics. ICSOR attains the lowest RMSE nAUC (6.3338), indicating that its average RMSE profile across the full range of training sizes is favorable even though it does not attain the lowest final-size RMSE. LightGBM attains the lowest sample-average rank (2.1909) and the MLP is second (2.5227), indicating that when the evaluation is broadened across all reported metrics, targets, and train sizes, the unconstrained baselines with the lowest pointwise errors also tend to rank well on a broader set of criteria. ICSOR's sample-average rank of 4.2955 is comparable to that of XGBoost (4.2591), suggesting that its low-data advantage, while observable, does not translate into a dominant rank across the full evaluation grid.
+Table~\ref{tab:results_scaling_sample} condenses the repeated-size sweep into four summary statistics. ICSOR attains the lowest RMSE nAUC (6.3338), indicating that its average RMSE profile across the full range of retained dataset sizes is favorable even though it does not attain the lowest final-size RMSE. LightGBM attains the lowest sample-average rank (2.1909) and the MLP is second (2.5227), indicating that when the evaluation is broadened across all reported metrics, targets, and retained dataset sizes, the unconstrained baselines with the lowest pointwise errors also tend to rank well on a broader set of criteria. ICSOR's sample-average rank of 4.2955 is comparable to that of XGBoost (4.2591), suggesting that its low-data advantage, while observable, does not translate into a dominant rank across the full evaluation grid.
 
 \begin{table}[htbp]
 \centering
-\caption{Summary of the repeated dataset-size benchmark. Final RMSE and $\Delta$RMSE are evaluated at the largest retained training size, and lower values are better for all columns except that a smaller $\Delta$RMSE indicates less train-test separation.}
+\caption{Summary of the repeated dataset-size benchmark. Final RMSE and $\Delta$RMSE are evaluated at the largest retained dataset size, and lower values are better for all columns except that a smaller $\Delta$RMSE indicates less train-validation separation.}
 \label{tab:results_scaling_sample}
 \scriptsize
 \begin{tabular}{lcccc}
@@ -659,17 +751,21 @@ Random Forest & 28.7812 & 30.3100 & 8.1818 & 18.7071 \\
 \end{tabular}
 \end{table}
 
-The generalization behavior observed in Table~\ref{tab:results_scaling_sample} warrants separate attention. The train-test RMSE gap of ICSOR at the largest training size is 0.2194, which is the smallest among the competitively accurate models and considerably lower than those of LightGBM (1.9861), XGBoost (1.4393), SVR (1.1930), and the MLP (0.6493). PLS also exhibits a small gap (0.3824), but its train and test errors are both large, consistent with systematic underfitting. The repeated-size analysis therefore suggests that the structural restrictions imposed by ICSOR tend to reduce overfitting relative to the unconstrained baselines without a proportionate loss in predictive accuracy; at the full 8000-row training scale the model remains within the range of SVR and XGBoost while exhibiting a smaller train-test separation.
+The generalization behavior observed in Table~\ref{tab:results_scaling_sample} warrants separate attention. The train-validation RMSE gap of ICSOR at the largest retained dataset size is 0.2194, which is the smallest among the competitively accurate models and considerably lower than those of LightGBM (1.9861), XGBoost (1.4393), SVR (1.1930), and the MLP (0.6493). PLS also exhibits a small gap (0.3824), but its training and held-out errors are both large, consistent with systematic underfitting. The repeated-size analysis therefore suggests that the structural restrictions imposed by ICSOR tend to reduce overfitting relative to the unconstrained baselines without a proportionate loss in predictive accuracy; at the full 10,000-row dataset scale the model remains within the range of SVR and XGBoost while exhibiting a smaller train-validation separation.
 
-Figure~\ref{fig:results_runtime_sample} shows that this favorable generalization comes at a cost in training time. At 400 training samples, ICSOR requires a mean of 21.5~s, compared with 4.72~s for LightGBM, 3.16~s for XGBoost, and 4.99~s for the MLP. At 8000 training samples, ICSOR rises to 94.4~s, which is slower than the tree-based models (4.13--8.13~s), PLS (0.228~s), and $k$-NN (2.70~s), but remains below AdaBoost (117.7~s), SVR (136.8~s), and the MLP (161.6~s). The recursive coupled-QP route is therefore more expensive than the fastest retained methods at every training size examined, but it does not become the costliest option at the larger training scales and remains practical for offline surrogate fitting.
+Figure~\ref{fig:results_runtime_sample} shows that this favorable generalization comes at a cost in training time. At the smallest retained dataset size of 500 rows, ICSOR requires a mean of 21.5~s, compared with 4.72~s for LightGBM, 3.16~s for XGBoost, and 4.99~s for the MLP. At the full 10,000-row dataset size, ICSOR rises to 94.4~s, which is slower than the tree-based models (4.13--8.13~s), PLS (0.228~s), and $k$-NN (2.70~s), but remains below AdaBoost (117.7~s), SVR (136.8~s), and the MLP (161.6~s). The recursive coupled-QP route is therefore more expensive than the fastest retained methods at every retained size, but it does not become the costliest option at the larger dataset scales and remains practical for offline surrogate fitting.
 
 \begin{figure}
 \centering
+\begin{figrevr25}
 \includegraphics[width=0.92\textwidth]{figure3_runtime_learning_curve.pdf}
-\caption{Repeated dataset-size runtime curves for the retained models. Lines show the repeat-averaged training time and shaded bands show the interquartile range over 100 repeated resamples; the y-axis is logarithmic to keep the full cost spread readable.}
+\end{figrevr25}
+\caption{Repeated dataset-size runtime curves for the retained models. Lines show the mean training time across repeated runs and shaded bands show the interquartile range across the ten repeated runs at each size; the y-axis is logarithmic to keep the full cost spread readable.}
 \label{fig:results_runtime_sample}
 \end{figure}
+\end{revblockr25}
 
+\begin{revblockr22}
 \subsection{Physical Admissibility and Deployment Behavior}
 
 Table~\ref{tab:results_physical_sample} reports the physical-admissibility outcome. ICSOR is the only retained model that produces 0.0\% mass-conservation violations and 0.0\% non-negativity violations on the final component-space test predictions. Every unconstrained baseline violates conservation on 100\% of the test samples. Non-negativity violation frequencies vary across models, ranging from 0.0\% for AdaBoost, Random Forest, and $k$-NN to 70.1\% for CatBoost, 68.65\% for SVR, 64.05\% for XGBoost, 58.2\% for the MLP, 48.7\% for PLS, and 46.0\% for LightGBM.
@@ -702,14 +798,18 @@ These diagnostics illustrate why predictive accuracy in the reported composite s
 The staged deployment logic of ICSOR can also be examined at the level of individual correction stages. None of the raw coupled test predictions were simultaneously invariant-consistent and nonnegative: raw feasibility was 0.0\%, raw conservation compliance was 0.0\%, and 21.7\% of raw states were nonnegative. The closed-form affine projection restored invariants for all samples and was itself sufficient for 21.8\% of the test set (436 of 2000 samples), resolving those cases without invoking any numerical optimizer. The remaining 78.2\% (1564 samples) required the final LP correction, which converged in a mean of 23.5 HiGHS iterations with a maximum of 40. The final projected prediction was feasible for 100\% of the test cases, confirming that the deployment pipeline maintained the physical guarantees without requiring a computationally expensive solve on every sample.
 
 Taken together, these results suggest a moderate accuracy-feasibility tradeoff within the present benchmark. When the objective is minimizing pointwise error in the reported composite space, the MLP and LightGBM remain the preferable options. When the objective includes deployed predictions that satisfy both invariant conservation and component non-negativity, ICSOR is the only model in the retained set that provides those guarantees, and it does so while remaining within the upper portion of the competitive accuracy range on aggregate RMSE.
+\end{revblockr22}
 
+\begin{revblockr21}
 \subsection{Interpretable Structure of the Learned ICSOR Model}
 
 Figure~\ref{fig:results_interpretability_sample} presents the COD-specific $\Theta_{cc}$ block extracted from the fitted ICSOR driver. The full COD, TN, TP, and TSS atlases are provided as Supplementary Figures S1--S4. The main manuscript presents this COD panel because it provides a direct view of how influent-influent curvature is allocated once the operational main effects, influent main effects, and coupling matrix have absorbed the lower-order structure.
 
 \begin{figure}
 \centering
+\begin{figrevr21}
 \includegraphics[width=0.94\textwidth]{figure4_icsor_structure.pdf}
+\end{figrevr21}
 \caption{COD-specific $\Theta_{cc}$ heatmap from the fitted ICSOR driver. Rows and columns enumerate the influent ASM components, and color encodes the sign and magnitude of the second-order COD curvature. The full COD, TN, TP, and TSS target atlases are reported in Supplementary Figures S1--S4.}
 \label{fig:results_interpretability_sample}
 \end{figure}
@@ -741,14 +841,20 @@ Overall summary & 847 & 460 & 54.3093 \\
 Table~\ref{tab:results_icsor_regularization_sample} shows that this interpretability does not arise from a uniformly sparse model, but from a structured separation between sparse high-order driver terms and a comparatively dense cross-component coupling layer. Under the COD export threshold, every low-dimensional block is retained in full ($b$, $W_u$, $W_{in}$, and $\Theta_{uu}$), whereas only 18 of 40 $\Theta_{uc}$ terms and 59 of 400 $\Theta_{cc}$ terms remain above the reporting threshold. By contrast, 356 of 380 $\Gamma$ entries are retained. The model therefore compresses nonlinear influent curvature while preserving a broad redistribution layer across ASM components. Overall, 54.3\% of the candidate coefficients remain above the reporting threshold, and most of that retained fraction resides in the coupling matrix rather than in the highest-order quadratic block.
 
 This separation between a sparse quadratic driver and a comparatively dense coupling matrix is why Figure~\ref{fig:results_interpretability_sample} can present a compact curvature surface without omitting important model structure. The COD $\Theta_{cc}$ panel serves as the representative interpretability surface, while Supplementary Figures S1--S4 preserve the full target-by-target atlases for completeness. Presenting the main discussion at the COD-block level therefore highlights the curvature structure that is most relevant to process interpretation while acknowledging that the complete ICSOR coefficient structure is distributed across $B$ and $\Gamma$ together.
+\end{revblockr21}
 
-\section{Conclusion}
+\end{revblock}
+
+\section{\rev{Conclusion}}
+
+\begin{revblock}
 
 This study developed Invariant-Constrained Second-Order Regression (ICSOR), an interpretable surrogate framework for steady-state activated sludge systems that enforces exact stoichiometric mass conservation and componentwise non-negativity within a single formulation. The framework combines a partitioned second-order feature map, a learned cross-component coupling matrix, deterministic recursive coupled-QP estimation, and a hierarchical deployment correction consisting of a raw feasibility check, a closed-form affine invariant projection, and a final linear program. In the ASM2d-TSN continuous stirred tank reactor benchmark examined here, ICSOR was the only retained model that produced no mass-conservation violations and no non-negativity violations on the final component-space test predictions, whereas every unconstrained baseline violated conservation on all test samples and several exhibited negative component concentrations on a substantial fraction of the test set.
 
-These physical guarantees were obtained with a moderate predictive tradeoff. On the fixed 80--20 split, ICSOR attained an aggregate test RMSE of 5.9768 in the reported composite space, which remained within the range of SVR and XGBoost but did not match the lower errors achieved by the MLP (4.3756) and LightGBM (5.2971) when unconstrained accuracy alone was the criterion. In the repeated dataset-size study, ICSOR attained the lowest mean test RMSE at the smallest training size examined and the lowest RMSE normalized area under the learning curve across the full size sweep, while exhibiting the smallest train-test RMSE gap (0.2194) among the competitively accurate models. Training cost was higher than that of the fastest tree-based methods at every size examined, though it remained below that of SVR and the MLP at the largest training scale.
+These physical guarantees were obtained with a moderate predictive tradeoff. On the fixed 80--20 split, ICSOR attained an aggregate test RMSE of 5.9768 in the reported composite space, which remained within the range of SVR and XGBoost but did not match the lower errors achieved by the MLP (4.3756) and LightGBM (5.2971) when unconstrained accuracy alone was the criterion. In the repeated dataset-size study, ICSOR attained the lowest mean held-out RMSE at the smallest retained dataset size and the lowest RMSE normalized area under the learning curve across the full size sweep, while exhibiting the smallest train-validation RMSE gap (0.2194) among the competitively accurate models. Training cost was higher than that of the fastest tree-based methods at every retained size, though it remained below that of SVR and the MLP at the largest dataset scale.
 
 The conclusions drawn here are bounded by the scope of the present study. The framework was validated only on steady-state predictions from a standalone CSTR operating within the sampled influent and operating-condition ranges, and it does not claim to enforce full kinetic or thermodynamic feasibility. The invariant matrix used for conservation enforcement depends on the adopted stoichiometric model and system boundary, so any external source or sink not represented in that model lies outside the present conservation claim. Within these boundaries, the results suggest that physically admissible surrogate predictions can be maintained without forgoing interpretability or incurring a disproportionate loss in predictive accuracy. Whether this tradeoff remains favorable for more complex reactor configurations, broader operating envelopes, or integration into surrogate-assisted optimization and control workflows remains to be investigated in future work.
+\end{revblock}
 
 \section*{References}
 
