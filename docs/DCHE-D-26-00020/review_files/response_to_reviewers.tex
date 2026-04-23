@@ -1,0 +1,609 @@
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{mdframed}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{parskip}
+
+\definecolor{reviewcolor}{RGB}{80,80,80}
+\definecolor{accentblue}{RGB}{0,70,140}
+\definecolor{revDefault}{RGB}{0,0,255}
+\definecolor{revRoneTen}{RGB}{0,116,153}
+\definecolor{revRoneSixteen}{RGB}{217,95,2}
+\definecolor{revRoneTwentyFive}{RGB}{0,140,72}
+\definecolor{revRoneTwentySeven}{RGB}{140,81,10}
+\definecolor{revRtwoOne}{RGB}{171,71,188}
+\definecolor{revRtwoTwo}{RGB}{196,30,58}
+\definecolor{revRtwoFour}{RGB}{46,125,50}
+\definecolor{revRtwoFive}{RGB}{94,53,177}
+
+\newmdenv[
+    linecolor=reviewcolor,
+    backgroundcolor=black!4,
+    linewidth=1pt,
+    topline=true,
+    bottomline=true,
+    leftline=true,
+    rightline=true,
+    innertopmargin=8pt,
+    innerbottommargin=8pt,
+    innerleftmargin=10pt,
+    innerrightmargin=10pt
+]{reviewbox}
+
+\newcommand{\reviewlabel}[1]{\noindent\textbf{\textcolor{accentblue}{#1}}\par\medskip}
+\newcommand{\revhighlight}[2]{\textcolor{#1}{Revision highlight in manuscript: #2.}}
+
+\title{Response to Reviewers\\[6pt]
+\large Manuscript DCHE-D-26-00020\\[4pt]
+\normalsize\textit{An Interpretable Statistical Surrogate of Activated Sludge Systems\\ that Preserves Mass Conservation and Component Non-Negativity}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+% ============================================================
+\section*{General Manuscript-Wide Revisions}
+% ============================================================
+
+Before responding point by point, we would like to clarify that the revised manuscript is not a line-by-line adjustment of the previous version, but a substantial redesign motivated by the reviewers' technical concerns and by several additional changes that were necessary to restore internal consistency, physical rigor, and reproducibility.
+
+The most fundamental revision is the transition from CoBRE to ICSOR. In the previous manuscript, CoBRE was presented as a coupled bilinear surrogate intended to balance interpretability and predictive performance, but the reviewers correctly identified several issues concerning the physical interpretation of the bilinear terms, the lack of hard mass-conservation guarantees, the treatment of non-negativity, the ambiguity of the left-hand-side coupling structure, and the risk of overstating what the surrogate physically enforces. In response, the revised manuscript no longer presents the work as a bilinear CoBRE model. Instead, it introduces Invariant-Constrained Second-Order Regression (ICSOR), whose name was changed to reflect the actual scientific contribution of the revised article: the model is now centered on a second-order interpretable surrogate coupled to explicit invariant conservation and componentwise non-negativity enforcement. ``Invariant-Constrained'' identifies the central physical guarantee introduced in the revised manuscript, while ``Second-Order Regression'' more accurately describes the retained feature structure than the earlier bilinear label.
+
+Closely related to that name change, the revised manuscript shifts the scientific objective of the article. The earlier version primarily emphasized interpretability and predictive benchmarking of CoBRE against standard machine-learning baselines. The revised manuscript broadens the objective to ask a different and more rigorous question: whether an interpretable surrogate can remain competitively accurate while also guaranteeing exact stoichiometric conservation and non-negativity at deployment. This was motivated directly by the reviewers' repeated concerns that interpretability claims are technically weak if the predicted states remain physically inadmissible.
+
+The mathematical formulation was rebuilt at the root level. The revised manuscript now formulates the surrogate in ASM component space, introduces the null-space invariant operator, defines the coupled driver and coupling matrix explicitly, and describes deployment as a staged procedure. The key mathematical objects are:
+\begin{itemize}[nosep]
+\item The stoichiometric invariant relation $Ac_{out} = Ac_{in}$, derived from $A\nu^T = 0$.
+\item A partitioned second-order feature map $\phi(u, c_{in})$ with blockwise driver $r(u, c_{in}) = B\phi(u, c_{in})$.
+\item A coupled prediction relation $Rc = r(u, c_{in})$ with $R = I_F - \Gamma$.
+\item A hierarchical deployment rule: raw feasibility check, closed-form affine invariant projection, and (only when needed) a final linear program enforcing both $Ac = Ac_{in,*}$ and $c \ge 0$.
+\end{itemize}
+
+The modeling scope was also deliberately narrowed. The previous manuscript combined a standalone CSTR discussion with a more elaborate plant-wide five-reactor-plus-clarifier simulation workflow. The revised manuscript focuses on a standalone steady-state CSTR benchmark with 10,000 accepted steady states (8,000 training / 2,000 test under an 80--20 split). This narrowing ensures that the paper answers one question cleanly and defensibly.
+
+The revised manuscript no longer uses QSDsan as the dataset-generation platform but instead adopts a custom steady-state sampling and acceptance pipeline. The data representation was changed: ICSOR is formulated natively in ASM component space ($F = 20$ components), and reported composites (COD, TN, TP, TSS) are obtained afterward through an external composition matrix $I_{comp}$.
+
+The benchmarking protocol was redesigned. The revised manuscript adopts a one-shot 80--20 benchmark together with a repeated dataset-size analysis (11 retained sizes $\times$ 10 repeated runs per size = 110 re-estimations per model). Baseline tuning was strengthened through a common Optuna design with 100 trials per model with no pruning and no timeout.
+
+On the fixed split, ICSOR attained an aggregate test RMSE of 5.98, within 0.68 of LightGBM and 0.01 of SVR, while the MLP led at 4.38. In the repeated dataset-size study, ICSOR attained the lowest mean held-out RMSE at the smallest retained dataset size (10.79 at 500 rows), the lowest RMSE normalized area under the learning curve (6.33), and the smallest train--validation RMSE gap among the competitively accurate models ($\Delta$RMSE = 0.22). Critically, ICSOR was the only model producing 0.0\% mass-conservation violations and 0.0\% non-negativity violations on the 2,000 test samples, whereas every unconstrained baseline violated conservation on 100\% of test samples. \revhighlight{revDefault}{blue}
+
+% ============================================================
+\section*{Reviewer 1}
+% ============================================================
+
+Reviewer 1 writes: ``\textit{This paper tackles a challenging engineering problem using a highly original and creative methodology. The author is to be commended for their innovative attempt to balance model interpretability with predictive performance. Despite this strong conceptual foundation, the manuscript currently suffers from mathematical and methodological inconsistencies that undermine its conclusions.}''
+
+We sincerely thank Reviewer 1 for the encouraging assessment and for the detailed technical scrutiny. Every item has been addressed, as detailed below.
+
+% ---- R1.1 ----
+\reviewlabel{R1.1 --- Abbreviation definitions}
+\begin{reviewbox}
+Please define all abbreviations at first use (e.g., PLS, KNN, SVR).
+\end{reviewbox}
+
+Thank you for this suggestion. The revised manuscript now introduces the benchmark families in expanded form at first mention, including Partial Least Squares (PLS), $k$-Nearest Neighbors ($k$-NN), Support Vector Regression (SVR), and the multilayer perceptron (MLP) benchmark. This revision is reflected in the Abstract and in the benchmark overview in the Introduction. \revhighlight{revDefault}{blue}
+
+% ---- R1.2 ----
+\reviewlabel{R1.2 --- Benchmark sentence in Abstract}
+\begin{reviewbox}
+Lines 31--32: The sentence ``\ldots was trained on this dataset, then benchmarked against PLS, KNN, SVR\ldots'' should be revised. Please rewrite a clearer version.
+\end{reviewbox}
+
+Thank you. The benchmark sentence has been fully rewritten as part of the new Abstract. The revised Abstract now identifies the complete ten-model benchmark set and states the specific role of ICSOR within that comparison: it was the only model producing no mass-conservation violations and no non-negativity violations on the test set, while maintaining competitive aggregate accuracy. \revhighlight{revDefault}{blue}
+
+% ---- R1.3 ----
+\reviewlabel{R1.3 --- Ambiguous antecedents in Introduction}
+\begin{reviewbox}
+Lines 8--11: ``In response to this complexity, research has increasingly focused on developing surrogate models to approximate the behavior of these systems.'' Since this starts a new paragraph, avoid using ambiguous phrases like ``this complexity'' and ``these systems.'' Please explicitly restate what specific complexity and which systems you are referring to.
+\end{reviewbox}
+
+Thank you for noting the ambiguity. In the revised manuscript, the opening transition now explicitly states that the issue is the computational and mathematical complexity of non-linear Activated Sludge Models and that the surrogate models are intended for biological wastewater treatment systems. This revision appears in the second paragraph of the Introduction. \revhighlight{revDefault}{blue}
+
+% ---- R1.4 ----
+\reviewlabel{R1.4 --- Repeated ``On the other hand''}
+\begin{reviewbox}
+Please avoid using ``On the other hand'' twice in such close proximity. Furthermore, ``On the other hand'' implies a direct contrast, but here you are listing a progression of alternative methods. Consider using transitions that show alternatives instead.
+\end{reviewbox}
+
+Thank you. This wording issue has been removed in the revised manuscript because the Introduction was rewritten. The revised literature progression is now presented as a structured movement from linear and polynomial surrogates to modern machine-learning baselines and then to the proposed constrained framework. \revhighlight{revDefault}{blue}
+
+% ---- R1.5 ----
+\reviewlabel{R1.5 --- Repeated ``On the other hand'' (second instance)}
+\begin{reviewbox}
+P.~3, lines 19--32: Please avoid using ``On the other hand'' twice in such close proximity. Furthermore, ``On the other hand'' implies a direct contrast, but here you are listing a progression of alternative methods. Consider using transitions that show alternatives or progression instead.
+\end{reviewbox}
+
+Thank you. This duplicated stylistic issue has likewise been resolved through the rewritten Introduction. The revised manuscript no longer uses the repeated ``On the other hand'' phrasing in the affected literature-review sequence. \revhighlight{revDefault}{blue}
+
+% ---- R1.6 ----
+\reviewlabel{R1.6 --- First-person pronouns}
+\begin{reviewbox}
+P.~4, line 6: Please avoid first-person (``we''). Please rephrase to use passive voice or third person.
+\end{reviewbox}
+
+Thank you. The revised manuscript removes the earlier first-person phrasing in the corresponding theoretical discussion and adopts an impersonal scientific style throughout the Introduction and Theory and Calculation sections. \revhighlight{revDefault}{blue}
+
+% ---- R1.7 ----
+\reviewlabel{R1.7 --- Abrupt PLS-to-ML transition}
+\begin{reviewbox}
+While the advantages of PLS are well-explained, the transition to the Machine Learning paragraph is somewhat abrupt. Please explicitly state the fundamental limitations of traditional PLS to clearly justify the shift towards ML and your proposed CoBRE framework.
+\end{reviewbox}
+
+Thank you for this point. In the revised manuscript, the transition has been rebuilt so that the limitations of linear methods are stated explicitly before introducing broader ML baselines and then the proposed ICSOR framework. In particular, the Introduction now explains that linear methods such as PLS struggle to capture severe non-linearities without extensive feature engineering, and it then motivates the need for a constrained, interpretable alternative. \revhighlight{revDefault}{blue}
+
+% ---- R1.8 ----
+\reviewlabel{R1.8 --- Objectives limited to predictive performance}
+\begin{reviewbox}
+The text strongly highlights CoBRE's ``parsimony and interpretability'' as its main advantages over black-box ML models. However, the final paragraph states that the primary objective is to compare ``predictive performance.'' To fully support your premise, please expand the stated objectives.
+\end{reviewbox}
+
+Thank you. The revised objectives now extend beyond predictive accuracy alone. The Introduction and Abstract state that the study evaluates:
+\begin{itemize}[nosep]
+\item Competitive predictive accuracy (ICSOR aggregate test RMSE of 5.98 on the fixed 80--20 split, within 0.68 of LightGBM and 0.01 of SVR);
+\item Exact mass conservation (0.0\% invariant violations on 2,000 test samples, vs.\ 100\% for all nine unconstrained baselines);
+\item Componentwise non-negativity (0.0\% violations, vs.\ up to 70.1\% for CatBoost);
+\item Sample-efficient generalization (lowest mean held-out RMSE of 10.79 at 500 training rows; lowest RMSE nAUC of 6.33; smallest $\Delta$RMSE of 0.22 among the competitively accurate models); and
+\item Blockwise coefficient interpretability.
+\end{itemize}
+These revisions are located in the Abstract, the final two paragraphs of the Introduction, and the evaluation criteria described in Section~3.5. \revhighlight{revDefault}{blue}
+
+% ---- R1.9 ----
+\reviewlabel{R1.9 --- Phenomenological justification for bilinear/interaction terms}
+\begin{reviewbox}
+Briefly noting how bilinear terms naturally approximate the multiplicative interactions inherent in the biological process (such as biomass-substrate coupling in Monod kinetics) would provide a stronger phenomenological justification.
+\end{reviewbox}
+
+Thank you. The revised manuscript no longer relies on the original CoBRE bilinear formulation, but the underlying phenomenological motivation has been retained in updated form. The new framework uses a partitioned second-order feature map with a blockwise driver:
+\[
+r(u, c_{in}) = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in}),
+\]
+whose blocks are explicitly tied to biologically meaningful process effects. The operating block $W_u$ corresponds to levers that engineers actually move (e.g., aeration, hydraulic retention time), $W_{in}$ captures first-order loading carry-through, $\Theta_{uu}$ allows operating actions to have different marginal effects across regimes, $\Theta_{uc}$ captures the fact that the same intervention acts differently under different influent loads, and $\Theta_{cc}$ captures coupled loading states such as simultaneous COD--nitrogen or phosphorus-related effects. In the COD-specific results, the largest-magnitude fitted $\Theta_{cc}$ coefficients involve dissolved oxygen and nitrogen-linked states (e.g., $S_O$--$S_O$, $S_O$--$S_{N2}$, $S_O$--$S_{NO2}$), consistent with the role of $S_O$ in ASM kinetics switching functions and nitrification tradeoffs. This new rationale is presented in Sections~2.3 and 2.5. \revhighlight{revDefault}{blue}
+
+% ---- R1.10 ----
+\reviewlabel{R1.10 --- Nomenclature section}
+\begin{reviewbox}
+Please include a separate Nomenclature section listing all variables and symbols, rather than introducing them only within the Theory and Calculation section. At present, some variables, such as $K_L$, $a$, do not appear in the current list (and others).
+\end{reviewbox}
+
+Thank you. This has been addressed directly. The revised manuscript now contains a separate Nomenclature section immediately after the front matter, where the principal variables, operators, matrices, and symbols used in the revised ICSOR formulation are listed explicitly. \revhighlight{revRoneTen}{teal}
+
+% ---- R1.11 ----
+\reviewlabel{R1.11 --- Repetitive paragraphs in Theory section}
+\begin{reviewbox}
+The final paragraph is repetitive, reiterating the same concepts as the end of the preceding paragraph (e.g., combinatorial explosion, overfitting, parsimony, and bilinear terms). Please merge these two paragraphs to state your justification once and concisely.
+\end{reviewbox}
+
+Thank you. The repetitive passage in the previous manuscript is no longer present because the theoretical exposition has been rewritten around the ICSOR formulation. The revised Section~2 now presents the model construction, deployment logic, interpretability, and estimation strategy in separate non-redundant subsections. \revhighlight{revDefault}{blue}
+
+% ---- R1.12 ----
+\reviewlabel{R1.12 --- First-person pronouns in Theory section}
+\begin{reviewbox}
+Review this section to eliminate first-person pronouns. Please change phrases to passive voice or third-person constructs.
+\end{reviewbox}
+
+Thank you. This stylistic revision has been implemented in the rewritten theory section. The revised Section~2 consistently uses an impersonal technical style instead of first-person narration. \revhighlight{revDefault}{blue}
+
+% ---- R1.13 ----
+\reviewlabel{R1.13 --- Washout claim for bilinear term}
+\begin{reviewbox}
+Regarding Equation 4: While the bilinear term ($y_k \cdot x_m$) introduces useful hydrodynamic modulation, be cautious about explicitly claiming it models ``washout''. Physically, washout is driven by hydraulic retention time ($V/Q$), making the system highly non-linear with respect to the inverse of the flow rate ($1/x_m$). Consider softening this claim to state that the term ``approximates the effect of varying flow rates'' rather than fully capturing washout mechanics.
+\end{reviewbox}
+
+Thank you for this important clarification. This concern applied to the earlier CoBRE interpretation. In the revised manuscript, that claim has been removed because the prior bilinear washout discussion is no longer used; instead, the study is reformulated around a standalone CSTR benchmark with hydraulic retention time as an explicit operating variable (sampled in the range [6.0, 36.0]~h), and with physically admissible steady states enforced through invariant and non-negativity constraints rather than a verbal washout claim. \revhighlight{revDefault}{blue}
+
+% ---- R1.14 ----
+\reviewlabel{R1.14 --- Mathematical contradiction in Equation~5}
+\begin{reviewbox}
+There is a mathematical contradiction in the text describing Equation 5. You state that dependent variables are on the left-hand side and independent forcing functions are on the right. However, the term on the left contains $x_m$, which is an independent function (influent flow rate). Please rephrase this to clarify that the left-hand side groups all terms containing the state variables ($y$), rather than claiming a strict separation of dependent and independent variables.
+\end{reviewbox}
+
+Thank you. This inconsistency has been removed in the revised manuscript because the old CoBRE Equation~5 is no longer part of the paper. The revised mathematical formulation now defines the coupled system through the matrices $R = I_F - \Gamma$ and the latent driver $r(u, c_{in}) = B\phi(u, c_{in})$, yielding the coupled relation:
+\[
+R\,c = r(u, c_{in}), \qquad R = I_F - \Gamma,
+\]
+without the earlier left-hand-side versus right-hand-side wording. In this formulation, the coupling matrix $\Gamma$ operates only on the effluent component state $c$, while the right-hand side $r(u, c_{in})$ contains the operating and influent forcing exclusively. \revhighlight{revDefault}{blue}
+
+% ---- R1.15 ----
+\reviewlabel{R1.15 --- Matrix inversion / simultaneous resolution step}
+\begin{reviewbox}
+Since Equation~5 is implicit and couples the state variable $y_k$ with other state variables $y_p$, predicting the outputs requires solving a system of simultaneous algebraic equations. For technical rigor, it would be beneficial to briefly mention that the application of the CoBRE for prediction involves a matrix inversion (or simultaneous resolution step) rather than a direct feedforward calculation.
+\end{reviewbox}
+
+Thank you. This point is explicitly addressed in the revised manuscript. The deployment subsection now states the coupled relation, defines $\widehat{R} = I_F - \widehat{\Gamma}$, and shows that deployment begins from the raw coupled state:
+\[
+c_{raw} = \widehat{R}^{-1}\,d_*, \qquad d_* = \widehat{B}\,\phi_*.
+\]
+The manuscript then explains the subsequent staged deployment: (i)~check whether $c_{raw}$ is already invariant-consistent and non-negative; (ii)~if not, apply the closed-form affine invariant projection:
+\[
+c_{aff} = c_{raw} - A^T(AA^T)^{-1}A\,(c_{raw} - c_{in,*});
+\]
+and (iii)~only if $c_{aff}$ still contains negative components, solve the deployment LP enforcing $Ac = Ac_{in,*}$ and $c \ge 0$. On the test set, 21.8\% of samples (436 of 2,000) were resolved by the affine presolve alone; the remaining 78.2\% (1,564 samples) required the LP, which converged in a mean of 23.5 HiGHS iterations. These revisions are located in Section~2.4, with additional discussion of conditioning and invertibility in Section~2.6. \revhighlight{revDefault}{blue}
+
+% ---- R1.16 ----
+\reviewlabel{R1.16 --- ``Dynamic steady state'' terminology}
+\begin{reviewbox}
+In Section~3.1, you mention running the simulation for 180 days to reach a ``stable dynamic steady state.'' If the influent conditions and parameters generated by the LHS are constant for each run, the system reaches a standard ``steady state.'' The term ``dynamic steady state'' is usually reserved for systems with periodic forcing. Please clarify.
+\end{reviewbox}
+
+Thank you. The revised manuscript resolves this terminology issue by reformulating the study around a standalone steady-state CSTR benchmark. Section~3.2 explicitly states that the accepted dataset consists of steady states obtained by solving the steady-state ASM balance equations, with dynamic relaxation (20~days with a stiff BDF integrator) used only as a fallback mechanism to supply an improved steady-state initialization when both nonlinear-least-squares attempts fail. \revhighlight{revRoneSixteen}{orange}
+
+% ---- R1.17 ----
+\reviewlabel{R1.17 --- Biologically viable LHS bounds}
+\begin{reviewbox}
+By randomly assigning volumes and flow rates via LHS, there is a risk of generating mathematically valid but physically absurd scenarios (e.g., extremely low hydraulic retention times leading to total biomass washout). Could you add a brief sentence reassuring the reader that the LHS bounds were constrained to ensure a biologically viable sludge age (SRT)?
+\end{reviewbox}
+
+Thank you. The revised manuscript now defines a physically bounded standalone CSTR domain with hydraulic retention time in [6.0, 36.0]~h and aeration level in [0.5, 2.5]. Sampling continued until 10,000 valid steady states had been accepted, with up to 25 candidate attempts per target sample so that infeasible draws could be replaced. Only converged steady states satisfying a maximum absolute residual threshold of $10^{-9}$ were retained, so the final benchmark contains only biologically viable operating points. These revisions are located in Sections~3.1 and 3.2. \revhighlight{revRoneSixteen}{orange}
+
+% ---- R1.18 ----
+\reviewlabel{R1.18 --- Extreme HRT from independent LHS sampling}
+\begin{reviewbox}
+Looking at Table~1, the independent LHS sampling of variables could lead to physically non-viable systems. For instance, pairing the maximum influent flow ($Q_{inf} = 20{,}000$~m$^3$/d) with the minimum total volume (1,500~m$^3$) results in an HRT of under 2~hours. Please clarify if any joint constraints were applied during the LHS generation.
+\end{reviewbox}
+
+Thank you. This concern has been addressed by redesigning the benchmark domain and acceptance protocol. The revised manuscript no longer relies on independently sampled plant-wide volumes and flows; instead, hydraulic retention time is sampled directly in the range [6.0, 36.0]~h, which avoids the extreme HRT scenarios described. Sampling continues until 10,000 valid steady states are accepted, infeasible draws can be replaced, and only biologically viable steady states are retained. \revhighlight{revRoneSixteen}{orange}
+
+% ---- R1.19 ----
+\reviewlabel{R1.19 --- Anomalous initial conditions in Table~2}
+\begin{reviewbox}
+Table~2: Please review the values for the particulate components in CSTR~2. The inert particulate organic matter ($X_I$) drops abruptly to 0~mg/L, and heterotrophic biomass ($X_H$) drops to 207~mg/L. This appears to be a typographical error or an anomalous initialization.
+\end{reviewbox}
+
+Thank you for identifying that inconsistency. The problematic plant-wide initialization table from the previous manuscript has been removed. In the revised manuscript, initialization is now described as a reproducible set of solver heuristics for the standalone CSTR benchmark, summarized in the initialization table (Table~2) and accompanying text in Section~3.2, which replaces the earlier unit-by-unit initial-condition table altogether. \revhighlight{revRoneSixteen}{orange}
+
+% ---- R1.20 ----
+\reviewlabel{R1.20 --- Final dataset size}
+\begin{reviewbox}
+It is excellent that you filtered out runs resulting in physical infeasibility or numerical divergence. However, it is crucial to report the final size of the dataset. Please state exactly how many valid runs remained for training and testing.
+\end{reviewbox}
+
+Thank you. The revised manuscript now states this explicitly. Section~3.2 reports that sampling continued until 10,000 valid steady states had been accepted. Section~3.5 then states that the one-shot benchmark used an 80--20 split with random seed 42, yielding 8,000 training rows and 2,000 test rows. \revhighlight{revRoneSixteen}{orange}
+
+% ---- R1.21 ----
+\reviewlabel{R1.21 --- Flow rate as input feature}
+\begin{reviewbox}
+In Section~3.2.1, you state that the surrogate model learns the input-output mapping based on local state variables $V$, $K_L$, $a$, and influent concentration. However, hydrodynamics dictate that the flow rate ($Q$) or Hydraulic Retention Time is critical. Please clarify.
+\end{reviewbox}
+
+Thank you. The revised manuscript addresses this directly by redefining the operating inputs for the benchmark. The model input vector now explicitly includes hydraulic retention time (HRT) and aeration level, together with the 20 influent ASM component concentrations, yielding a 22-dimensional input for all model families. \revhighlight{revDefault}{blue}
+
+% ---- R1.22 ----
+\reviewlabel{R1.22 --- Logical contradiction between composites and biological fractions}
+\begin{reviewbox}
+In Section~2.2, the decision to use composite indicators was justified by the ``practical necessity of aligning with sensor capabilities.'' However, in this section, you include specific biological fractions ($X_H$, $X_{PAO}$, etc.) as target variables. This creates a logical contradiction.
+\end{reviewbox}
+
+Thank you. This logical inconsistency has been resolved by changing the modeling scope. The revised manuscript states that ICSOR is formulated natively in ASM component space and that measured composites are obtained only afterward through an external composition matrix $I_{comp}$. The scientific object is the component-level effluent state itself ($\hat{c} \in \mathbb{R}^{F}$); composite outputs $\hat{y}_{ext} = I_{comp}\hat{c}$ are reporting quantities derived from that state. This clarification appears in Sections~2.1, 2.5, and 3.1--3.3. \revhighlight{revDefault}{blue}
+
+% ---- R1.23 ----
+\reviewlabel{R1.23 --- BOD calculation from ASM fractions}
+\begin{reviewbox}
+BOD is an empirically defined parameter rather than a strict state variable, making its calculation from ASM fractions notoriously sensitive to assumed decay rates and biodegradable fractions. It would add rigor to briefly state or cite the specific mapping used.
+\end{reviewbox}
+
+Thank you. This issue no longer applies to the revised manuscript because BOD is no longer part of the reported target space. The revised study reports only COD, TN, TP, and TSS, computed through the same external composition matrix $I_{comp}$ applied to the predicted ASM component states. \revhighlight{revDefault}{blue}
+
+% ---- R1.24 ----
+\reviewlabel{R1.24 --- Insufficient Optuna trials (20)}
+\begin{reviewbox}
+While 20 trials might be sufficient for simpler models like PLS or KNN, they may be inadequate for ANNs, where the search space is massive. If 20 was a strict computational limit, consider justifying it explicitly.
+\end{reviewbox}
+
+Thank you. This concern has been addressed by substantially expanding the tuning budget. Section~3.4 now states that all ten retained models were tuned with Optuna under a common design using 100 trials per model (a five-fold increase from the previous 20), no pruning, and no wall-clock timeout. The tuning design is summarized in Table~3 and the model-specific selected settings are reported in Tables~4--8. \revhighlight{revRtwoFour}{forest green}
+
+% ---- R1.25 ----
+\reviewlabel{R1.25 --- ANN architecture specification}
+\begin{reviewbox}
+The term ANN describes an entire field rather than a specific architecture. To ensure reproducibility, please specify the exact architecture used in the benchmark.
+\end{reviewbox}
+
+Thank you. The revised manuscript now specifies the ANN benchmark exactly. The retained neural baseline is a fully connected multilayer perceptron (MLP) with three hidden layers of widths 128, 64, and 32, logistic activation, Adam solver, batch size 64, and initial learning rate $1.08 \times 10^{-3}$. A dedicated architecture figure (Figure~1) visualizes the input stage, hidden layers, output stage, and dense inter-layer connectivity, and Table~8 reports the full MLP-specific hyperparameter configuration. \revhighlight{revRtwoFour}{forest green (Section~3.4 text)} \revhighlight{revRoneTwentyFive}{emerald green (Figure~1)}
+
+% ---- R1.26 ----
+\reviewlabel{R1.26 --- Non-negativity enforcement via log-transform is incorrect}
+\begin{reviewbox}
+There is a mathematical oversight in the claim that $y_k = \ln(C_k + 1)$ ``strictly enforces non-negativity in predictions.'' Because you subsequently apply a Z-score normalization, the target variable $y_k$ will frequently take negative values. If the model outputs a negative prediction ($y_{pred} < 0$) and you apply the inverse transformation, the resulting physical concentration $C_k$ will be strictly negative (since $e^x < 1$ for any $x < 0$). The claim is mathematically incorrect.
+\end{reviewbox}
+
+Thank you for this important correction. The revised manuscript addresses the issue at the formulation level rather than through transformed-target rhetoric. ICSOR is now trained and deployed in physical component space, and non-negativity is enforced explicitly at deployment through the affine-presolve-plus-LP correction described in Section~2.4. The physical-admissibility results in Section~4.3 confirm the outcome:
+
+\begin{center}
+\small
+\begin{tabular}{lcc}
+\toprule
+Model & Mass-Cons.\ Violations (\%) & Non-Neg.\ Violations (\%) \\
+\midrule
+ICSOR & 0.0 & 0.0 \\
+MLP & 100.0 & 58.20 \\
+LightGBM & 100.0 & 46.00 \\
+SVR & 100.0 & 68.65 \\
+CatBoost & 100.0 & 70.10 \\
+XGBoost & 100.0 & 64.05 \\
+\bottomrule
+\end{tabular}
+\end{center}
+ICSOR is the only model that achieves 0.0\% non-negativity violations on the 2,000-sample test set. \revhighlight{revRtwoTwo}{crimson}
+
+% ---- R1.27 ----
+\reviewlabel{R1.27 --- Numerical safeguards for matrix inversion}
+\begin{reviewbox}
+In Equation~10, the prediction requires the inverse matrix $A$. While you correctly note that LASSO regularization helps prevent ill-conditioning, during the initial epochs of AdamW optimization, the weights could fluctuate wildly, potentially causing $\det(A)$ to approach zero and crashing the solver. Please briefly clarify if any numerical safeguards were used.
+\end{reviewbox}
+
+Thank you. The revised manuscript now provides explicit numerical safeguards. The recursive coupled-QP estimator described in Section~2.6 constrains the coupling update by restricting $\Gamma$ to an admissible set $\mathcal{G}$:
+\begin{itemize}[nosep]
+\item The diagonal of $\Gamma$ is fixed at zero.
+\item Off-diagonal entries are box-bounded by $|\gamma_{ij}| \le \gamma_{abs}$ (selected at 0.368 by Optuna).
+\item Candidate updates are accepted only if $\kappa(I_F - \Gamma) \le \kappa_{\max}$.
+\end{itemize}
+The block-coordinate Gauss--Seidel sweep structure ensures monotone non-increasing objective convergence within each restart. These safeguards are described in Sections~2.4 and 2.6. \revhighlight{revRoneTwentySeven}{brown}
+
+% ---- R1.28 ----
+\reviewlabel{R1.28 --- Zero-variance training times}
+\begin{reviewbox}
+In Table~4 (Clarifier column), the standard deviations for XGBoost and SVR training times are reported as exactly 0.0000. In a 10-fold cross-validation procedure, observing absolutely zero variance is highly improbable. Please verify.
+\end{reviewbox}
+
+Thank you. The specific runtime table that prompted this concern is no longer part of the revised manuscript. The revised manuscript now reports training-time behavior through a repeated dataset-size study, summarized by runtime curves (Figure~3) and accompanying discussion. At the full 10,000-row dataset size, the mean training times are: ICSOR 94.4~s, MLP 161.6~s, SVR 136.8~s, AdaBoost 117.7~s, LightGBM 4.13~s, XGBoost 7.64~s. ICSOR is thus slower than the fastest tree-based methods but faster than the MLP and SVR at the largest dataset scale. \revhighlight{revRtwoFive}{violet}
+
+% ---- R1.29 ----
+\reviewlabel{R1.29 --- ``Sparsity Ratio'' mislabeling}
+\begin{reviewbox}
+In Tables~7 and 8, the final column is labeled ``Sparsity Ratio (\%),'' but the numbers reflect the percentage of retained (non-zero) terms. The correct mathematical term for the proportion of non-zero elements is ``Density.'' Please rename this column.
+\end{reviewbox}
+
+Thank you. This nomenclature issue has been corrected. The interpretability table (Table~12) no longer uses the misleading ``Sparsity Ratio'' label; instead, it reports retained coefficients and ``\% Retained,'' which matches the quantity being shown. For the COD-specific case: 460 of 847 candidate coefficients are retained (54.3\%), with the $\Theta_{cc}$ block retaining only 59 of 400 entries (14.8\%) while the coupling matrix $\Gamma$ retains 356 of 380 entries (93.7\%). \revhighlight{revRtwoOne}{purple}
+
+% ---- R1.30 ----
+\reviewlabel{R1.30 --- Dense model with $p > N$ generalization claim}
+\begin{reviewbox}
+You claim the model generalizes even when retained coefficients ($p$) exceed training samples ($N$). However, Tables~7 and 8 show the model is quite dense ($>$90\% retention). A dense model with $p > N$ lacks residual degrees of freedom and would be expected to overfit. Please clarify.
+\end{reviewbox}
+
+Thank you. The revised manuscript addresses this concern by changing both the model and the benchmark scale. In the revised study, the one-shot benchmark uses 8,000 training samples, and the COD interpretability table shows 847 candidate coefficients with 460 retained above the export threshold---so $p = 460 \ll N = 8{,}000$, and the earlier $p > N$ regime no longer applies. The generalization claims are now based on explicit train--validation RMSE gaps rather than on the earlier argument: ICSOR's $\Delta$RMSE of 0.22 at the full dataset size is the smallest among the competitively accurate models, compared with LightGBM (1.99), XGBoost (1.44), SVR (1.19), and MLP (0.65). \revhighlight{revRtwoFive}{violet}
+
+% ---- R1.31 ----
+\reviewlabel{R1.31 --- Figure readability}
+\begin{reviewbox}
+Figure~3: Please enlarge the legend and all axis/tick labels, as the figure is currently difficult to read. Figure~5: Same comments.
+\end{reviewbox}
+
+Thank you for this observation. All figures containing tick labels, axis labels, and legends have been re-exported with enlarged typography. In the revised manuscript, Figures~2, 3, and 4 (the learning-curve, runtime, and interpretability figures) now use larger tick labels, axis labels, legend fonts, and annotation sizes, and their readability has been verified at the single-column journal width used by the Elsevier template. The updated figure assets are included directly.
+
+% ---- R1.32 ----
+\reviewlabel{R1.32 --- Excessive significant figures}
+\begin{reviewbox}
+Please adjust the significant figures in the text and tables. Reporting a retention percentage as ``72.001\% (1.4858)'' or a term count standard deviation as ``67.1107'' implies an unrealistic level of precision.
+\end{reviewbox}
+
+Thank you for this important point. The revised manuscript now applies a consistent precision policy:
+\begin{itemize}[nosep]
+\item Primary predictive metrics (RMSE, MAE): two decimal places (e.g., ICSOR RMSE = 5.98).
+\item $R^2$ values: four decimal places (e.g., ICSOR $R^2$ = 0.9700).
+\item MAPE values: four decimal places (e.g., ICSOR MAPE = 0.0256).
+\item Percentages: one decimal place unless the quantity is near zero.
+\item Integer counts for retained coefficients.
+\end{itemize}
+This policy has been applied uniformly across all tables and the corresponding narrative in Sections~4.1--4.4. \revhighlight{revDefault}{blue}
+
+% ---- R1.33 ----
+\reviewlabel{R1.33 --- Asymmetric $\Theta$ interaction tensors}
+\begin{reviewbox}
+The text interprets individual cells of the $\Theta$ heatmaps as specific physical synergies or inhibitions between inputs $x_i$ and $x_j$. However, since multiplication is commutative, the true mathematical weight of the interaction is the sum of the symmetric elements. The heatmaps presented are visibly asymmetric. Interpreting a single cell in an asymmetric matrix representing commutative products is mathematically invalid. The model code must either constrain $\Theta$ to be symmetric during training, or the visualization must plot the symmetric sum $(\Theta + \Theta^T)/2$ before any physical interpretation is claimed.
+\end{reviewbox}
+
+Thank you for identifying this valid concern regarding the commutativity of the Kronecker interaction products. In the revised manuscript, the $\Theta_{cc}$ heatmap presented in Figure~4 and the supplementary atlases (Figures~S1--S4) now display the symmetrized interaction matrix
+\[
+\Theta_{cc}^{(sym)} = \tfrac{1}{2}\bigl(\Theta_{cc} + \Theta_{cc}^T\bigr)
+\]
+rather than the raw ordered coefficients. The largest-magnitude symmetrized coefficients for COD are:
+\begin{itemize}[nosep]
+\item $S_O$--$S_O$ self-curvature: $-2.3899 \times 10^{-2}$
+\item $S_O$--$S_{N2}$ cross-interaction: $-2.1845 \times 10^{-2}$
+\item $S_O$--$S_{NO2}$ cross-interaction: $-1.4691 \times 10^{-2}$
+\end{itemize}
+The interpretability discussion in Section~4.4 refers to ``symmetric negative cross-interactions,'' confirming that pairwise effects are reported from the symmetrized tensor. This ensures that the physical interpretation of commutative second-order terms is mathematically valid. \revhighlight{revRtwoOne}{purple}
+
+% ============================================================
+\section*{Reviewer 2}
+% ============================================================
+
+Reviewer 2 writes: ``\textit{After reviewing this manuscript, we believe more comprehensive analysis is needed to consolidate this work.}''
+
+We sincerely thank Reviewer 2 for the thorough evaluation and for the specific technical points. Every item has been addressed as described below. For clarity, we follow the reviewer's original four-section organization.
+
+% ============================================================
+\subsection*{Section 1: Novelty and Interpretability vs.\ Established Baselines}
+% ============================================================
+
+% ---- R2.1a ----
+\reviewlabel{R2.1a --- Redundancy with PLS/PCA}
+\begin{reviewbox}
+While the manuscript claims a ``novel'' bridge between black-box and mechanistic models, it is unclear how this provides a practical advantage over standard multivariate methods.
+
+\medskip\noindent\textit{Redundancy with PLS/PCA:} In wastewater treatment, Partial Least Squares (PLS) already provides interpretable loading weights that identify key influent drivers. The authors must explicitly state what CoBRE's interaction tensor ($\Theta$) reveals to a process engineer that a standard PLS loading plot or an ANN sensitivity analysis does not.
+\end{reviewbox}
+
+Thank you for this important question. The revised manuscript now addresses the comparison against PLS and ANN sensitivity analyses directly. The key structural distinction can be stated mathematically. PLS constructs a latent-variable decomposition $X = TP^T + E$ and fits a linear relation between latent scores and responses; its loading weights identify linear directions of maximum input--output covariance. ICSOR, by contrast, separates the prediction into a blockwise second-order driver:
+\[
+r(u, c_{in}) = \underbrace{b}_{\text{baseline}} + \underbrace{W_u u}_{\substack{\text{operating}\\\text{effects}}} + \underbrace{W_{in} c_{in}}_{\substack{\text{influent}\\\text{effects}}} + \underbrace{\Theta_{uu}(u \otimes u)}_{\substack{\text{operating}\\\text{curvature}}} + \underbrace{\Theta_{cc}(c_{in} \otimes c_{in})}_{\substack{\text{influent}\\\text{curvature}}} + \underbrace{\Theta_{uc}(u \otimes c_{in})}_{\substack{\text{cross-block}\\\text{interaction}}}
+\]
+combined with a separate cross-component redistribution layer $\Gamma$. Critically, these coefficients are fitted under hard physical constraints---exact stoichiometric mass conservation ($Ac = Ac_{in}$) and componentwise non-negativity ($c \ge 0$)---during both training and deployment. None of the benchmark models, including PLS, impose such constraints. The ICSOR coefficients are therefore shaped by the requirement that predictions must lie in the physically admissible region, giving the learned values a more defensible physical interpretation than PLS loadings or ANN sensitivities (which are fitted without conservation or positivity requirements). ANN sensitivity analyses are local, post hoc response diagnostics computed from a model whose parameters correspond to physically unconstrained predictions, whereas the ICSOR coefficient blocks are explicit global model parameters attached to named physical variable blocks. The relevant revisions are in the Introduction and Section~4.4. \revhighlight{revRtwoOne}{purple}
+
+% ---- R2.1b ----
+\reviewlabel{R2.1b --- Complexity of ``Interpretability''}
+\begin{reviewbox}
+\textit{Complexity of ``Interpretability'':} The model retains hundreds of active coefficients (864 for the CSTR $\Theta$ tensor alone). If a model requires complex heatmaps to be understood, its claim of being ``intuitive'' or ``algebraically interpretable'' is diminished compared to simpler linear baselines.
+\end{reviewbox}
+
+Thank you. The revised manuscript now addresses this concern directly. Section~4.4 explicitly states that interpretability does not arise from a uniformly sparse model, but from a structured separation between a sparse quadratic driver and a comparatively dense coupling matrix. For the COD-specific case, Table~12 reports:
+
+\begin{center}
+\small
+\begin{tabular}{lccc}
+\toprule
+Block & Total & Retained & \% Retained \\
+\midrule
+$b, W_u, W_{in}, \Theta_{uu}$ & 27 & 27 & 100.0 \\
+$\Theta_{uc}$ & 40 & 18 & 45.0 \\
+$\Theta_{cc}$ & 400 & 59 & 14.8 \\
+$\Gamma$ & 380 & 356 & 93.7 \\
+\midrule
+Overall & 847 & 460 & 54.3 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The highest-order quadratic block ($\Theta_{cc}$) is the sparsest at 14.8\% retention, whereas the coupling matrix $\Gamma$ is dense at 93.7\%. The model therefore compresses nonlinear influent curvature while preserving a broad redistribution layer, and interpretability refers to the block structure and its physical correspondence rather than to a claim of uniform sparsity. \revhighlight{revRtwoOne}{purple}
+
+% ============================================================
+\subsection*{Section 2: Fundamental Physics --- The Mass Balance Concern}
+% ============================================================
+
+% ---- R2.2a ----
+\reviewlabel{R2.2a --- Mass conservation not enforced}
+\begin{reviewbox}
+The most significant limitation is that the CoBRE framework is a grey-box statistical fit that does not strictly enforce mass conservation.
+\end{reviewbox}
+
+Thank you. This concern motivated a central redesign of the manuscript. The revised manuscript now develops ICSOR specifically to enforce exact stoichiometric mass conservation together with component non-negativity. The conservation law is derived from the stoichiometric matrix:
+\[
+c_{out} - c_{in} = \nu^T \xi \quad\Longrightarrow\quad A\nu^T = 0 \quad\Longrightarrow\quad Ac_{out} = Ac_{in},
+\]
+where $A$ spans the left null space of $\nu$. This conservation relation is built into both the training objective (through the invariant-mismatch penalty $\lambda_{inv}\|(\widehat{C} - C_{in})A^T\|_F^2$) and the deployment rule (through the exact enforcement $Ac = Ac_{in,*}$ and $c \ge 0$ in the final LP). The result: ICSOR achieves 0.0\% mass-conservation violations on all 2,000 test samples, whereas every unconstrained baseline violates conservation on 100\% of test samples. \revhighlight{revRtwoTwo}{crimson}
+
+% ---- R2.2b ----
+\reviewlabel{R2.2b --- Lack of hard physical constraints}
+\begin{reviewbox}
+\textit{Lack of Constraints:} Unlike the Activated Sludge Models (ASM) it approximates, CoBRE does not incorporate hard physical constraints ($\mathrm{In} - \mathrm{Out} - \mathrm{Reaction} = 0$).
+\end{reviewbox}
+
+Thank you. This point has been addressed directly. The revised manuscript introduces the invariant matrix construction from $A\nu^T = 0$, states the conservation relation $Ac_{out} = Ac_{in}$, and enforces the corresponding equality constraints during deployment together with non-negativity constraints. Specifically, the deployment LP (Eq.~11 in the revised manuscript) solves:
+\[
+\hat{c} = \arg\min_{c \ge 0} \; w_c^T |\,c - c_{aff}\,| \quad \text{subject to} \quad Ac = Ac_{in,*},
+\]
+guaranteeing that every deployed prediction satisfies both conservation and non-negativity. \revhighlight{revRtwoTwo}{crimson}
+
+% ---- R2.2c ----
+\reviewlabel{R2.2c --- Report mass balance closure errors}
+\begin{reviewbox}
+\textit{Physical Inconsistency:} The authors should report the Mass Balance Closure Error for Solids, COD, Nitrogen and Phosphorus across the test set. Without this, the model may predict effluent concentrations that are physically impossible, rendering its ``interpretability'' technically hollow.
+\end{reviewbox}
+
+We appreciate the reviewer's concern for physical consistency. However, we respectfully note that mass conservation in the Activated Sludge Models is defined at the component level, not at the composite level. The stoichiometric matrix $\nu$ operates on the $F = 20$ ASM component concentrations, and the conserved quantities are identified through the null-space invariant matrix $A$ applied to those components. The composite quantities (COD, TN, TP, TSS) are obtained afterward through $I_{comp}$; they are reporting quantities, not the native conservation basis. Imposing or verifying mass conservation directly on composite values would be incorrect because the same composite value can arise from different component states with different conservation properties.
+
+The revised manuscript addresses physical admissibility rigorously at the component level. Section~2.2 derives the invariant matrix $A$ from the left null space of $\nu$ and defines the conservation law $Ac_{out} = Ac_{in}$. Section~2.4 describes how ICSOR enforces this exactly at deployment. Section~4.3 and Table~11 then report the physical-admissibility outcome on the 2,000-sample test set:
+
+\begin{center}
+\small
+\begin{tabular}{lcc}
+\toprule
+Model & Mass-Cons.\ Violations (\%) & Non-Neg.\ Violations (\%) \\
+\midrule
+ICSOR & 0.0 & 0.0 \\
+MLP & 100.0 & 58.20 \\
+LightGBM & 100.0 & 46.00 \\
+SVR & 100.0 & 68.65 \\
+XGBoost & 100.0 & 64.05 \\
+CatBoost & 100.0 & 70.10 \\
+AdaBoost & 100.0 & 0.0 \\
+$k$-NN & 100.0 & 0.0 \\
+PLS & 100.0 & 48.70 \\
+Random Forest & 100.0 & 0.0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The violation diagnostics use $v_{mc} = \|A(\tilde{c} - c_{in})\|_2$ with a numerical tolerance of $10^{-10}$ and $v_{nn} = \|\min(\tilde{c}, 0)\|_1$ with the same tolerance. We believe this component-level diagnostic is both more rigorous and more informative than a composite-level closure error, because it verifies the actual stoichiometric invariants implied by the adopted ASM reaction network. \revhighlight{revRtwoTwo}{crimson}
+
+% ============================================================
+\subsection*{Section 3: Machine Learning Implementation and Rigor}
+% ============================================================
+
+% ---- R2.3a ----
+\reviewlabel{R2.3a --- Under-tuned benchmarks}
+\begin{reviewbox}
+\textit{Under-tuned Benchmarks:} Using only 20 Optuna TPE trials for complex models like ANN, XGBoost, and LightGBM is insufficient. These algorithms typically require hundreds of iterations to reach peak performance; there is a high risk that the ``strong black-box baselines'' were under-tuned, artificially favoring CoBRE.
+\end{reviewbox}
+
+Thank you. This issue has been addressed by revising the benchmark-tuning protocol. Section~3.4 now states that all ten retained models were tuned with a common Optuna design using 100 trials per model (a five-fold increase), no pruning, and no timeout. The tuning was performed on a 4,000-row subset (50\% of the 8,000-row training pool) with a 20\% validation fraction (3,200 tuning-training rows, 800 tuning-validation rows). The selected model-specific settings are reported in Tables~4--8. The MLP, for example, was tuned to hidden-layer widths (128, 64, 32), logistic activation, Adam solver, batch size 64, and learning rate $1.08 \times 10^{-3}$. \revhighlight{revRtwoFour}{forest green}
+
+% ---- R2.3b ----
+\reviewlabel{R2.3b --- Parameter-to-Data Paradox}
+\begin{reviewbox}
+\textit{The Parameter-to-Data Paradox:} In the clarifier study, the number of retained coefficients often exceeds the number of training samples. While the authors argue the ``coupled structure'' suppresses variance, this remains a significant risk for overfitting that requires more transparent validation.
+\end{reviewbox}
+
+Thank you. The revised manuscript no longer uses the earlier clarifier study. The standalone CSTR benchmark uses 8,000 training samples, and the COD interpretability analysis shows 847 candidate coefficients with 460 retained above the export threshold, so $p = 460 \ll N = 8{,}000$. The generalization claims are now tied to explicit diagnostics from the repeated dataset-size study:
+\begin{itemize}[nosep]
+\item Train--validation RMSE gap: ICSOR $\Delta$RMSE = 0.22, vs.\ LightGBM 1.99, XGBoost 1.44, SVR 1.19, MLP 0.65.
+\item Ranking stability across 11 retained sizes $\times$ 10 repeated runs.
+\item RMSE learning curves showing that ICSOR attains the lowest mean held-out RMSE at the smallest dataset size (10.79 at 500 rows).
+\end{itemize}
+\revhighlight{revRtwoFive}{violet}
+
+% ---- R2.3c ----
+\reviewlabel{R2.3c --- Mathematical implementation of thresholding}
+\begin{reviewbox}
+\textit{Mathematical Implementation:} Please clarify the relationship between \texttt{l1\_lambda} and $\lambda_{reg}$ in Equation~(11) and define the specific thresholding mechanism used to prune coefficients to zero.
+\end{reviewbox}
+
+Thank you. The old CoBRE-specific $\ell_1$ notation and Equation~(11) no longer appear in the revised manuscript, as the model has been reformulated as ICSOR with a different training objective (Eq.~5). ICSOR uses ridge regularization rather than $\ell_1$ penalization, so coefficients are not driven exactly to zero during training.
+
+Regarding the thresholding mechanism: the coefficient-retention table (Table~12) uses a post-training export threshold of $10^{-4}$ of the maximum absolute coefficient magnitude within each target to classify fitted coefficients as materially active for reporting purposes. This threshold does not affect model selection, training, or deployment; it serves only to distinguish coefficients whose magnitude is large enough to warrant physical interpretation from those that are numerically negligible. A clarifying sentence has been added to Section~4.4. \revhighlight{revRtwoOne}{purple}
+
+% ============================================================
+\subsection*{Section 4: Stability and Generalization}
+% ============================================================
+
+% ---- R2.4a ----
+\reviewlabel{R2.4a --- Coefficient stability across folds}
+\begin{reviewbox}
+\textit{Coefficient Stability:} Are the heatmaps in Figure~5 representative of a single fold or an average across all 10 folds? For a model to be considered ``physically interpretable,'' the learned coefficients must remain stable across different data partitions.
+\end{reviewbox}
+
+Thank you for raising this point. We would like to respectfully clarify the nature of the interpretability claim and address the concern regarding coefficient stability.
+
+First, the $\Theta_{cc}$ heatmap presented in Figure~4 corresponds to a single ICSOR fit on the full training partition, not to an aggregate across multiple folds. A clarifying statement to this effect has been added to Section~4.4.
+
+Second, we acknowledge that, as a data-driven statistical model, ICSOR's fitted coefficients are expected to vary across different training samples. The recursive coupled-QP estimator minimizes a non-convex joint objective over $(B, \Gamma, \widehat{C})$ through block-coordinate sweeps with restarts. Because the joint problem is non-convex, the estimator does not guarantee a unique global minimum: different initializations, restart outcomes, and training partitions can lead to distinct stationary points with comparable objective values. Furthermore, the coupling matrix $\Gamma$ and the driver matrix $B$ can trade off against each other in the coupled relation $Rc = B\phi$, so different $(B, \Gamma)$ pairs may produce similar fitted component states and predictive accuracy while differing in their individual coefficient values. This identifiability limitation is a property of the model class, not a defect of the estimation procedure.
+
+We maintain that this limitation does not negate the interpretability claim. The machine-learning interpretability literature distinguishes two complementary notions:
+\begin{itemize}[nosep]
+\item \textbf{Intrinsic (transparent) interpretability:} a model whose functional form is simple enough that the mapping from inputs to outputs can be read directly from its coefficients (Rudin, 2019).
+\item \textbf{Post hoc interpretability:} explanations generated after training by a separate method (e.g., SHAP, LIME, sensitivity analysis) applied to an opaque model.
+\end{itemize}
+ICSOR belongs to the first category: its partitioned second-order driver and coupling matrix are explicit, named coefficient blocks whose roles are defined by the model architecture itself. The fact that intrinsically interpretable coefficients may vary across training samples is a well-known property shared by many transparent model families (Brunton et al., 2016). Physical interpretation should therefore focus on persistent structural patterns---such as which blocks are sparse, which interaction signs are stable, and which coupling pathways recur---rather than on the precise numerical value of any single coefficient. The revised Section~4.4 states this explicitly and acknowledges that coefficient-level stability across resamples remains an open diagnostic for future work. \revhighlight{revRtwoOne}{purple}
+
+% ---- R2.4b ----
+\reviewlabel{R2.4b --- Training time context}
+\begin{reviewbox}
+\textit{Training Time Context:} While CoBRE is 3$\times$ faster than an ANN, a difference of $\sim$90~seconds in offline training is negligible in the context of wastewater processes that operate on much longer time scales.
+\end{reviewbox}
+
+Thank you. The revised discussion now places runtime in a more appropriate offline-training context. At the full 10,000-row dataset size, mean training times are:
+
+\begin{center}
+\small
+\begin{tabular}{lrlr}
+\toprule
+Model & Time (s) & Model & Time (s) \\
+\midrule
+PLS & 0.228 & ICSOR & 94.4 \\
+$k$-NN & 2.70 & AdaBoost & 117.7 \\
+LightGBM & 4.13 & SVR & 136.8 \\
+XGBoost & 7.64 & MLP & 161.6 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+ICSOR is slower than the fastest tree-based methods at every retained size, but at the largest dataset scale it is faster than AdaBoost (117.7~s), SVR (136.8~s), and the MLP (161.6~s). Section~4.2 frames this as a computational tradeoff: ICSOR's recursive coupled-QP route is more expensive than gradient-boosted trees but remains practical for offline surrogate calibration, which is the intended use case. \revhighlight{revRtwoFive}{violet}
+
+\end{document}
