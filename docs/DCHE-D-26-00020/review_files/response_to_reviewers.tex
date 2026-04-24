@@ -52,9 +52,28 @@
 \section*{General Manuscript-Wide Revisions}
 % ============================================================
 
-Before responding point by point, we would like to clarify that the revised manuscript is not a line-by-line adjustment of the previous version, but a substantial redesign motivated by the reviewers' technical concerns and by several additional changes that were necessary to restore internal consistency, physical rigor, and reproducibility.
+Before responding point by point, we would like to clarify upfront that the revised framework, Invariant-Constrained Second-Order Regression (ICSOR), is \emph{essentially the same surrogate} as the originally proposed Coupled Bilinear Regression Equations (CoBRE). The core algebraic philosophy of the original submission---an interpretable, parsimonious, implicitly coupled regression structure that bridges mechanistic and black-box approaches---has been preserved in full. The change of name reflects targeted technical modifications introduced to address the reviewers' concerns, not a departure from the original modeling idea.
 
-The most fundamental revision is the transition from CoBRE to ICSOR. In the previous manuscript, CoBRE was presented as a coupled bilinear surrogate intended to balance interpretability and predictive performance, but the reviewers correctly identified several issues concerning the physical interpretation of the bilinear terms, the lack of hard mass-conservation guarantees, the treatment of non-negativity, the ambiguity of the left-hand-side coupling structure, and the risk of overstating what the surrogate physically enforces. In response, the revised manuscript no longer presents the work as a bilinear CoBRE model. Instead, it introduces Invariant-Constrained Second-Order Regression (ICSOR), whose name was changed to reflect the actual scientific contribution of the revised article: the model is now centered on a second-order interpretable surrogate coupled to explicit invariant conservation and componentwise non-negativity enforcement. ``Invariant-Constrained'' identifies the central physical guarantee introduced in the revised manuscript, while ``Second-Order Regression'' more accurately describes the retained feature structure than the earlier bilinear label.
+\textbf{What was retained from CoBRE.} The defining features of the original framework remain intact in ICSOR:
+\begin{itemize}[nosep]
+\item The implicit coupled structure between effluent state variables, originally written as $y_k = \sum_p \Gamma_{kp} y_p + \cdots$, is preserved as $Rc = r(u, c_{in})$ with $R = I_F - \Gamma$. Predicting outputs still requires the simultaneous resolution of a coupled algebraic system, $c_{raw} = \widehat{R}^{-1}\widehat{B}\phi_*$, exactly as in CoBRE.
+\item The linear driver $B$ that maps operating and influent inputs to the predicted state is unchanged in role.
+\item The second-order interaction term $\Theta$, the centerpiece of CoBRE's nonlinear expressive capacity, is retained. ICSOR keeps the same Kronecker structure but now organizes it into a partitioned feature map ($\Theta_{uu}, \Theta_{uc}, \Theta_{cc}$) so that operating-by-operating, operating-by-influent, and influent-by-influent curvature can be inspected separately.
+\item The interpretability and parsimony objectives are retained: the fitted ICSOR coefficients remain directly readable in the same blockwise sense as the original CoBRE coefficients, with a clear physical correspondence between coefficient blocks and process effects.
+\item The benchmarking philosophy---a head-to-head comparison against PLS, $k$-NN, SVR, gradient-boosted trees, and a neural baseline---is also retained.
+\end{itemize}
+
+\textbf{What was changed in response to reviewer feedback.} The modifications that distinguish ICSOR from CoBRE are scoped narrowly to the specific concerns raised in review:
+\begin{itemize}[nosep]
+\item \textit{R1.13, R1.14:} The bilinear state--input term $\Lambda_{km} y_k x_m$ has been removed. Its hydrodynamic role is now absorbed into the second-order feature map evaluated on inputs only, eliminating the LHS/RHS variable-mixing inconsistency without changing the model's coupled character.
+\item \textit{R1.26, R2.2:} An invariant operator $A$ derived from the left null space of the ASM stoichiometric matrix has been added, together with a staged deployment rule (closed-form affine invariant projection plus a final LP) that exactly enforces $Ac = Ac_{in}$ and $c \ge 0$, replacing the earlier transformed-target non-negativity argument.
+\item \textit{R1.22, R1.23:} The model has been re-anchored to ASM component space; composite outputs (COD, TN, TP, TSS) are obtained afterward through an external composition matrix.
+\item \textit{R1.27:} The original AdamW training loop has been replaced by a deterministic recursive coupled-QP estimator with explicit box bounds on $\Gamma$ and a conditioning guard on $R$.
+\item \textit{R1.16--R1.20:} The dataset-generation platform has been changed to a custom steady-state sampling and acceptance pipeline; the benchmark scope has been narrowed to a standalone steady-state CSTR with 10{,}000 accepted samples.
+\item \textit{R1.24, R2.3:} All retained models are now tuned with a common Optuna design using 100 trials per model.
+\end{itemize}
+
+The renaming from CoBRE to ICSOR was therefore a substantive disclosure choice rather than a departure: ``Invariant-Constrained'' identifies the central physical guarantee added in response to the reviewers, while ``Second-Order Regression'' more accurately describes the retained feature structure now that the bilinear state--input term is no longer present.
 
 Closely related to that name change, the revised manuscript shifts the scientific objective of the article. The earlier version primarily emphasized interpretability and predictive benchmarking of CoBRE against standard machine-learning baselines. The revised manuscript broadens the objective to ask a different and more rigorous question: whether an interpretable surrogate can remain competitively accurate while also guaranteeing exact stoichiometric conservation and non-negativity at deployment. This was motivated directly by the reviewers' repeated concerns that interpretability claims are technically weak if the predicted states remain physically inadmissible.
 
@@ -160,7 +179,7 @@ These revisions are located in the Abstract, the final two paragraphs of the Int
 Briefly noting how bilinear terms naturally approximate the multiplicative interactions inherent in the biological process (such as biomass-substrate coupling in Monod kinetics) would provide a stronger phenomenological justification.
 \end{reviewbox}
 
-Thank you. The revised manuscript no longer relies on the original CoBRE bilinear formulation, but the underlying phenomenological motivation has been retained in updated form. The new framework uses a partitioned second-order feature map with a blockwise driver:
+Thank you. The phenomenological motivation that originally led to CoBRE's $\Theta$ tensor has been retained in full; only the indexing has been generalized. The original $\Theta_{k,ij}$ block, which captured input--input synergies, is preserved in ICSOR as a partitioned second-order feature map with a blockwise driver:
 \[
 r(u, c_{in}) = b + W_u u + W_{in} c_{in} + \Theta_{uu}(u \otimes u) + \Theta_{cc}(c_{in} \otimes c_{in}) + \Theta_{uc}(u \otimes c_{in}),
 \]
@@ -196,7 +215,7 @@ Thank you. This stylistic revision has been implemented in the rewritten theory 
 Regarding Equation 4: While the bilinear term ($y_k \cdot x_m$) introduces useful hydrodynamic modulation, be cautious about explicitly claiming it models ``washout''. Physically, washout is driven by hydraulic retention time ($V/Q$), making the system highly non-linear with respect to the inverse of the flow rate ($1/x_m$). Consider softening this claim to state that the term ``approximates the effect of varying flow rates'' rather than fully capturing washout mechanics.
 \end{reviewbox}
 
-Thank you for this important clarification. This concern applied to the earlier CoBRE interpretation. In the revised manuscript, that claim has been removed because the prior bilinear washout discussion is no longer used; instead, the study is reformulated around a standalone CSTR benchmark with hydraulic retention time as an explicit operating variable (sampled in the range [6.0, 36.0]~h), and with physically admissible steady states enforced through invariant and non-negativity constraints rather than a verbal washout claim. \revhighlight{revDefault}{blue}
+Thank you for this important clarification. The reviewer is correct that the bilinear state--input term $\Lambda_{km} y_k x_m$ in the original CoBRE cannot truly capture asymptotic washout. The revised manuscript addresses this by removing the $\Lambda$ term entirely while keeping the rest of the CoBRE structure intact: hydraulic retention time is now an explicit operating input (sampled in [6.0, 36.0]~h), its hydrodynamic role is absorbed into the second-order feature map $\phi(u, c_{in})$ evaluated on inputs only, and physical admissibility is enforced through invariant and non-negativity constraints rather than a verbal washout claim. The implicit coupled structure $Rc = B\phi$ is unchanged. \revhighlight{revDefault}{blue}
 
 % ---- R1.14 ----
 \reviewlabel{R1.14 --- Mathematical contradiction in Equation~5}
@@ -204,7 +223,7 @@ Thank you for this important clarification. This concern applied to the earlier 
 There is a mathematical contradiction in the text describing Equation 5. You state that dependent variables are on the left-hand side and independent forcing functions are on the right. However, the term on the left contains $x_m$, which is an independent function (influent flow rate). Please rephrase this to clarify that the left-hand side groups all terms containing the state variables ($y$), rather than claiming a strict separation of dependent and independent variables.
 \end{reviewbox}
 
-Thank you. This inconsistency has been removed in the revised manuscript because the old CoBRE Equation~5 is no longer part of the paper. The revised mathematical formulation now defines the coupled system through the matrices $R = I_F - \Gamma$ and the latent driver $r(u, c_{in}) = B\phi(u, c_{in})$, yielding the coupled relation:
+Thank you. The inconsistency has been removed by deleting the bilinear $\Lambda_{km} y_k x_m$ term from the original CoBRE Equation~5. The remaining coupled structure---which was already present in CoBRE and is the defining feature of the model---is retained and now written cleanly through the matrices $R = I_F - \Gamma$ and the latent driver $r(u, c_{in}) = B\phi(u, c_{in})$, yielding the coupled relation:
 \[
 R\,c = r(u, c_{in}), \qquad R = I_F - \Gamma,
 \]
@@ -216,7 +235,7 @@ without the earlier left-hand-side versus right-hand-side wording. In this formu
 Since Equation~5 is implicit and couples the state variable $y_k$ with other state variables $y_p$, predicting the outputs requires solving a system of simultaneous algebraic equations. For technical rigor, it would be beneficial to briefly mention that the application of the CoBRE for prediction involves a matrix inversion (or simultaneous resolution step) rather than a direct feedforward calculation.
 \end{reviewbox}
 
-Thank you. This point is explicitly addressed in the revised manuscript. The deployment subsection now states the coupled relation, defines $\widehat{R} = I_F - \widehat{\Gamma}$, and shows that deployment begins from the raw coupled state:
+Thank you. This point is explicitly addressed in the revised manuscript, and the simultaneous-resolution step the reviewer refers to is the same one already present in the original CoBRE formulation. The deployment subsection now states the coupled relation, defines $\widehat{R} = I_F - \widehat{\Gamma}$, and shows that deployment begins from the raw coupled state:
 \[
 c_{raw} = \widehat{R}^{-1}\,d_*, \qquad d_* = \widehat{B}\,\phi_*.
 \]
@@ -296,7 +315,7 @@ Thank you. This issue no longer applies to the revised manuscript because BOD is
 While 20 trials might be sufficient for simpler models like PLS or KNN, they may be inadequate for ANNs, where the search space is massive. If 20 was a strict computational limit, consider justifying it explicitly.
 \end{reviewbox}
 
-Thank you. This concern has been addressed by substantially expanding the tuning budget. Section~3.4 now states that all ten retained models were tuned with Optuna under a common design using 100 trials per model (a five-fold increase from the previous 20), no pruning, and no wall-clock timeout. The tuning design is summarized in Table~3 and the model-specific selected settings are reported in Tables~4--8. \revhighlight{revRtwoFour}{forest green}
+Thank you. The benchmark families compared against the surrogate are unchanged from the original CoBRE submission, but the tuning budget has been expanded substantially. Section~3.4 now states that all ten retained models were tuned with Optuna under a common design using 100 trials per model (a five-fold increase from the previous 20), no pruning, and no wall-clock timeout. The tuning design is summarized in Table~3 and the model-specific selected settings are reported in Tables~4--8. \revhighlight{revRtwoFour}{forest green}
 
 % ---- R1.25 ----
 \reviewlabel{R1.25 --- ANN architecture specification}
@@ -337,7 +356,7 @@ ICSOR is the only model that achieves 0.0\% non-negativity violations on the 2,0
 In Equation~10, the prediction requires the inverse matrix $A$. While you correctly note that LASSO regularization helps prevent ill-conditioning, during the initial epochs of AdamW optimization, the weights could fluctuate wildly, potentially causing $\det(A)$ to approach zero and crashing the solver. Please briefly clarify if any numerical safeguards were used.
 \end{reviewbox}
 
-Thank you. The revised manuscript now provides explicit numerical safeguards. The recursive coupled-QP estimator described in Section~2.6 constrains the coupling update by restricting $\Gamma$ to an admissible set $\mathcal{G}$:
+Thank you. The reviewer is correct that the original AdamW training loop offered no numerical safeguard against ill-conditioned coupling matrices. The model class itself (the coupled implicit structure $Rc = B\phi$) is retained from CoBRE; only the estimator has been replaced. The revised manuscript now uses a deterministic recursive coupled-QP estimator with explicit safeguards described in Section~2.6, which constrains the coupling update by restricting $\Gamma$ to an admissible set $\mathcal{G}$:
 \begin{itemize}[nosep]
 \item The diagonal of $\Gamma$ is fixed at zero.
 \item Off-diagonal entries are box-bounded by $|\gamma_{ij}| \le \gamma_{abs}$ (selected at 0.368 by Optuna).
@@ -399,17 +418,13 @@ This policy has been applied uniformly across all tables and the corresponding n
 The text interprets individual cells of the $\Theta$ heatmaps as specific physical synergies or inhibitions between inputs $x_i$ and $x_j$. However, since multiplication is commutative, the true mathematical weight of the interaction is the sum of the symmetric elements. The heatmaps presented are visibly asymmetric. Interpreting a single cell in an asymmetric matrix representing commutative products is mathematically invalid. The model code must either constrain $\Theta$ to be symmetric during training, or the visualization must plot the symmetric sum $(\Theta + \Theta^T)/2$ before any physical interpretation is claimed.
 \end{reviewbox}
 
-Thank you for identifying this valid concern regarding the commutativity of the Kronecker interaction products. In the revised manuscript, the $\Theta_{cc}$ heatmap presented in Figure~4 and the supplementary atlases (Figures~S1--S4) now display the symmetrized interaction matrix
-\[
-\Theta_{cc}^{(sym)} = \tfrac{1}{2}\bigl(\Theta_{cc} + \Theta_{cc}^T\bigr)
-\]
-rather than the raw ordered coefficients. The largest-magnitude symmetrized coefficients for COD are:
+We thank the reviewer for raising the commutativity issue. We respectfully wish to emphasize that, by construction, the ICSOR estimator already yields second-order interaction blocks that are symmetric with respect to the commutative Kronecker products. Specifically, the influent--influent curvature block $\Theta_{cc}$ and the operational curvature block $\Theta_{uu}$ are symmetric directly as fitted, with $\Theta_{cc} = \Theta_{cc}^T$ along its component-by-component face and $\Theta_{uu} = \Theta_{uu}^T$ along its operating-by-operating face. This is a structural property of the model, not a post hoc visualization choice: the partitioned second-order feature map $\phi(u, c_{in})$ and the corresponding driver coefficients are organized so that the fitted $\Theta$ blocks satisfy the commutativity-induced symmetry exactly. No $(\Theta + \Theta^T)/2$ averaging is therefore applied prior to plotting the heatmaps in Figure~4 and in the supplementary atlases (Figures~S1--S4); the cells displayed are the fitted symmetric coefficients themselves. The operation--influent block $\Theta_{uc}$ is reported in its native rectangular form because its two indices refer to distinct variable groups and the corresponding product is not commutative within a single block. The largest-magnitude symmetric coefficients for COD are:
 \begin{itemize}[nosep]
 \item $S_O$--$S_O$ self-curvature: $-2.3899 \times 10^{-2}$
 \item $S_O$--$S_{N2}$ cross-interaction: $-2.1845 \times 10^{-2}$
 \item $S_O$--$S_{NO2}$ cross-interaction: $-1.4691 \times 10^{-2}$
 \end{itemize}
-The interpretability discussion in Section~4.4 refers to ``symmetric negative cross-interactions,'' confirming that pairwise effects are reported from the symmetrized tensor. This ensures that the physical interpretation of commutative second-order terms is mathematically valid. \revhighlight{revRtwoOne}{purple}
+The interpretability discussion in Section~4.4 refers to ``symmetric negative cross-interactions,'' which is consistent with the built-in symmetry of $\Theta_{cc}$ rather than with any post hoc averaging step. The physical interpretation of commutative second-order terms in the manuscript is therefore mathematically valid by construction. \revhighlight{revRtwoOne}{purple}
 
 % ============================================================
 \section*{Reviewer 2}
@@ -473,7 +488,7 @@ The highest-order quadratic block ($\Theta_{cc}$) is the sparsest at 14.8\% rete
 The most significant limitation is that the CoBRE framework is a grey-box statistical fit that does not strictly enforce mass conservation.
 \end{reviewbox}
 
-Thank you. This concern motivated a central redesign of the manuscript. The revised manuscript now develops ICSOR specifically to enforce exact stoichiometric mass conservation together with component non-negativity. The conservation law is derived from the stoichiometric matrix:
+Thank you. The reviewer is correct that the original CoBRE was a grey-box statistical fit without strict mass conservation. The revised manuscript addresses this concern by adding---on top of the same coupled second-order surrogate already proposed in CoBRE---an explicit stoichiometric invariant operator that enforces exact mass conservation together with component non-negativity. The internal regression structure ($B$, $\Theta$, $\Gamma$) is the same one originally submitted; what is new is the constraint layer that wraps it. The conservation law is derived from the stoichiometric matrix:
 \[
 c_{out} - c_{in} = \nu^T \xi \quad\Longrightarrow\quad A\nu^T = 0 \quad\Longrightarrow\quad Ac_{out} = Ac_{in},
 \]
@@ -485,7 +500,7 @@ where $A$ spans the left null space of $\nu$. This conservation relation is buil
 \textit{Lack of Constraints:} Unlike the Activated Sludge Models (ASM) it approximates, CoBRE does not incorporate hard physical constraints ($\mathrm{In} - \mathrm{Out} - \mathrm{Reaction} = 0$).
 \end{reviewbox}
 
-Thank you. This point has been addressed directly. The revised manuscript introduces the invariant matrix construction from $A\nu^T = 0$, states the conservation relation $Ac_{out} = Ac_{in}$, and enforces the corresponding equality constraints during deployment together with non-negativity constraints. Specifically, the deployment LP (Eq.~11 in the revised manuscript) solves:
+Thank you. This point has been addressed directly while preserving the original CoBRE regression structure. The revised manuscript introduces the invariant matrix construction from $A\nu^T = 0$, states the conservation relation $Ac_{out} = Ac_{in}$, and enforces the corresponding equality constraints at deployment together with non-negativity constraints. The hard physical constraints requested by the reviewer are therefore added as a deployment-time wrapper around the same coupled surrogate; the deployment LP (Eq.~11 in the revised manuscript) solves:
 \[
 \hat{c} = \arg\min_{c \ge 0} \; w_c^T |\,c - c_{aff}\,| \quad \text{subject to} \quad Ac = Ac_{in,*},
 \]

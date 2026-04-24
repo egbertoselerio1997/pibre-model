@@ -1,0 +1,50 @@
+\documentclass[11pt,a4paper]{letter}
+\usepackage[margin=1in]{geometry}
+\usepackage{parskip}
+\usepackage{hyperref}
+
+\signature{Egberto F. Selerio Jr. \\ Engineering Research and Development for Technology \\ University of San Carlos, Philippines \\ \href{mailto:egbertoselerio@gmail.com}{egbertoselerio@gmail.com}}
+
+\address{Egberto F. Selerio Jr. \\ Engineering Research and Development for Technology \\ University of San Carlos, Philippines}
+
+\begin{document}
+
+\begin{letter}{Prof.\ Jin Xuan and Prof.\ Jinfeng Liu \\ Editors-in-Chief \\ Digital Chemical Engineering, Elsevier}
+
+\opening{Dear Prof.\ Xuan and Prof.\ Liu,}
+
+I am pleased to submit the revised version of our manuscript, originally entitled \emph{``A Novel Surrogate Modeling Framework for Activated Sludge Processes using Coupled Bilinear Regression Equations''} (DCHE-D-26-00020), for further consideration in \emph{Digital Chemical Engineering}. In response to the reviewers' comments, the work has been substantively revised and is now resubmitted under the updated title \emph{``An Interpretable Statistical Surrogate of Activated Sludge Systems that Preserves Mass Conservation and Component Non-Negativity.''}
+
+We wish to emphasize at the outset that the revised framework, Invariant-Constrained Second-Order Regression (ICSOR), is \emph{essentially the same surrogate} as the originally proposed Coupled Bilinear Regression Equations (CoBRE). The core algebraic philosophy that motivated the original submission---an interpretable, parsimonious, implicitly coupled regression structure that bridges mechanistic and black-box approaches---has been preserved in full. The change in name reflects the targeted technical modifications introduced to address the reviewers' concerns, not a departure from the original modeling idea.
+
+\textbf{What has been retained from CoBRE.} The following defining features of the original CoBRE framework remain intact in ICSOR:
+\begin{itemize}
+    \item The implicit coupled structure between effluent state variables, originally written as $y_k = \sum_p \Gamma_{kp} y_p + \cdots$, is preserved as $Rc = r(u, c_{in})$ with $R = I_F - \Gamma$. Predicting outputs still requires the simultaneous resolution of a coupled algebraic system, $c_{raw} = \widehat{R}^{-1}\,\widehat{B}\,\phi_*$, exactly as before.
+    \item The linear driver block $B$ that maps operating and influent inputs to the predicted state is unchanged in role.
+    \item The second-order interaction term $\Theta$, originally the centerpiece of CoBRE's nonlinear expressive capacity, is retained. ICSOR keeps the same second-order Kronecker structure but now organizes it into a partitioned feature map ($\Theta_{uu}, \Theta_{uc}, \Theta_{cc}$) so that operating-by-operating, operating-by-influent, and influent-by-influent curvature can be inspected separately.
+    \item The interpretability and parsimony objectives---a sparse, algebraically inspectable coefficient structure with a clear physical correspondence between coefficient blocks and process effects---are retained, and the fitted ICSOR coefficients remain directly readable in the same blockwise sense as the original CoBRE coefficients.
+    \item The benchmarking philosophy, namely a head-to-head comparison against PLS, $k$-NN, SVR, gradient-boosted trees, and a neural baseline, is also retained.
+\end{itemize}
+
+\textbf{What has been changed in response to reviewer feedback.} The modifications that distinguish ICSOR from CoBRE are scoped narrowly to the specific concerns raised in review:
+\begin{itemize}
+    \item \textit{In response to R1.13 and R1.14} (washout interpretation and the LHS/RHS variable-mixing inconsistency in the original Equation~5), the bilinear state--input term $\Lambda_{km} y_k x_m$ has been removed. Its hydrodynamic role is now absorbed into the second-order feature map evaluated on inputs only, which eliminates the mathematical contradiction without changing the model's coupled character.
+    \item \textit{In response to R1.26 and R2.2} (transformed-target non-negativity and the absence of hard mass-conservation guarantees), an invariant operator $A$ derived from the left null space of the ASM stoichiometric matrix has been added, together with a staged deployment rule consisting of a closed-form affine invariant projection and a final linear program enforcing $Ac = Ac_{in}$ and $c \ge 0$.
+    \item \textit{In response to R1.22 and R1.23} (logical contradiction between sensor-oriented composites and internal biomass fractions, and BOD ambiguity), the model has been re-anchored to ASM component space. Composite outputs (COD, TN, TP, TSS) are now obtained afterward through an external composition matrix.
+    \item \textit{In response to R1.27} (numerical safeguards during inversion), the original AdamW training loop has been replaced by a deterministic recursive coupled-QP estimator with explicit box bounds on $\Gamma$ and a conditioning guard on $R$.
+    \item \textit{In response to R1.16--R1.20 and the QSDsan-related concerns}, the dataset-generation platform has been changed to a custom steady-state sampling and acceptance pipeline that aligns the solver, initialization, residual tolerances, and invariant construction with the stoichiometric structure used by ICSOR. The benchmark scope has been narrowed to a standalone steady-state CSTR with 10{,}000 accepted samples.
+    \item \textit{In response to R1.24 and R2.3} (under-tuned baselines), all retained models are now tuned with a common Optuna design using 100 trials per model. The ANN baseline has been specified explicitly as a multilayer perceptron with full architectural and hyperparameter disclosure.
+    \item \textit{In response to R1.31, R1.32, R1.1--R1.12, and R2.1} (figure readability, significant-figure precision, abbreviation definitions, repeated transitions, first-person phrasing, and the practical advantage over PLS/ANN), the Abstract, Introduction, Theory, and Results sections have been rewritten with consistent style, an added Nomenclature section, and an explicit discussion of how the constraint-shaped ICSOR coefficients differ from unconstrained PLS loadings and post hoc ANN sensitivities.
+\end{itemize}
+
+The renaming from CoBRE to ICSOR was therefore a substantive disclosure choice rather than a departure: ``Invariant-Constrained'' identifies the central physical guarantee added in response to the reviewers, while ``Second-Order Regression'' more accurately describes the retained feature structure now that the bilinear state--input term is no longer present. The underlying surrogate---coupled, second-order, blockwise interpretable, and benchmarked against the same model families---is the same one originally proposed.
+
+A detailed point-by-point response to every reviewer comment is provided in the accompanying response document, and revisions in the manuscript are highlighted using the color scheme described therein.
+
+The revised manuscript is original, has not been published previously, and is not under consideration for publication elsewhere. The authors declare no conflicts of interest. We thank the reviewers for the technical scrutiny that made these revisions possible and you for your continued consideration of this work.
+
+\closing{Sincerely,}
+
+\end{letter}
+
+\end{document}

@@ -4,6 +4,8 @@
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
 \usepackage{capt-of}
+\usepackage{amsmath}
+\usepackage{amssymb}
 
 \graphicspath{{./}{docs/DCHE-D-26-00020/}}
 \renewcommand{\thefigure}{S\arabic{figure}}
@@ -16,37 +18,61 @@
 
 \maketitle
 
-\section*{Target-Wise Interpretability Atlases}
+\section*{S1. Target-Wise ICSOR Interpretability Atlases}
 
-This supplementary file collects the complete target-wise ICSOR interpretability atlases that are not retained in the main manuscript. Figure~4 of the manuscript is now reserved for the COD $\Theta_{cc}$ block only, so the paper can discuss one representative interaction surface without repeating four dense multi-block panels in the main text. Figures~\ref{fig:supp_cod_interpretability}--\ref{fig:supp_tss_interpretability} provide the full COD, TN, TP, and TSS atlases.
+\subsection*{S1.1 Purpose and scope}
 
-Each atlas presents the full set of retained blocks for one reported target: the scalar bias term $b$, the first-order operational block $W_u$, the first-order influent block $W_{in}$, the operational-curvature block $\Theta_{uu}$, the operation-influent interaction block $\Theta_{uc}$, the influent-curvature block $\Theta_{cc}$, and the coupling matrix $\Gamma$. The ASM component basis is kept complete in every panel, and the heatmaps are drawn from the lower origin so the operational axes begin at HRT and then Aeration.
+This supplementary file collects the complete target-wise Invariant-Constrained Second-Order Regression (ICSOR) interpretability atlases that accompany Section~4.4 of the main manuscript. The main text reserves Figure~4 for the Chemical Oxygen Demand (COD) influent-influent curvature block $\Theta_{cc}$ only, so that the manuscript can discuss a single representative interaction surface without overloading the printed text with four dense multi-block panels. Figures~\ref{fig:supp_cod_interpretability}--\ref{fig:supp_tss_interpretability} of this document provide the full atlases for the four reported composite targets in the order in which they appear in the manuscript: COD, total nitrogen (TN), total phosphorus (TP), and total suspended solids (TSS).
+
+Each atlas is intended to make the entire fitted ICSOR coefficient structure available to the reader for a single target. Together, the four atlases therefore cover the complete set of structural blocks that underlie the deployed ICSOR predictions, and they are the primary visual reference for the blockwise interpretability discussion summarized in Section~4.4 of the manuscript.
+
+\subsection*{S1.2 Reading the atlases}
+
+Each atlas presents the full set of fitted blocks of the latent driver $B$ together with the coupling matrix $\Gamma$, organized as follows. The scalar bias term $b$ is reported as a one-row strip across the $F = 20$ Activated Sludge Model (ASM) components. The first-order operational block $W_u \in \mathbb{R}^{F \times M_{op}}$ shows how each operating variable (hydraulic retention time and aeration intensity) contributes linearly to each component-level driver entry. The first-order influent block $W_{in} \in \mathbb{R}^{F \times F}$ shows how each influent ASM component carries through linearly into each effluent component driver. The operational curvature block $\Theta_{uu} \in \mathbb{R}^{F \times M_{op}^2}$ encodes regime-dependent operating effects, the operation-influent interaction block $\Theta_{uc} \in \mathbb{R}^{F \times (M_{op} F)}$ encodes how a given operating action modulates each influent carry-through term, and the influent-influent curvature block $\Theta_{cc} \in \mathbb{R}^{F \times F^2}$ encodes coupled loading effects between pairs of influent ASM components. The coupling matrix $\Gamma \in \mathbb{R}^{F \times F}$ then describes how the latent driver is redistributed across ASM components through the coupled system matrix $R = I_F - \Gamma$.
+
+In every atlas, color encodes the sign and magnitude of the coefficient: positive values appear in one diverging hue, negative values in the opposing hue, and entries that fall below the export threshold described in Section~4.4 of the manuscript are rendered as near-neutral cells. The color scale is symmetric about zero within each block so that signed contributions of comparable magnitude can be compared by eye. The ASM component basis is kept complete in every panel, and the heatmaps are drawn from a lower origin so that the operational axes begin at hydraulic retention time and then aeration intensity, in the order used throughout the manuscript.
+
+\subsection*{S1.3 Symmetry of second-order blocks}
+
+By construction, the ICSOR estimator produces symmetric second-order interaction blocks for the commutative Kronecker products. The influent-influent curvature block $\Theta_{cc}$ and the operational curvature block $\Theta_{uu}$ are therefore symmetric along their respective component-by-component and operating-by-operating faces directly as fitted, with no post hoc symmetrization applied prior to plotting. The operation-influent interaction block $\Theta_{uc}$ is reported in its native rectangular form because its two indices refer to distinct variable groups (operating variables and influent components) and the corresponding product is not commutative within a single block. This built-in symmetry ensures that any cell read from a heatmap of a commutative interaction product reflects the physically meaningful pairwise weight, rather than an arbitrary distribution of magnitude between upper- and lower-triangular entries.
+
+\subsection*{S1.4 Relationship to the main manuscript}
+
+The COD atlas (Figure~\ref{fig:supp_cod_interpretability}) is the supplementary counterpart of Figure~4 in the main manuscript. The COD $\Theta_{cc}$ panel reproduced in the manuscript is one of the seven panels of this atlas; the remaining panels of Figure~\ref{fig:supp_cod_interpretability} provide the complementary blocks ($b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, and $\Gamma$) that the manuscript references but does not reproduce in the printed text. The TN, TP, and TSS atlases (Figures~\ref{fig:supp_tn_interpretability}--\ref{fig:supp_tss_interpretability}) play the same role for the remaining three reported targets and are referred to collectively as Supplementary Figures S1--S4 throughout the manuscript.
+
+The retention pattern documented in the coefficient-count table of Section~4.4 of the manuscript is directly observable in these atlases: the low-dimensional blocks ($b$, $W_u$, $W_{in}$, and $\Theta_{uu}$) are densely populated, the high-dimensional quadratic blocks ($\Theta_{uc}$ and especially $\Theta_{cc}$) are visibly sparse, and the coupling matrix $\Gamma$ is broadly populated across the ASM component basis. The atlases therefore make visible, in a single composite display per target, the structured separation between a sparse high-order driver and a comparatively dense cross-component coupling layer that the manuscript identifies as the source of ICSOR's blockwise interpretability.
+
+\subsection*{S1.5 Caveats}
+
+Two caveats stated in the manuscript apply equally to these supplementary figures. First, each atlas corresponds to a single ICSOR fit on the full training partition of the standalone CSTR benchmark and is not aggregated across resamples. Coefficient-level stability across data partitions is acknowledged in Section~4.4 of the manuscript as an open diagnostic, and the atlases should be read with that limitation in mind: persistent structural patterns (which blocks are sparse, which interaction signs recur, and which coupling pathways dominate) are more reliable interpretive cues than the precise numerical value of any single cell. Second, the export threshold used to classify a coefficient as retained is a post-training reporting rule only; it does not affect model selection, training, or deployment, but it does control which cells appear visually pronounced in these heatmaps relative to the background.
+
+\clearpage
 
 \begin{figure}[p]
 \centering
 \includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS1_cod_icsor_structure.pdf}
-\caption{Illustrative COD-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final COD atlas selected for the supplementary narrative.}
+\caption{COD-specific ICSOR coefficient atlas. Panels show, for the COD target of the fitted ICSOR surrogate, the bias term $b$, the first-order operational block $W_u$, the first-order influent block $W_{in}$, the operational curvature block $\Theta_{uu}$, the operation-influent interaction block $\Theta_{uc}$, the influent-influent curvature block $\Theta_{cc}$ (symmetric by construction), and the coupling matrix $\Gamma$. The $\Theta_{cc}$ panel reproduced in Figure~4 of the main manuscript is the COD curvature panel of this atlas.}
 \label{fig:supp_cod_interpretability}
 \end{figure}
 
 \begin{figure}[p]
 \centering
 \includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS2_tn_icsor_structure.pdf}
-\caption{Illustrative TN-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final TN atlas selected for the supplementary narrative.}
+\caption{TN-specific ICSOR coefficient atlas. Panels show, for the total nitrogen target of the fitted ICSOR surrogate, the bias term $b$, the first-order operational block $W_u$, the first-order influent block $W_{in}$, the operational curvature block $\Theta_{uu}$, the operation-influent interaction block $\Theta_{uc}$, the influent-influent curvature block $\Theta_{cc}$ (symmetric by construction), and the coupling matrix $\Gamma$.}
 \label{fig:supp_tn_interpretability}
 \end{figure}
 
 \begin{figure}[p]
 \centering
 \includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS3_tp_icsor_structure.pdf}
-\caption{Illustrative TP-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final TP atlas selected for the supplementary narrative.}
+\caption{TP-specific ICSOR coefficient atlas. Panels show, for the total phosphorus target of the fitted ICSOR surrogate, the bias term $b$, the first-order operational block $W_u$, the first-order influent block $W_{in}$, the operational curvature block $\Theta_{uu}$, the operation-influent interaction block $\Theta_{uc}$, the influent-influent curvature block $\Theta_{cc}$ (symmetric by construction), and the coupling matrix $\Gamma$.}
 \label{fig:supp_tp_interpretability}
 \end{figure}
 
 \begin{figure}[p]
 \centering
 \includegraphics[width=\textwidth,height=0.90\textheight,keepaspectratio]{figureS4_tss_icsor_structure.pdf}
-\caption{Illustrative TSS-specific ICSOR coefficient atlas showing $b$, $W_u$, $W_{in}$, $\Theta_{uu}$, $\Theta_{uc}$, $\Theta_{cc}$, and $\Gamma$. Replace this sample asset with the final TSS atlas selected for the supplementary narrative.}
+\caption{TSS-specific ICSOR coefficient atlas. Panels show, for the total suspended solids target of the fitted ICSOR surrogate, the bias term $b$, the first-order operational block $W_u$, the first-order influent block $W_{in}$, the operational curvature block $\Theta_{uu}$, the operation-influent interaction block $\Theta_{uc}$, the influent-influent curvature block $\Theta_{cc}$ (symmetric by construction), and the coupling matrix $\Gamma$.}
 \label{fig:supp_tss_interpretability}
 \end{figure}
 
