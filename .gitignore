@@ -212,3 +212,4 @@ results/
 docs/journal/revision_plots
 data/asm2d-tsn/simulation/composition_matrix_cache_*.json
 data/asm2d-tsn/simulation/composition_matrix_cache_*.pkl
+github/
