@@ -22,22 +22,38 @@
 \definecolor{revRtwoFour}{RGB}{46,125,50}
 \definecolor{revRtwoFive}{RGB}{94,53,177}
 
-\newcommand{\rev}[1]{#1}
-\newcommand{\revitem}[2]{#2}
-\newenvironment{revblock}{}{}
-\newenvironment{revblockr110}{}{}
-\newenvironment{revblockr116}{}{}
-\newenvironment{revblockr125}{}{}
-\newenvironment{revblockr127}{}{}
-\newenvironment{revblockr21}{}{}
-\newenvironment{revblockr22}{}{}
-\newenvironment{revblockr24}{}{}
-\newenvironment{revblockr25}{}{}
+\newcommand{\rev}[1]{\textcolor{revDefault}{#1}}
+\newcommand{\revitem}[2]{\textcolor{#1}{#2}}
+\newenvironment{revblock}{\begingroup\color{revDefault}}{\endgroup}
+\newenvironment{revblockr110}{\begingroup\color{revRoneTen}}{\endgroup}
+\newenvironment{revblockr116}{\begingroup\color{revRoneSixteen}}{\endgroup}
+\newenvironment{revblockr125}{\begingroup\color{revRoneTwentyFive}}{\endgroup}
+\newenvironment{revblockr127}{\begingroup\color{revRoneTwentySeven}}{\endgroup}
+\newenvironment{revblockr21}{\begingroup\color{revRtwoOne}}{\endgroup}
+\newenvironment{revblockr22}{\begingroup\color{revRtwoTwo}}{\endgroup}
+\newenvironment{revblockr24}{\begingroup\color{revRtwoFour}}{\endgroup}
+\newenvironment{revblockr25}{\begingroup\color{revRtwoFive}}{\endgroup}
 
-\newenvironment{figrev}{}{}
-\newenvironment{figrevr125}{}{}
-\newenvironment{figrevr21}{}{}
-\newenvironment{figrevr25}{}{}
+\newmdenv[%
+    linecolor=revDefault,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrev}{}
+\newmdenv[%
+    linecolor=revRoneTwentyFive,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrevr125}{}
+\newmdenv[%
+    linecolor=revRtwoOne,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrevr21}{}
+\newmdenv[%
+    linecolor=revRtwoFive,
+    linewidth=2pt,
+    rightline=false,
+    leftline=false]{figrevr25}{}
 
 %%% Author macros
 \def\tsc#1{\csdef{#1}{\textsc{\lowercase{#1}}\xspace}}
